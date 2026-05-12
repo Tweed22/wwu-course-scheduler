@@ -3229,7 +3229,7 @@ function syncOfferingsFromRotation(defaultYear) {
   for (const o of state.offerings) {
     haveCombo.add(offeringKey(o.courseId, o.semester, o.rotationSlot, o.year));
   }
-  const cur = currentTermAsOf();
+  const today = new Date();
   const toAdd = [];
   for (const c of state.courses) {
     const te = parseTakesEffect(c.takesEffect);
@@ -3248,14 +3248,17 @@ function syncOfferingsFromRotation(defaultYear) {
         if (te) {
           const target = { semester, year };
           if (compareTerms(target, te) < 0) continue;
-          // Also block updates that would land inside the current term — the
-          // change should wait for the current term to close.
-          if (cur && compareTerms(target, cur) <= 0 && compareTerms(te, cur) <= 0) {
-            // takes-effect is in the past or current → still respect "current
-            // term unchanged" guard for newly-added rotation rows.
-            // Skip if the target equals the current term.
-            if (compareTerms(target, cur) === 0) continue;
-          }
+        }
+        // Don't auto-create offerings for a semester that has already started —
+        // the change should wait for that term to close. Uses an actual date
+        // check against TERM_DATES rather than currentTermAsOf(), which can
+        // mis-fire when the calendar has a gap and falls back to "nearest
+        // upcoming term" (which would incorrectly treat an unstarted next
+        // semester as the in-session one).
+        const semStart = termStartDate(semester, "1A", year);
+        if (semStart) {
+          const startTs = new Date(semStart + "T00:00:00").getTime();
+          if (!isNaN(startTs) && today.getTime() >= startTs) continue;
         }
         const k = offeringKey(c.id, semester, slot, year);
         if (!haveCombo.has(k)) {
