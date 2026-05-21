@@ -1465,12 +1465,25 @@
     </div>
     <div id="authSignInBlock" style="display:none;">
       <h2>WWU Course Scheduler</h2>
-      <p class="auth-sub">Sign in with your work email. We'll send you a one-click link — no password needed.</p>
+      <p class="auth-sub" id="authSubLine">Sign in with your work email. We'll send you a 6-digit code — no password needed.</p>
+
+      <!-- Stage 1: enter email -->
       <form id="authForm" style="display:flex;flex-direction:column;gap:12px;">
         <label for="authEmail">Email</label>
         <input id="authEmail" type="email" required autocomplete="email" placeholder="you@williamwoods.edu">
-        <button id="authSubmit" type="submit" class="btn-primary">Send me a sign-in link</button>
+        <button id="authSubmit" type="submit" class="btn-primary">Send me a 6-digit code</button>
       </form>
+
+      <!-- Stage 2: enter the code from the email -->
+      <form id="authCodeForm" style="display:none;flex-direction:column;gap:12px;">
+        <label for="authCode">6-digit code</label>
+        <input id="authCode" type="text" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+               autocomplete="one-time-code" placeholder="123456"
+               style="font-size:24px;letter-spacing:10px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
+        <button id="authVerify" type="submit" class="btn-primary">Sign in</button>
+        <button id="authCodeBack" type="button" class="btn-secondary">Use a different email</button>
+      </form>
+
       <p id="authMessage" class="auth-msg"></p>
     </div>
   </div>
@@ -2295,6 +2308,24 @@ async function loadProfileAndGate(session) {
 document.addEventListener("DOMContentLoaded", () => {
   showCheckingState();
 
+  // Helpers for switching between the two sign-in stages.
+  function showEmailStage() {
+    _$("authForm").style.display = "flex";
+    _$("authCodeForm").style.display = "none";
+    _$("authSubLine").textContent = "Sign in with your work email. We'll send you a 6-digit code — no password needed.";
+    _$("authMessage").classList.remove("error");
+    _$("authMessage").textContent = "";
+  }
+  function showCodeStage(email) {
+    _$("authForm").style.display = "none";
+    _$("authCodeForm").style.display = "flex";
+    _$("authSubLine").textContent = `Enter the 6-digit code we sent to ${email}.`;
+    _$("authMessage").classList.remove("error");
+    _$("authMessage").textContent = "";
+    setTimeout(() => _$("authCode").focus(), 50);
+  }
+
+  // Stage 1: user enters email, we ask Supabase to send a code.
   _$("authForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = _$("authEmail").value.trim();
@@ -2305,18 +2336,54 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!email) return;
     btn.disabled = true;
     btn.textContent = "Sending…";
-    const { error } = await sb.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin + window.location.pathname }
-    });
+    // shouldCreateUser:true is the default — keeps signup-on-first-attempt
+    // behavior.  No emailRedirectTo: we're using the code, not the link.
+    const { error } = await sb.auth.signInWithOtp({ email });
     btn.disabled = false;
-    btn.textContent = "Send me a sign-in link";
+    btn.textContent = "Send me a 6-digit code";
     if (error) {
       msg.classList.add("error");
       msg.textContent = error.message;
-    } else {
-      msg.textContent = "Check your email — click the link to sign in.";
+      return;
     }
+    // Remember the email for the verify step and switch to code entry.
+    _$("authCodeForm").dataset.email = email;
+    showCodeStage(email);
+  });
+
+  // Stage 2: user enters the 6-digit code, we verify it.
+  _$("authCodeForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = _$("authCodeForm").dataset.email || "";
+    const token = _$("authCode").value.trim();
+    const msg = _$("authMessage");
+    const btn = _$("authVerify");
+    msg.classList.remove("error");
+    msg.textContent = "";
+    if (!email || !/^\d{6}$/.test(token)) {
+      msg.classList.add("error");
+      msg.textContent = "Enter the 6-digit code from your email.";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    btn.disabled = false;
+    btn.textContent = "Sign in";
+    if (error) {
+      msg.classList.add("error");
+      msg.textContent = error.message || "That code didn't work. Try again.";
+      return;
+    }
+    // Success — onAuthStateChange will fire and loadProfileAndGate() handles
+    // the rest.  Nothing else to do here.
+  });
+
+  // "Use a different email" — go back to the email stage.
+  _$("authCodeBack").addEventListener("click", () => {
+    _$("authCodeForm").dataset.email = "";
+    _$("authCode").value = "";
+    showEmailStage();
   });
 
   _$("pendingSignOut").addEventListener("click", async () => {
