@@ -1392,9 +1392,100 @@
     color: var(--text-muted);
     font-style: italic;
   }
+
+  /* ── Auth overlays (Phase 2) ─────────────────────────────────────────── */
+  .auth-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 14, 26, 0.78);
+    backdrop-filter: blur(6px);
+  }
+  .auth-card {
+    background: var(--card-bg, #162033);
+    border: 1px solid var(--border, #2a3850);
+    border-radius: 12px;
+    padding: 32px;
+    max-width: 440px;
+    width: 90%;
+    color: var(--text-default, #e6ebf2);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .auth-card h2 { margin: 0 0 8px; font-size: 22px; }
+  .auth-card .auth-sub { margin: 0 0 20px; color: var(--text-muted, #8a96a8); font-size: 14px; line-height: 1.5; }
+  .auth-card label { font-size: 11px; color: var(--text-muted, #8a96a8); text-transform: uppercase; letter-spacing: 0.5px; }
+  .auth-card input[type=email] {
+    padding: 10px 14px;
+    background: var(--bg-app, #0e1525);
+    border: 1px solid var(--border, #2a3850);
+    border-radius: 8px;
+    color: var(--text-default, #e6ebf2);
+    font-size: 15px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .auth-card .btn-primary {
+    padding: 11px 14px;
+    background: var(--wwu-green, #27d8a5);
+    color: #0e1525;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    width: 100%;
+  }
+  .auth-card .btn-primary:disabled { opacity: 0.6; cursor: wait; }
+  .auth-card .btn-secondary {
+    padding: 9px 18px;
+    background: transparent;
+    color: var(--text-default, #e6ebf2);
+    border: 1px solid var(--border, #2a3850);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .auth-card .auth-msg { margin: 14px 0 0; font-size: 13px; color: var(--text-muted, #8a96a8); min-height: 18px; }
+  .auth-card .auth-msg.error { color: #ff8a8a; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+
+<!-- ─────────────────────────────────────────────────────────────────────
+     Auth gate (Phase 2)
+     Both overlays default to visible so unauthenticated users see them
+     immediately on page load.  loadProfileAndGate() hides them once a
+     session + profile have been loaded.
+     ───────────────────────────────────────────────────────────────────── -->
+<div id="authOverlay" class="auth-overlay">
+  <div class="auth-card">
+    <div id="authCheckingBlock">
+      <h2>Checking sign-in…</h2>
+      <p class="auth-sub">One moment.</p>
+    </div>
+    <div id="authSignInBlock" style="display:none;">
+      <h2>WWU Course Scheduler</h2>
+      <p class="auth-sub">Sign in with your work email. We'll send you a one-click link — no password needed.</p>
+      <form id="authForm" style="display:flex;flex-direction:column;gap:12px;">
+        <label for="authEmail">Email</label>
+        <input id="authEmail" type="email" required autocomplete="email" placeholder="you@williamwoods.edu">
+        <button id="authSubmit" type="submit" class="btn-primary">Send me a sign-in link</button>
+      </form>
+      <p id="authMessage" class="auth-msg"></p>
+    </div>
+  </div>
+</div>
+
+<div id="pendingOverlay" class="auth-overlay" style="display:none;">
+  <div class="auth-card" style="text-align:center;">
+    <h2>Waiting for approval</h2>
+    <p class="auth-sub">
+      You're signed in as <strong id="pendingEmail" style="color:var(--text-default,#e6ebf2);"></strong>, but an admin still needs to assign your role before you can use the app. You'll get full access automatically once they do.
+    </p>
+    <button id="pendingSignOut" type="button" class="btn-secondary">Sign out</button>
+  </div>
+</div>
+
 <header class="app-header">
   <div>
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
@@ -1408,6 +1499,10 @@
     <button type="button" id="btnThemeToggle" title="Toggle dark mode" aria-label="Toggle dark mode"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
       <span id="themeToggleLabel">Dark mode</span>
+    </button>
+    <button type="button" id="btnSignOut" title="Sign out"
+            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
+      Sign out
     </button>
   </div>
 </header>
@@ -2090,6 +2185,162 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================================================
+   Supabase Auth (Phase 2)
+   ────────────────────────────────────────────────────────────
+   Magic-link sign-in.  On successful sign-in we load the user's
+   row from public.profiles (created automatically by the
+   on_auth_user_created trigger).  If role='pending' we show
+   the pending overlay until an admin assigns a real role.
+
+   Downstream contract:
+     window.AUTH.user = { id, email, displayName, role, school }
+   Phase 3 will read this for attribution; Phase 5 will use
+   .role to gate UI.  Right now nothing else reads it, so the
+   existing app continues to work unchanged once you're past
+   the sign-in gate.
+   ============================================================ */
+const SB_URL = "https://vmqorqyvirdqpzjyozan.supabase.co";
+const SB_KEY = "sb_publishable_kWXLv3tPyse7q3jGFhB0LQ_VOkXhukv";
+const sb = window.supabase.createClient(SB_URL, SB_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,   // picks up magic-link tokens from URL hash
+  }
+});
+window.sb = sb;
+// AUTH.ready is a promise that resolves once we have a signed-in user with
+// an assigned (non-pending) role.  init() awaits this via requireUserName()
+// so the rest of app startup doesn't race with sign-in.
+window.AUTH = { user: null };
+window.AUTH.ready = new Promise(resolve => { window.AUTH._resolveReady = resolve; });
+
+function _$(id) { return document.getElementById(id); }
+
+function showCheckingState() {
+  _$("authOverlay").style.display = "flex";
+  _$("authCheckingBlock").style.display = "";
+  _$("authSignInBlock").style.display = "none";
+  _$("pendingOverlay").style.display = "none";
+}
+function showSignInForm() {
+  _$("authOverlay").style.display = "flex";
+  _$("authCheckingBlock").style.display = "none";
+  _$("authSignInBlock").style.display = "";
+  _$("pendingOverlay").style.display = "none";
+}
+function showPendingOverlay(email) {
+  _$("pendingEmail").textContent = email || "";
+  _$("authOverlay").style.display = "none";
+  _$("pendingOverlay").style.display = "flex";
+}
+function hideAllAuthOverlays() {
+  _$("authOverlay").style.display = "none";
+  _$("pendingOverlay").style.display = "none";
+}
+
+async function loadProfileAndGate(session) {
+  if (!session || !session.user) { showSignInForm(); return; }
+  showCheckingState();
+  // Trigger may not have fired yet on the very first sign-in — retry briefly.
+  let profile = null, lastErr = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data, error } = await sb
+      .from("profiles")
+      .select("id, email, display_name, role, school")
+      .eq("id", session.user.id)
+      .maybeSingle();
+    if (error) { lastErr = error; break; }
+    if (data) { profile = data; break; }
+    await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+  }
+  if (lastErr) {
+    console.error("profile load failed", lastErr);
+    showSignInForm();
+    const m = _$("authMessage");
+    m.classList.add("error");
+    m.textContent = "Couldn't load your profile. Try refreshing.";
+    return;
+  }
+  if (!profile) {
+    // Trigger never created the row (rare).  Treat as pending — admin can
+    // manually create the profile from the SQL editor if needed.
+    showPendingOverlay(session.user.email);
+    return;
+  }
+  if (profile.role === "pending") {
+    showPendingOverlay(profile.email);
+    return;
+  }
+  window.AUTH.user = {
+    id:          profile.id,
+    email:       profile.email,
+    displayName: profile.display_name || profile.email,
+    role:        profile.role,
+    school:      profile.school || "",
+  };
+  // Mirror display name into the existing header label so the app's
+  // attribution UI keeps working until Phase 3/5 rewires it.
+  const lbl = _$("userNameLabel");
+  if (lbl) lbl.textContent = window.AUTH.user.displayName;
+  hideAllAuthOverlays();
+  // Unblock any code awaiting AUTH.ready (init's requireUserName()).
+  if (window.AUTH._resolveReady) {
+    window.AUTH._resolveReady();
+    window.AUTH._resolveReady = null;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  showCheckingState();
+
+  _$("authForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = _$("authEmail").value.trim();
+    const msg = _$("authMessage");
+    const btn = _$("authSubmit");
+    msg.classList.remove("error");
+    msg.textContent = "";
+    if (!email) return;
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    });
+    btn.disabled = false;
+    btn.textContent = "Send me a sign-in link";
+    if (error) {
+      msg.classList.add("error");
+      msg.textContent = error.message;
+    } else {
+      msg.textContent = "Check your email — click the link to sign in.";
+    }
+  });
+
+  _$("pendingSignOut").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    window.location.reload();
+  });
+
+  // Header sign-out button (only meaningful once signed in).
+  const signOutBtn = _$("btnSignOut");
+  if (signOutBtn) {
+    signOutBtn.addEventListener("click", async () => {
+      await sb.auth.signOut();
+      window.AUTH.user = null;
+      window.location.reload();
+    });
+  }
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    loadProfileAndGate(session);
+  });
+
+  sb.auth.getSession().then(({ data: { session } }) => loadProfileAndGate(session));
+});
+
 /* ======== Embedded rotation seed (real WWU data) ======== */
 const WWU_ROTATION = [];
 
@@ -5625,6 +5876,19 @@ function promptUserName(opts = {}) {
   });
 }
 async function requireUserName() {
+  // Phase 2: if Supabase auth is wired up, defer to it.  AUTH.ready blocks
+  // until the user has signed in AND has a non-pending role; we adopt the
+  // authenticated identity as the app's user name (overriding any stale
+  // localStorage value from a previous session).
+  if (window.AUTH && window.AUTH.ready) {
+    await window.AUTH.ready;
+    const u = window.AUTH.user;
+    if (u) {
+      const name = u.displayName || u.email;
+      setUserName(name);
+      return name;
+    }
+  }
   const stored = getUserName();
   if (stored) { setUserName(stored); return stored; }
   return await promptUserName();
