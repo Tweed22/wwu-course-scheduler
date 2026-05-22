@@ -2954,7 +2954,10 @@ function setDirty(v=true) {
     }
     el.classList.toggle("dirty", v);
   }
-  if (v) saveLocalDraft();
+  if (v) {
+    saveLocalDraft();           // local cache (offline fallback)
+    scheduleSupabaseFlush();    // shared state via Supabase (Phase 3)
+  }
 }
 function saveLocalDraft() {
   try { localStorage.setItem(LS_KEY, JSON.stringify({ courses: state.courses, requests: state.requests, offerings: state.offerings, ts: Date.now() })); }
@@ -2977,6 +2980,201 @@ function loadLocalDraft() {
   } catch (e) { /* ignore */ }
   return false;
 }
+
+/* ============================================================
+   Persistence — Supabase shared state (Phase 3)
+   ────────────────────────────────────────────────────────────
+   • Offerings and change_requests live in Supabase; every user
+     reads + writes the same rows.
+   • setDirty(true) schedules a debounced flushToSupabase() that
+     upserts current state and deletes anything removed locally.
+   • Realtime subscriptions merge cross-user changes back into
+     local state and re-render.
+   • Courses (state.courses) still come from the Google Sheet
+     read-only; that decision didn't change in Phase 3.
+   ============================================================ */
+
+/* ---- Schema mapping ---- */
+function offeringToRow(o) {
+  // Resolve the offering's local courseId to a stable course_code so the
+  // row is meaningful across browsers (each browser may have different
+  // randomly-generated local course ids for the same course).
+  const course = (state.courses || []).find(c => c.id === o.courseId);
+  return {
+    id: o.id,
+    course_code: course ? course.code : (o.courseCode || ""),
+    semester: o.semester || "Fall",
+    subterm: o.subterm || "1A",
+    year: o.year || 2026,
+    submitted: !!o.submitted,
+    registrar_completed: !!o.registrarCompleted,
+    data: o,
+  };
+}
+function rowToOffering(row) {
+  if (!row || !row.data || typeof row.data !== "object") return null;
+  const o = { ...row.data };
+  // Re-resolve courseId from course_code so it points at THIS browser's
+  // copy of the course list.
+  if (row.course_code) {
+    const byCode = (state.courses || []).find(c => c.code === row.course_code);
+    if (byCode) o.courseId = byCode.id;
+  }
+  return o;
+}
+function requestToRow(r) {
+  return {
+    id: r.id,
+    year: r.year || 2026,
+    status: r.status || "Pending Approval",
+    data: r,
+  };
+}
+function rowToRequest(row) {
+  if (!row || !row.data || typeof row.data !== "object") return null;
+  return row.data;
+}
+
+/* ---- Initial load ---- */
+async function loadFromSupabase() {
+  if (!window.AUTH || !window.AUTH.user) return false;
+  try {
+    const [oRes, rRes] = await Promise.all([
+      sb.from("offerings").select("*"),
+      sb.from("change_requests").select("*"),
+    ]);
+    if (oRes.error) { console.error("offerings load failed", oRes.error); return false; }
+    if (rRes.error) { console.error("change_requests load failed", rRes.error); return false; }
+    state.offerings = (oRes.data || []).map(rowToOffering).filter(Boolean);
+    state.requests  = (rRes.data || []).map(rowToRequest).filter(Boolean);
+    return true;
+  } catch (e) {
+    console.error("loadFromSupabase failed", e);
+    return false;
+  }
+}
+
+/* ---- Debounced flush ---- */
+let _supabaseFlushTimer = null;
+let _flushInFlight = false;
+function scheduleSupabaseFlush() {
+  if (!window.AUTH || !window.AUTH.user) return;
+  if (_supabaseFlushTimer) clearTimeout(_supabaseFlushTimer);
+  _supabaseFlushTimer = setTimeout(() => {
+    _supabaseFlushTimer = null;
+    flushToSupabase().catch(e => console.error("flushToSupabase failed", e));
+  }, 600);
+}
+async function flushToSupabase() {
+  if (!window.AUTH || !window.AUTH.user) return;
+  if (_flushInFlight) { scheduleSupabaseFlush(); return; }
+  _flushInFlight = true;
+  try {
+    const oRows = (state.offerings || []).map(offeringToRow);
+    const rRows = (state.requests  || []).map(requestToRow);
+    const localOIds = new Set(oRows.map(r => r.id));
+    const localRIds = new Set(rRows.map(r => r.id));
+    const [oIdRes, rIdRes] = await Promise.all([
+      sb.from("offerings").select("id"),
+      sb.from("change_requests").select("id"),
+    ]);
+    const oDel = ((oIdRes.data || []).map(r => r.id)).filter(id => !localOIds.has(id));
+    const rDel = ((rIdRes.data || []).map(r => r.id)).filter(id => !localRIds.has(id));
+    if (oRows.length) {
+      const { error } = await sb.from("offerings").upsert(oRows);
+      if (error) console.error("offerings upsert failed", error);
+    }
+    if (rRows.length) {
+      const { error } = await sb.from("change_requests").upsert(rRows);
+      if (error) console.error("change_requests upsert failed", error);
+    }
+    if (oDel.length) {
+      const { error } = await sb.from("offerings").delete().in("id", oDel);
+      if (error) console.error("offerings delete failed", error);
+    }
+    if (rDel.length) {
+      const { error } = await sb.from("change_requests").delete().in("id", rDel);
+      if (error) console.error("change_requests delete failed", error);
+    }
+  } finally {
+    _flushInFlight = false;
+  }
+}
+
+/* ---- Realtime subscriptions ---- */
+let _realtimeChannel = null;
+function startRealtime() {
+  if (_realtimeChannel) return;
+  _realtimeChannel = sb.channel("scheduler-data")
+    .on("postgres_changes",
+        { event: "*", schema: "public", table: "offerings" },
+        (payload) => handleRealtimeOffering(payload))
+    .on("postgres_changes",
+        { event: "*", schema: "public", table: "change_requests" },
+        (payload) => handleRealtimeRequest(payload))
+    .subscribe();
+}
+function handleRealtimeOffering(payload) {
+  const event = payload.eventType || payload.type;
+  if (event === "DELETE") {
+    const id = (payload.old && payload.old.id) || null;
+    if (!id) return;
+    const before = state.offerings.length;
+    state.offerings = state.offerings.filter(o => o.id !== id);
+    if (state.offerings.length !== before) reRenderAll();
+    return;
+  }
+  const row = payload.new;
+  if (!row) return;
+  const incoming = rowToOffering(row);
+  if (!incoming) return;
+  const idx = state.offerings.findIndex(o => o.id === incoming.id);
+  if (idx >= 0) state.offerings[idx] = incoming;
+  else state.offerings.push(incoming);
+  reRenderAll();
+}
+function handleRealtimeRequest(payload) {
+  const event = payload.eventType || payload.type;
+  if (event === "DELETE") {
+    const id = (payload.old && payload.old.id) || null;
+    if (!id) return;
+    const before = state.requests.length;
+    state.requests = state.requests.filter(r => r.id !== id);
+    if (state.requests.length !== before) reRenderAll();
+    return;
+  }
+  const row = payload.new;
+  if (!row) return;
+  const incoming = rowToRequest(row);
+  if (!incoming) return;
+  const idx = state.requests.findIndex(r => r.id === incoming.id);
+  if (idx >= 0) state.requests[idx] = incoming;
+  else state.requests.push(incoming);
+  reRenderAll();
+}
+function reRenderAll() {
+  try { if (typeof render === "function")         render(); }         catch (e) {}
+  try { if (typeof renderRequests === "function") renderRequests(); } catch (e) {}
+  try { if (typeof renderTerms === "function")    renderTerms(); }    catch (e) {}
+  try { if (typeof renderRegistrar === "function") renderRegistrar(); } catch (e) {}
+  try { if (typeof renderChangelog === "function") renderChangelog(); } catch (e) {}
+}
+
+/* ---- ID helpers ----
+   crypto.randomUUID() is supported in every browser we care about (Chrome
+   92+, Safari 15.4+, Firefox 95+).  Older code generated "o-xxx" / "r-xxx"
+   ids that won't fit the DB's uuid columns; new ids use real UUIDs. */
+function uuid() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  // Tiny fallback if randomUUID isn't available (very old browsers).
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 function toast(msg) {
   const el = document.getElementById("toast");
   el.textContent = msg;
@@ -3483,7 +3681,7 @@ function switchView(v) {
 /* ======== Term Assignments ======== */
 function newOffering(prefill = {}) {
   return Object.assign({
-    id: "o-" + Math.random().toString(36).slice(2, 9),
+    id: uuid(),     // Phase 3: real UUID so id matches Supabase offerings.id type
     courseId: "",
     semester: "Fall",
     subterm: "1A",
@@ -5052,7 +5250,7 @@ function bindTermEvents() {
 
 function newRequest(prefill = {}) {
   return Object.assign({
-    id: "r-" + Math.random().toString(36).slice(2, 9),
+    id: uuid(),     // Phase 3: real UUID so id matches Supabase change_requests.id type
     submitter: "",
     date: new Date().toISOString().slice(0, 10),
     section: "Undergrad",
@@ -5870,10 +6068,10 @@ function bindRequestEvents() {
 function seedExampleRequests() {
   if (state.requests.length) return;
   state.requests = [
-    newRequest({ id:"r-ex1", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Modify Time/Day", explanation:"Change to TR 3:25-4:40 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
-    newRequest({ id:"r-ex2", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Modify Time/Day", explanation:"Change to MW 4-5:15 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
-    newRequest({ id:"r-ex3", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
-    newRequest({ id:"r-ex4", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Modify Time/Day", explanation:"Change to TR 3:25-4:40 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Modify Time/Day", explanation:"Change to MW 4-5:15 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
   ];
   state.requests.forEach(r => logRequestEvent(r, "Created from Schedule Change sheet sample"));
 }
@@ -5996,13 +6194,25 @@ async function init() {
     });
     if (v) toast(`Now editing as ${v}`);
   });
-  // Gate the rest of the app on a name being entered.
+  // Gate the rest of the app on auth being resolved.  requireUserName()
+  // awaits window.AUTH.ready and adopts the signed-in identity as the
+  // editing display name (Phase 2).
   await requireUserName();
-  // Restore user-edited state (offerings, requests, deadlines) from localStorage,
-  // but ALWAYS pull fresh course metadata from the rotation sheet on every load.
-  // Online-only behavior: if the sheet is unreachable we show an error overlay
-  // and refuse to start so the user never works against stale data.
-  loadLocalDraft();
+  // Phase 3: shared state lives in Supabase.  Load offerings + change_requests
+  // from there; localStorage stays as an offline fallback for termDeadlines
+  // and as a last-resort cache if Supabase is unreachable.
+  const dbLoaded = await loadFromSupabase();
+  if (!dbLoaded) loadLocalDraft();
+  else {
+    // Still pull termDeadlines from localStorage — not migrated to Supabase yet.
+    try {
+      const s = localStorage.getItem(LS_KEY);
+      if (s) {
+        const d = JSON.parse(s);
+        if (d.termDeadlines && typeof d.termDeadlines === "object") state.termDeadlines = d.termDeadlines;
+      }
+    } catch (e) {}
+  }
   bindEvents();
   bindRequestEvents();
   bindTermEvents();
@@ -6014,6 +6224,13 @@ async function init() {
     showRotationError(err);
     return;
   }
+  // syncRotationFromSheet may have added offerings the DB didn't yet know about
+  // (e.g., new courses in the sheet).  Push them up so other users see them.
+  if (dbLoaded) {
+    flushToSupabase().catch(e => console.error("post-sync flush failed", e));
+  }
+  // Start listening for cross-user changes.
+  startRealtime();
   seedExampleRequests();
   // Roll over any cleared assignments whose terms ended 12+ weeks ago. Runs
   // on every load so nothing falls through the cracks if the app sits idle.
