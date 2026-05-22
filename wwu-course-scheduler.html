@@ -1392,113 +1392,9 @@
     color: var(--text-muted);
     font-style: italic;
   }
-
-  /* ── Auth overlays (Phase 2) ─────────────────────────────────────────── */
-  .auth-overlay {
-    position: fixed; inset: 0; z-index: 9999;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(8, 14, 26, 0.78);
-    backdrop-filter: blur(6px);
-  }
-  .auth-card {
-    background: var(--card-bg, #162033);
-    border: 1px solid var(--border, #2a3850);
-    border-radius: 12px;
-    padding: 32px;
-    max-width: 440px;
-    width: 90%;
-    color: var(--text-default, #e6ebf2);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-  }
-  .auth-card h2 { margin: 0 0 8px; font-size: 22px; }
-  .auth-card .auth-sub { margin: 0 0 20px; color: var(--text-muted, #8a96a8); font-size: 14px; line-height: 1.5; }
-  .auth-card label { font-size: 11px; color: var(--text-muted, #8a96a8); text-transform: uppercase; letter-spacing: 0.5px; }
-  .auth-card input[type=email] {
-    padding: 10px 14px;
-    background: var(--bg-app, #0e1525);
-    border: 1px solid var(--border, #2a3850);
-    border-radius: 8px;
-    color: var(--text-default, #e6ebf2);
-    font-size: 15px;
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .auth-card .btn-primary {
-    padding: 11px 14px;
-    background: var(--wwu-green, #27d8a5);
-    color: #0e1525;
-    border: none;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 15px;
-    cursor: pointer;
-    width: 100%;
-  }
-  .auth-card .btn-primary:disabled { opacity: 0.6; cursor: wait; }
-  .auth-card .btn-secondary {
-    padding: 9px 18px;
-    background: transparent;
-    color: var(--text-default, #e6ebf2);
-    border: 1px solid var(--border, #2a3850);
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .auth-card .auth-msg { margin: 14px 0 0; font-size: 13px; color: var(--text-muted, #8a96a8); min-height: 18px; }
-  .auth-card .auth-msg.error { color: #ff8a8a; }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
-<!-- ─────────────────────────────────────────────────────────────────────
-     Auth gate (Phase 2)
-     Both overlays default to visible so unauthenticated users see them
-     immediately on page load.  loadProfileAndGate() hides them once a
-     session + profile have been loaded.
-     ───────────────────────────────────────────────────────────────────── -->
-<div id="authOverlay" class="auth-overlay">
-  <div class="auth-card">
-    <div id="authCheckingBlock">
-      <h2>Checking sign-in…</h2>
-      <p class="auth-sub">One moment.</p>
-    </div>
-    <div id="authSignInBlock" style="display:none;">
-      <h2>WWU Course Scheduler</h2>
-      <p class="auth-sub" id="authSubLine">Sign in with your work email. We'll send you a 6-digit code — no password needed.</p>
-
-      <!-- Stage 1: enter email -->
-      <form id="authForm" style="display:flex;flex-direction:column;gap:12px;">
-        <label for="authEmail">Email</label>
-        <input id="authEmail" type="email" required autocomplete="email" placeholder="you@williamwoods.edu">
-        <button id="authSubmit" type="submit" class="btn-primary">Send me a 6-digit code</button>
-      </form>
-
-      <!-- Stage 2: enter the code from the email -->
-      <form id="authCodeForm" style="display:none;flex-direction:column;gap:12px;">
-        <label for="authCode">6-digit code</label>
-        <input id="authCode" type="text" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
-               autocomplete="one-time-code" placeholder="123456"
-               style="font-size:24px;letter-spacing:10px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
-        <button id="authVerify" type="submit" class="btn-primary">Sign in</button>
-        <button id="authCodeBack" type="button" class="btn-secondary">Use a different email</button>
-      </form>
-
-      <p id="authMessage" class="auth-msg"></p>
-    </div>
-  </div>
-</div>
-
-<div id="pendingOverlay" class="auth-overlay" style="display:none;">
-  <div class="auth-card" style="text-align:center;">
-    <h2>Waiting for approval</h2>
-    <p class="auth-sub">
-      You're signed in as <strong id="pendingEmail" style="color:var(--text-default,#e6ebf2);"></strong>, but an admin still needs to assign your role before you can use the app. You'll get full access automatically once they do.
-    </p>
-    <button id="pendingSignOut" type="button" class="btn-secondary">Sign out</button>
-  </div>
-</div>
-
 <header class="app-header">
   <div>
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
@@ -1513,10 +1409,6 @@
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
       <span id="themeToggleLabel">Dark mode</span>
     </button>
-    <button type="button" id="btnSignOut" title="Sign out"
-            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
-      Sign out
-    </button>
   </div>
 </header>
 
@@ -1525,10 +1417,6 @@
   <button type="button" data-view="requests">Change Requests <span class="tab-badge" id="badgeRequests">0</span></button>
   <button type="button" data-view="registrar">Registrar <span class="tab-badge" id="badgeRegistrar">0</span></button>
   <button type="button" data-view="changelog">Changelog</button>
-  <!-- Admin tab: visibility is toggled at render time via display:none when
-       the current user isn't an admin. Keeping the element in the DOM makes
-       wiring/teardown trivial. -->
-  <button type="button" data-view="admin" id="tabAdmin" style="display:none;">Admin</button>
 </nav>
 
 <main>
@@ -1713,7 +1601,7 @@
     <summary style="cursor:pointer;font-weight:600;color:var(--wwu-green-dark);">How this view works</summary>
     <div style="margin-top:8px;color:var(--text-muted);font-size:13px;line-height:1.5;">
       <p>Each row is one <strong>offering</strong> — a single term instance of a course, derived from the registrar's online rotation. 5-week slots (A/B/C) land in subterms 1A / 2B / 3C. 10-week courses (F = First, L = Last) appear in both of the subterms they span. Full-semester online courses (15W / 16W) are anchored to the 1A subterm for planning.</p>
-      <p>Fill in <strong>Assigned Instructor</strong> inline. The <strong>Dean</strong> and <strong>Program Manager</strong> are auto-assigned — Dean from the course's school, PM from the admin-uploaded mapping (Admin page → Program Managers CSV). Rows turn <strong style="color:#b03a2e;">red</strong> when the assignment deadline has passed and no instructor is assigned.</p>
+      <p>Fill in <strong>Program Manager</strong> and <strong>Assigned Instructor</strong> inline. The <strong>Dean</strong> is auto-assigned from the course's school and isn't editable. Set the <strong>deadline for this subterm</strong> once in the stats bar at the top — it applies to every section in the current subterm. Rows turn <strong style="color:#b03a2e;">red</strong> when that deadline has passed and no instructor is assigned.</p>
       <p>Click <strong>Submit to Registrar</strong> when a section is ready — the instructor is locked, the row is tagged <code>SENT</code>, and the button swaps to <strong>Request Change</strong> (which opens a Change Request for any post-submission edit). Click the <code>+</code> to the left of a course code to add another section of the same course (ACC 240 01, ACC 240 02, etc.). New rotation slots are pulled in automatically — use the <code>Re-sync now</code> button in the rotation banner above the page if you want to force an immediate refresh.</p>
     </div>
   </details>
@@ -1936,73 +1824,6 @@
       <p>Newest events appear first. Use the search box to find a course code or a person's name, the type filter to narrow to just submissions or just request lifecycle events, and the range filter to focus on recent activity.</p>
     </div>
   </details>
-</section>
-
-<!-- ============== ADMIN VIEW (admin role only) ============== -->
-<section id="viewAdmin" class="view">
-  <h2 style="margin:0 0 8px 0;color:var(--wwu-green-dark);">Admin</h2>
-  <p style="margin:0 0 18px 0;color:var(--text-muted);font-size:13px;">
-    Only admins see this page. Manage the Program Manager mapping and override
-    term start/end dates here. Changes propagate to every user instantly.
-  </p>
-
-  <!-- Program Managers CSV -->
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
-    <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Program Managers (CSV upload)</h3>
-    <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
-      Upload a CSV with two columns: <code>Course Code</code> (e.g. <code>ACC 240</code>) and <code>Program Manager</code>.
-      A header row is optional. Each upload <strong>replaces</strong> the entire mapping. The PM column on the Term Assignments page reads from this list automatically.
-    </p>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
-      <button type="button" id="btnAdmPmUpload" class="primary" style="padding:6px 14px;">Upload</button>
-      <button type="button" id="btnAdmPmDownload" style="padding:6px 14px;">Download current</button>
-      <button type="button" id="btnAdmPmClear" class="danger" style="padding:6px 14px;">Clear all</button>
-      <span id="admPmStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
-    </div>
-    <div class="table-wrap" style="margin-top:12px;max-height:340px;overflow-y:auto;">
-      <table class="term-table">
-        <thead>
-          <tr>
-            <th style="width:160px;">Course Code</th>
-            <th>Program Manager</th>
-            <th style="width:90px;">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="admPmTbody">
-          <tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Term Date Overrides -->
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;">
-    <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Term Start / End Dates</h3>
-    <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
-      The dates shown below are the calculated defaults shipped with the app.
-      Edit any cell to override; clear a cell and Save to revert to the default.
-      Overrides save to the database and apply for every user.
-    </p>
-    <div class="table-wrap" style="max-height:520px;overflow-y:auto;">
-      <table class="term-table">
-        <thead>
-          <tr>
-            <th style="width:160px;">Term</th>
-            <th style="width:80px;">Year</th>
-            <th>Start date</th>
-            <th>End date</th>
-            <th style="width:120px;">Source</th>
-          </tr>
-        </thead>
-        <tbody id="admTermTbody"></tbody>
-      </table>
-    </div>
-    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-      <button type="button" id="btnAdmTermSave" class="primary" style="padding:6px 14px;">Save term-date overrides</button>
-      <span id="admTermStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
-    </div>
-  </div>
 </section>
 
 </main>
@@ -2245,9 +2066,8 @@
             <div id="sfld_deanDisplay" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-muted,#f5f5f5);color:var(--text-muted);min-height:18px;">—</div>
           </div>
           <div>
-            <label>Program Manager <span style="color:var(--text-muted);font-weight:400;">(auto)</span></label>
-            <div id="sfld_pmDisplay" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-muted,#f5f5f5);color:var(--text-muted);min-height:18px;">—</div>
-            <input type="hidden" id="sfld_pm">
+            <label for="sfld_pm">Program Manager <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
+            <input type="text" id="sfld_pm" list="pmList" placeholder="PM…">
           </div>
           <div style="grid-column: 1 / -1;">
             <label for="sfld_instructor">Assigned Instructor <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
@@ -2270,219 +2090,6 @@
 <div class="toast" id="toast"></div>
 
 <script>
-/* ============================================================
-   Supabase Auth (Phase 2)
-   ────────────────────────────────────────────────────────────
-   Magic-link sign-in.  On successful sign-in we load the user's
-   row from public.profiles (created automatically by the
-   on_auth_user_created trigger).  If role='pending' we show
-   the pending overlay until an admin assigns a real role.
-
-   Downstream contract:
-     window.AUTH.user = { id, email, displayName, role, school }
-   Phase 3 will read this for attribution; Phase 5 will use
-   .role to gate UI.  Right now nothing else reads it, so the
-   existing app continues to work unchanged once you're past
-   the sign-in gate.
-   ============================================================ */
-const SB_URL = "https://vmqorqyvirdqpzjyozan.supabase.co";
-const SB_KEY = "sb_publishable_kWXLv3tPyse7q3jGFhB0LQ_VOkXhukv";
-const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,   // picks up magic-link tokens from URL hash
-  }
-});
-window.sb = sb;
-// AUTH.ready is a promise that resolves once we have a signed-in user with
-// an assigned (non-pending) role.  init() awaits this via requireUserName()
-// so the rest of app startup doesn't race with sign-in.
-window.AUTH = { user: null };
-window.AUTH.ready = new Promise(resolve => { window.AUTH._resolveReady = resolve; });
-
-function _$(id) { return document.getElementById(id); }
-
-function showCheckingState() {
-  _$("authOverlay").style.display = "flex";
-  _$("authCheckingBlock").style.display = "";
-  _$("authSignInBlock").style.display = "none";
-  _$("pendingOverlay").style.display = "none";
-}
-function showSignInForm() {
-  _$("authOverlay").style.display = "flex";
-  _$("authCheckingBlock").style.display = "none";
-  _$("authSignInBlock").style.display = "";
-  _$("pendingOverlay").style.display = "none";
-}
-function showPendingOverlay(email) {
-  _$("pendingEmail").textContent = email || "";
-  _$("authOverlay").style.display = "none";
-  _$("pendingOverlay").style.display = "flex";
-}
-function hideAllAuthOverlays() {
-  _$("authOverlay").style.display = "none";
-  _$("pendingOverlay").style.display = "none";
-}
-
-async function loadProfileAndGate(session) {
-  if (!session || !session.user) { showSignInForm(); return; }
-  showCheckingState();
-  // Trigger may not have fired yet on the very first sign-in — retry briefly.
-  let profile = null, lastErr = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const { data, error } = await sb
-      .from("profiles")
-      .select("id, email, display_name, role, school")
-      .eq("id", session.user.id)
-      .maybeSingle();
-    if (error) { lastErr = error; break; }
-    if (data) { profile = data; break; }
-    await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
-  }
-  if (lastErr) {
-    console.error("profile load failed", lastErr);
-    showSignInForm();
-    const m = _$("authMessage");
-    m.classList.add("error");
-    m.textContent = "Couldn't load your profile. Try refreshing.";
-    return;
-  }
-  if (!profile) {
-    // Trigger never created the row (rare).  Treat as pending — admin can
-    // manually create the profile from the SQL editor if needed.
-    showPendingOverlay(session.user.email);
-    return;
-  }
-  if (profile.role === "pending") {
-    showPendingOverlay(profile.email);
-    return;
-  }
-  window.AUTH.user = {
-    id:          profile.id,
-    email:       profile.email,
-    displayName: profile.display_name || profile.email,
-    role:        profile.role,
-    school:      profile.school || "",
-  };
-  // Mirror display name into the existing header label so the app's
-  // attribution UI keeps working until Phase 3/5 rewires it.
-  const lbl = _$("userNameLabel");
-  if (lbl) lbl.textContent = window.AUTH.user.displayName;
-  // Reveal/hide the Admin tab now that the role is known.
-  const adminTab = _$("tabAdmin");
-  if (adminTab) adminTab.style.display = (profile.role === "admin") ? "" : "none";
-  hideAllAuthOverlays();
-  // Unblock any code awaiting AUTH.ready (init's requireUserName()).
-  if (window.AUTH._resolveReady) {
-    window.AUTH._resolveReady();
-    window.AUTH._resolveReady = null;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  showCheckingState();
-
-  // Helpers for switching between the two sign-in stages.
-  function showEmailStage() {
-    _$("authForm").style.display = "flex";
-    _$("authCodeForm").style.display = "none";
-    _$("authSubLine").textContent = "Sign in with your work email. We'll send you a 6-digit code — no password needed.";
-    _$("authMessage").classList.remove("error");
-    _$("authMessage").textContent = "";
-  }
-  function showCodeStage(email) {
-    _$("authForm").style.display = "none";
-    _$("authCodeForm").style.display = "flex";
-    _$("authSubLine").textContent = `Enter the 6-digit code we sent to ${email}.`;
-    _$("authMessage").classList.remove("error");
-    _$("authMessage").textContent = "";
-    setTimeout(() => _$("authCode").focus(), 50);
-  }
-
-  // Stage 1: user enters email, we ask Supabase to send a code.
-  _$("authForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = _$("authEmail").value.trim();
-    const msg = _$("authMessage");
-    const btn = _$("authSubmit");
-    msg.classList.remove("error");
-    msg.textContent = "";
-    if (!email) return;
-    btn.disabled = true;
-    btn.textContent = "Sending…";
-    // shouldCreateUser:true is the default — keeps signup-on-first-attempt
-    // behavior.  No emailRedirectTo: we're using the code, not the link.
-    const { error } = await sb.auth.signInWithOtp({ email });
-    btn.disabled = false;
-    btn.textContent = "Send me a 6-digit code";
-    if (error) {
-      msg.classList.add("error");
-      msg.textContent = error.message;
-      return;
-    }
-    // Remember the email for the verify step and switch to code entry.
-    _$("authCodeForm").dataset.email = email;
-    showCodeStage(email);
-  });
-
-  // Stage 2: user enters the 6-digit code, we verify it.
-  _$("authCodeForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = _$("authCodeForm").dataset.email || "";
-    const token = _$("authCode").value.trim();
-    const msg = _$("authMessage");
-    const btn = _$("authVerify");
-    msg.classList.remove("error");
-    msg.textContent = "";
-    if (!email || !/^\d{6}$/.test(token)) {
-      msg.classList.add("error");
-      msg.textContent = "Enter the 6-digit code from your email.";
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = "Signing in…";
-    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
-    btn.disabled = false;
-    btn.textContent = "Sign in";
-    if (error) {
-      msg.classList.add("error");
-      msg.textContent = error.message || "That code didn't work. Try again.";
-      return;
-    }
-    // Success — onAuthStateChange will fire and loadProfileAndGate() handles
-    // the rest.  Nothing else to do here.
-  });
-
-  // "Use a different email" — go back to the email stage.
-  _$("authCodeBack").addEventListener("click", () => {
-    _$("authCodeForm").dataset.email = "";
-    _$("authCode").value = "";
-    showEmailStage();
-  });
-
-  _$("pendingSignOut").addEventListener("click", async () => {
-    await sb.auth.signOut();
-    window.location.reload();
-  });
-
-  // Header sign-out button (only meaningful once signed in).
-  const signOutBtn = _$("btnSignOut");
-  if (signOutBtn) {
-    signOutBtn.addEventListener("click", async () => {
-      await sb.auth.signOut();
-      window.AUTH.user = null;
-      window.location.reload();
-    });
-  }
-
-  sb.auth.onAuthStateChange((_event, session) => {
-    loadProfileAndGate(session);
-  });
-
-  sb.auth.getSession().then(({ data: { session } }) => loadProfileAndGate(session));
-});
-
 /* ======== Embedded rotation seed (real WWU data) ======== */
 const WWU_ROTATION = [];
 
@@ -2504,63 +2111,8 @@ const ROTATION_SHEET_GID = "567083417";
 // was returning a stale 811-row version of the tab. With this flag the endpoint
 // returns the full ~1160-row clean dataset.
 const ROTATION_SHEET_URL = `https://docs.google.com/spreadsheets/d/${ROTATION_SHEET_ID}/gviz/tq?tqx=out:csv&gid=${ROTATION_SHEET_GID}&headers=0`;
-// Rotation sheet sync runs at most once per day, at 4 AM America/Chicago.
-// The previous 15-minute polling was overkill and a likely cause of the
-// slowness Tony was seeing. We still allow a manual "Re-sync now" from the
-// rotation banner if someone needs an immediate refresh.
-const ROTATION_DAILY_HOUR_CT = 4;        // 4 AM Central
+const ROTATION_POLL_MS = 15 * 60 * 1000;
 let lastRotationSyncAt = null;
-const LS_LAST_SYNC_KEY = "wwu-rotation-last-sync";
-
-// Returns the number of milliseconds from `now` until the next time the wall
-// clock in America/Chicago reads ROTATION_DAILY_HOUR_CT:00:00. The clever
-// bit: we compute the *current* wall-clock hour in Chicago by formatting a
-// Date with that timeZone, then we add hours until we land on 4 AM the next
-// day. Avoids a DST-aware date library.
-function msUntilNextChicago4am(now) {
-  const ref = now instanceof Date ? now : new Date();
-  // Get the current Chicago wall-clock parts.
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
-  const parts = fmt.formatToParts(ref).reduce((acc, p) => {
-    if (p.type !== "literal") acc[p.type] = p.value;
-    return acc;
-  }, {});
-  const ctNow = new Date(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`);
-  // Target: today @ 4 AM CT (as represented in that same local frame).
-  let target = new Date(ctNow);
-  target.setHours(ROTATION_DAILY_HOUR_CT, 0, 0, 0);
-  // If we're already past 4 AM today (in CT), aim for tomorrow.
-  if (target.getTime() <= ctNow.getTime()) target.setDate(target.getDate() + 1);
-  return target.getTime() - ctNow.getTime();
-}
-// Did we already sync today (in Chicago time)? Compares the stored
-// lastRotationSyncAt timestamp's Chicago date with today's Chicago date.
-function syncedAlreadyToday() {
-  if (!lastRotationSyncAt) return false;
-  const last = new Date(lastRotationSyncAt);
-  if (isNaN(last.getTime())) return false;
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  });
-  return fmt.format(last) === fmt.format(new Date());
-}
-function recordRotationSync(when) {
-  const iso = (when instanceof Date ? when : new Date()).toISOString();
-  lastRotationSyncAt = iso;
-  try { localStorage.setItem(LS_LAST_SYNC_KEY, iso); } catch (e) {}
-}
-function loadLastRotationSync() {
-  try {
-    const s = localStorage.getItem(LS_LAST_SYNC_KEY);
-    if (s) lastRotationSyncAt = s;
-  } catch (e) {}
-}
 
 /* Tiny CSV parser — handles quoted cells with embedded commas, newlines, and
    doubled-quote escapes. Returns array of arrays of strings. */
@@ -2739,7 +2291,7 @@ async function syncRotationFromSheet() {
   const fresh = await fetchRotationFromSheet();
   reconcileCourses(fresh);
   syncOfferingsFromRotation();
-  recordRotationSync();           // ISO string in localStorage + module var
+  lastRotationSyncAt = new Date();
   setDirty(true);
   if (typeof renderTerms === "function") renderTerms();
   if (typeof renderRegistrar === "function") renderRegistrar();
@@ -2757,7 +2309,7 @@ function showRotationBanner(missing) {
     if (main) main.parentNode.insertBefore(bar, main);
   }
   const stamp = lastRotationSyncAt
-    ? (new Date(lastRotationSyncAt)).toLocaleString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit", hour12: true, timeZoneName: "short" })
+    ? lastRotationSyncAt.toLocaleString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit", hour12: true, timeZoneName: "short" })
     : "never";
   const missingHtml = (missing && missing.length)
     ? `<span style="color:var(--warn);"><strong>${missing.length} prefix${missing.length===1?"":"es"} missing a dean:</strong> ${missing.join(", ")}</span>`
@@ -2865,15 +2417,6 @@ const state = {
   regSortDir: 1,
   clFilter: { search: "", type: "", range: "" },
   termDeadlines: {},     // key: `${semester}|${subterm}|${year}` → YYYY-MM-DD (one deadline for the whole subterm)
-  // Phase 4: course → program manager mapping, loaded from Supabase.
-  // Course code (e.g. "ACC 240") → program manager name.
-  pmByCourse: {},
-  // Phase 4: per-(semester, subterm, year) override of TERM_DATES.
-  // Key format matches termKey(): "Fall|1A|2026" → { start, end } (YYYY-MM-DD).
-  termDateOverrides: {},
-  // ISO timestamp of the last rotation-sheet sync (saved to localStorage so
-  // we can skip the daily 4am-Central sync if it already happened today).
-  lastRotationSyncAt: "",
 };
 
 // Subterm definitions: each subterm maps to a set of rotation-letter slots in its semester.
@@ -2930,18 +2473,9 @@ function termKey(semester, subterm, year) {
   return `${semester}|${subterm}|${year}`;
 }
 function termStartDate(semester, subterm, year) {
-  // Phase 4: admin overrides win. effectiveTermDates() falls back to the
-  // hard-coded TERM_DATES bracket if there's no override for this key, so
-  // existing code keeps working.
-  if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, year).start || "";
-  }
   return (TERM_DATES[termKey(semester, subterm, year)] || {}).start || "";
 }
 function termEndDate(semester, subterm, year) {
-  if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, year).end || "";
-  }
   return (TERM_DATES[termKey(semester, subterm, year)] || {}).end || "";
 }
 /* Assignment deadline = 6 weeks (42 days) before the subterm start date. */
@@ -3102,22 +2636,7 @@ function setDirty(v=true) {
     }
     el.classList.toggle("dirty", v);
   }
-  if (v) {
-    scheduleLocalDraftSave();   // debounced local cache (offline fallback)
-    scheduleSupabaseFlush();    // debounced shared state via Supabase
-  }
-}
-// JSON.stringify-ing the whole state (~6000 courses + many offerings) on
-// every keystroke was a major contributor to perceived slowness when
-// editing inputs and swapping terms. The actual write only needs to happen
-// occasionally — every 500ms of inactivity is plenty for offline fallback.
-let _localDraftTimer = null;
-function scheduleLocalDraftSave() {
-  if (_localDraftTimer) return;
-  _localDraftTimer = setTimeout(() => {
-    _localDraftTimer = null;
-    saveLocalDraft();
-  }, 500);
+  if (v) saveLocalDraft();
 }
 function saveLocalDraft() {
   try { localStorage.setItem(LS_KEY, JSON.stringify({ courses: state.courses, requests: state.requests, offerings: state.offerings, ts: Date.now() })); }
@@ -3140,417 +2659,6 @@ function loadLocalDraft() {
   } catch (e) { /* ignore */ }
   return false;
 }
-
-/* ============================================================
-   Persistence — Supabase shared state (Phase 3 + Phase 4)
-   ────────────────────────────────────────────────────────────
-   • Offerings and change_requests live in Supabase; every user
-     reads + writes the same rows.
-   • Rows carry the full client object in `data jsonb` AND mirror
-     a handful of indexed columns (id, course_code, semester,
-     subterm, year, submitted, registrar_completed). If the
-     `data` column doesn't exist yet (phase 3 migration not run),
-     rowToOffering reconstructs from the columns; offeringToRow
-     auto-drops `data` on retry. Net effect: persistence works on
-     either schema, and we toast the schema gap loudly so it
-     gets fixed.
-   • setDirty(true) schedules a debounced flushToSupabase() that
-     upserts current state and deletes anything removed locally.
-   • Realtime subscriptions merge cross-user changes back into
-     local state and re-render (re-renders are coalesced).
-   • Phase 4 adds:
-       state.pmByCourse        ← course_program_managers
-       state.termDateOverrides ← term_date_overrides
-     Both loaded on startup and refreshed via realtime.
-   ============================================================ */
-
-// Set to false after a flush that errors with `column "data" of relation
-// "offerings"/"change_requests" does not exist`. We stop sending the data
-// field for the rest of the session and toast the user to run phase 3 SQL.
-let _hasDataColumn = true;
-
-function _err(label, error) {
-  // Compact, user-visible error toast — Supabase error objects can be deep,
-  // so we only surface message + code.
-  const msg = (error && (error.message || error.msg)) || String(error || "unknown");
-  const code = (error && (error.code || error.status)) ? ` [${error.code || error.status}]` : "";
-  console.error(label, error);
-  try { toast(`${label}${code}: ${msg}`); } catch (e) {}
-}
-
-/* ---- Schema mapping ---- */
-function offeringToRow(o) {
-  // Resolve the offering's local courseId to a stable course_code so the
-  // row is meaningful across browsers (each browser may have different
-  // randomly-generated local course ids for the same course).
-  const course = (state.courses || []).find(c => c.id === o.courseId);
-  const row = {
-    id: o.id,
-    course_code: course ? course.code : (o.courseCode || ""),
-    semester: o.semester || "Fall",
-    subterm: o.subterm || "1A",
-    year: o.year || 2026,
-    length: o.length || null,
-    rotation_slot: o.rotationSlot || null,
-    dean: o.dean || null,
-    program_manager: o.programManager || null,
-    deadline: o.deadline || null,
-    full_time_needed: o.fullTimeNeeded || null,
-    instructor: o.instructor || null,
-    contract_returned: !!o.contractReturned,
-    notes: o.notes || null,
-    submitted: !!o.submitted,
-    submitted_at: o.submittedAt || null,
-    registrar_completed: !!o.registrarCompleted,
-    registrar_completed_at: o.registrarCompletedAt || null,
-  };
-  if (_hasDataColumn) row.data = o;
-  return row;
-}
-function rowToOffering(row) {
-  if (!row) return null;
-  let o;
-  if (row.data && typeof row.data === "object") {
-    o = { ...row.data };
-  } else {
-    // Fallback: rebuild from indexed columns. Happens when the phase 3
-    // migration hasn't run, or when an admin inserted a row by hand.
-    o = {
-      id: row.id,
-      courseId: "",
-      semester: row.semester || "Fall",
-      subterm: row.subterm || "1A",
-      year: row.year || 2026,
-      length: row.length || "",
-      rotationSlot: row.rotation_slot || "",
-      dean: row.dean || "",
-      programManager: row.program_manager || "",
-      deadline: row.deadline || "",
-      fullTimeNeeded: row.full_time_needed || "",
-      instructor: row.instructor || "",
-      contractReturned: !!row.contract_returned,
-      notes: row.notes || "",
-      submitted: !!row.submitted,
-      submittedAt: row.submitted_at || "",
-      registrarCompleted: !!row.registrar_completed,
-      registrarCompletedAt: row.registrar_completed_at || "",
-    };
-  }
-  // Re-resolve courseId from course_code so it points at THIS browser's
-  // copy of the course list. (course ids are per-browser, course codes
-  // are stable.) Also stamp courseCode onto the offering so a future
-  // remap (after a rotation sync) can find it again even if the prior
-  // courseId no longer matches anything.
-  if (row.course_code) {
-    o.courseCode = row.course_code;
-    const byCode = (state.courses || []).find(c => c.code === row.course_code);
-    if (byCode) o.courseId = byCode.id;
-  }
-  return o;
-}
-function requestToRow(r) {
-  const row = {
-    id: r.id,
-    year: r.year || 2026,
-    status: r.status || "Pending Approval",
-  };
-  if (_hasDataColumn) row.data = r;
-  return row;
-}
-function rowToRequest(row) {
-  if (!row) return null;
-  if (row.data && typeof row.data === "object") return row.data;
-  // Fallback for rows missing the data blob — return what little we have
-  // so the request at least shows up in the queue.
-  return {
-    id: row.id,
-    year: row.year || 2026,
-    status: row.status || "Pending Approval",
-  };
-}
-
-/* ---- Initial load ---- */
-async function loadFromSupabase() {
-  if (!window.AUTH || !window.AUTH.user) return false;
-  try {
-    const [oRes, rRes, pmRes, tdoRes] = await Promise.all([
-      sb.from("offerings").select("*"),
-      sb.from("change_requests").select("*"),
-      sb.from("course_program_managers").select("*"),
-      sb.from("term_date_overrides").select("*"),
-    ]);
-    if (oRes.error) { _err("offerings load failed", oRes.error); return false; }
-    if (rRes.error) { _err("change_requests load failed", rRes.error); return false; }
-    // pmRes and tdoRes can fail without breaking the app — table may not
-    // exist yet if phase 4 SQL hasn't been run.
-    if (pmRes.error) {
-      console.warn("course_program_managers load failed (run phase 4 SQL?):", pmRes.error);
-    }
-    if (tdoRes.error) {
-      console.warn("term_date_overrides load failed (run phase 4 SQL?):", tdoRes.error);
-    }
-    // Detect phase 3 schema gap: if rows came back but none have a `data`
-    // field at all, the column probably doesn't exist. Surface this loudly.
-    const rows = oRes.data || [];
-    const anyWithData = rows.some(r => r && r.data && typeof r.data === "object");
-    if (rows.length && !anyWithData) {
-      _hasDataColumn = false;
-      try { toast("Heads-up: Supabase is missing the `data` column. Run supabase-schema-phase3.sql so assignments persist across browsers."); } catch (e) {}
-    } else if (rows.length && anyWithData) {
-      _hasDataColumn = true;
-    }
-    state.offerings = rows.map(rowToOffering).filter(Boolean);
-    state.requests  = (rRes.data || []).map(rowToRequest).filter(Boolean);
-    // Phase 4 lookups
-    state.pmByCourse = {};
-    for (const row of (pmRes.data || [])) {
-      if (row && row.course_code) state.pmByCourse[row.course_code] = row.program_manager || "";
-    }
-    state.termDateOverrides = {};
-    for (const row of (tdoRes.data || [])) {
-      if (row && row.term_key) {
-        state.termDateOverrides[row.term_key] = {
-          start: row.start_date || "",
-          end:   row.end_date   || "",
-        };
-      }
-    }
-    return true;
-  } catch (e) {
-    _err("loadFromSupabase failed", e);
-    return false;
-  }
-}
-
-/* ---- Debounced flush ---- */
-let _supabaseFlushTimer = null;
-let _flushInFlight = false;
-function scheduleSupabaseFlush() {
-  if (!window.AUTH || !window.AUTH.user) return;
-  if (_supabaseFlushTimer) clearTimeout(_supabaseFlushTimer);
-  _supabaseFlushTimer = setTimeout(() => {
-    _supabaseFlushTimer = null;
-    flushToSupabase().catch(e => _err("flushToSupabase failed", e));
-  }, 600);
-}
-async function flushToSupabase() {
-  if (!window.AUTH || !window.AUTH.user) return;
-  if (_flushInFlight) { scheduleSupabaseFlush(); return; }
-  _flushInFlight = true;
-  try {
-    const oRows = (state.offerings || []).map(offeringToRow).filter(r => r.id && r.course_code);
-    const rRows = (state.requests  || []).map(requestToRow).filter(r => r.id);
-    const localOIds = new Set(oRows.map(r => r.id));
-    const localRIds = new Set(rRows.map(r => r.id));
-    const [oIdRes, rIdRes] = await Promise.all([
-      sb.from("offerings").select("id"),
-      sb.from("change_requests").select("id"),
-    ]);
-    const oDel = ((oIdRes.data || []).map(r => r.id)).filter(id => !localOIds.has(id));
-    const rDel = ((rIdRes.data || []).map(r => r.id)).filter(id => !localRIds.has(id));
-    if (oRows.length) {
-      const { error } = await sb.from("offerings").upsert(oRows);
-      if (error) {
-        // If the data column doesn't exist, drop it and retry once. Future
-        // writes in this session skip the data field entirely.
-        if (/column .*data.* does not exist/i.test(error.message || "")) {
-          _hasDataColumn = false;
-          const retryRows = oRows.map(({ data, ...rest }) => rest);
-          const r2 = await sb.from("offerings").upsert(retryRows);
-          if (r2.error) _err("offerings upsert failed", r2.error);
-          else try { toast("Saved without rich data (data column missing — run phase 3 SQL)."); } catch (e) {}
-        } else {
-          _err("offerings upsert failed", error);
-        }
-      }
-    }
-    if (rRows.length) {
-      const { error } = await sb.from("change_requests").upsert(rRows);
-      if (error) {
-        if (/column .*data.* does not exist/i.test(error.message || "")) {
-          _hasDataColumn = false;
-          const retryRows = rRows.map(({ data, ...rest }) => rest);
-          const r2 = await sb.from("change_requests").upsert(retryRows);
-          if (r2.error) _err("change_requests upsert failed", r2.error);
-        } else {
-          _err("change_requests upsert failed", error);
-        }
-      }
-    }
-    if (oDel.length) {
-      const { error } = await sb.from("offerings").delete().in("id", oDel);
-      if (error) _err("offerings delete failed", error);
-    }
-    if (rDel.length) {
-      const { error } = await sb.from("change_requests").delete().in("id", rDel);
-      if (error) _err("change_requests delete failed", error);
-    }
-  } finally {
-    _flushInFlight = false;
-  }
-}
-
-/* ---- Realtime subscriptions ---- */
-let _realtimeChannel = null;
-function startRealtime() {
-  if (_realtimeChannel) return;
-  _realtimeChannel = sb.channel("scheduler-data")
-    .on("postgres_changes",
-        { event: "*", schema: "public", table: "offerings" },
-        (payload) => handleRealtimeOffering(payload))
-    .on("postgres_changes",
-        { event: "*", schema: "public", table: "change_requests" },
-        (payload) => handleRealtimeRequest(payload))
-    .on("postgres_changes",
-        { event: "*", schema: "public", table: "course_program_managers" },
-        (payload) => handleRealtimePM(payload))
-    .on("postgres_changes",
-        { event: "*", schema: "public", table: "term_date_overrides" },
-        (payload) => handleRealtimeTermDate(payload))
-    .subscribe();
-}
-function handleRealtimeOffering(payload) {
-  const event = payload.eventType || payload.type;
-  if (event === "DELETE") {
-    const id = (payload.old && payload.old.id) || null;
-    if (!id) return;
-    const before = state.offerings.length;
-    state.offerings = state.offerings.filter(o => o.id !== id);
-    if (state.offerings.length !== before) scheduleReRender();
-    return;
-  }
-  const row = payload.new;
-  if (!row) return;
-  const incoming = rowToOffering(row);
-  if (!incoming) return;
-  const idx = state.offerings.findIndex(o => o.id === incoming.id);
-  if (idx >= 0) state.offerings[idx] = incoming;
-  else state.offerings.push(incoming);
-  scheduleReRender();
-}
-function handleRealtimeRequest(payload) {
-  const event = payload.eventType || payload.type;
-  if (event === "DELETE") {
-    const id = (payload.old && payload.old.id) || null;
-    if (!id) return;
-    const before = state.requests.length;
-    state.requests = state.requests.filter(r => r.id !== id);
-    if (state.requests.length !== before) scheduleReRender();
-    return;
-  }
-  const row = payload.new;
-  if (!row) return;
-  const incoming = rowToRequest(row);
-  if (!incoming) return;
-  const idx = state.requests.findIndex(r => r.id === incoming.id);
-  if (idx >= 0) state.requests[idx] = incoming;
-  else state.requests.push(incoming);
-  scheduleReRender();
-}
-function handleRealtimePM(payload) {
-  const event = payload.eventType || payload.type;
-  if (event === "DELETE") {
-    const key = payload.old && payload.old.course_code;
-    if (key && state.pmByCourse) delete state.pmByCourse[key];
-  } else if (payload.new && payload.new.course_code) {
-    state.pmByCourse = state.pmByCourse || {};
-    state.pmByCourse[payload.new.course_code] = payload.new.program_manager || "";
-  }
-  scheduleReRender();
-}
-function handleRealtimeTermDate(payload) {
-  const event = payload.eventType || payload.type;
-  if (event === "DELETE") {
-    const key = payload.old && payload.old.term_key;
-    if (key && state.termDateOverrides) delete state.termDateOverrides[key];
-  } else if (payload.new && payload.new.term_key) {
-    state.termDateOverrides = state.termDateOverrides || {};
-    state.termDateOverrides[payload.new.term_key] = {
-      start: payload.new.start_date || "",
-      end:   payload.new.end_date   || "",
-    };
-  }
-  scheduleReRender();
-}
-// Coalesce multiple realtime events into one re-render per frame. Without
-// this, a burst of upserts from another browser triggers N full re-renders.
-let _reRenderTimer = null;
-function scheduleReRender() {
-  if (_reRenderTimer) return;
-  _reRenderTimer = setTimeout(() => {
-    _reRenderTimer = null;
-    reRenderAll();
-  }, 50);
-}
-function reRenderAll() {
-  try { if (typeof render === "function")         render(); }         catch (e) {}
-  try { if (typeof renderRequests === "function") renderRequests(); } catch (e) {}
-  try { if (typeof renderTerms === "function")    renderTerms(); }    catch (e) {}
-  try { if (typeof renderRegistrar === "function") renderRegistrar(); } catch (e) {}
-  try { if (typeof renderChangelog === "function") renderChangelog(); } catch (e) {}
-}
-
-/* ---- ID helpers ----
-   crypto.randomUUID() is supported in every browser we care about (Chrome
-   92+, Safari 15.4+, Firefox 95+).  Older code generated "o-xxx" / "r-xxx"
-   ids that won't fit the DB's uuid columns; new ids use real UUIDs. */
-function uuid() {
-  if (window.crypto && typeof window.crypto.randomUUID === "function") {
-    return window.crypto.randomUUID();
-  }
-  // Tiny fallback if randomUUID isn't available (very old browsers).
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-    const r = Math.random() * 16 | 0;
-    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
-  });
-}
-
-/* ============================================================
-   Role + admin helpers (Phase 4)
-   ──────────────────────────────────────────────────────────── */
-function currentRole() {
-  return (window.AUTH && window.AUTH.user && window.AUTH.user.role) || "pending";
-}
-function isAdmin() { return currentRole() === "admin"; }
-function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
-function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
-// Most write actions (assigning instructor, requesting changes, etc.) require
-// at least the program_manager role.
-function canEditAssignments() {
-  return ["program_manager","dean","registrar","admin"].includes(currentRole());
-}
-
-/* ============================================================
-   Effective term dates (Phase 4)
-   ────────────────────────────────────────────────────────────
-   The hard-coded TERM_DATES at the top of the file is the
-   authoritative source until an admin overrides specific entries
-   via the Admin page (stored in state.termDateOverrides).
-   ============================================================ */
-function effectiveTermDates(semester, subterm, year) {
-  const k = `${semester}|${subterm}|${year}`;
-  const override = state.termDateOverrides && state.termDateOverrides[k];
-  if (override && (override.start || override.end)) {
-    const base = TERM_DATES[k] || {};
-    return {
-      start: override.start || base.start || "",
-      end:   override.end   || base.end   || "",
-    };
-  }
-  return TERM_DATES[k] || { start: "", end: "" };
-}
-// PM lookup — checks the Phase 4 mapping first, then falls back to whatever
-// is on the offering itself (legacy data path).
-function pmForOffering(o) {
-  if (!o) return "";
-  if (state.pmByCourse) {
-    const course = (state.courses || []).find(c => c.id === o.courseId);
-    const code = (course && course.code) || o.courseCode || "";
-    if (code && state.pmByCourse[code]) return state.pmByCourse[code];
-  }
-  return o.programManager || "";
-}
-
 function toast(msg) {
   const el = document.getElementById("toast");
   el.textContent = msg;
@@ -4036,15 +3144,12 @@ function bindEvents() {
 
 /* ======== View switching ======== */
 function switchView(v) {
-  // Admin tab is gated — non-admins fall back to Terms.
-  if (v === "admin" && !isAdmin()) v = "terms";
   state.view = v;
   document.querySelectorAll(".view").forEach(el => el.classList.remove("active"));
   const target = v === "requests" ? "viewRequests"
                : v === "terms" ? "viewTerms"
                : v === "registrar" ? "viewRegistrar"
                : v === "changelog" ? "viewChangelog"
-               : v === "admin" ? "viewAdmin"
                : "viewRotation";
   const el = document.getElementById(target);
   if (el) el.classList.add("active");
@@ -4055,13 +3160,12 @@ function switchView(v) {
   if (v === "terms") renderTerms();
   if (v === "registrar") renderRegistrar();
   if (v === "changelog") renderChangelog();
-  if (v === "admin") renderAdmin();
 }
 
 /* ======== Term Assignments ======== */
 function newOffering(prefill = {}) {
   return Object.assign({
-    id: uuid(),     // Phase 3: real UUID so id matches Supabase offerings.id type
+    id: "o-" + Math.random().toString(36).slice(2, 9),
     courseId: "",
     semester: "Fall",
     subterm: "1A",
@@ -4125,7 +3229,7 @@ function syncOfferingsFromRotation(defaultYear) {
   for (const o of state.offerings) {
     haveCombo.add(offeringKey(o.courseId, o.semester, o.rotationSlot, o.year));
   }
-  const today = new Date();
+  const cur = currentTermAsOf();
   const toAdd = [];
   for (const c of state.courses) {
     const te = parseTakesEffect(c.takesEffect);
@@ -4144,17 +3248,14 @@ function syncOfferingsFromRotation(defaultYear) {
         if (te) {
           const target = { semester, year };
           if (compareTerms(target, te) < 0) continue;
-        }
-        // Don't auto-create offerings for a semester that has already started —
-        // the change should wait for that term to close. Uses an actual date
-        // check against TERM_DATES rather than currentTermAsOf(), which can
-        // mis-fire when the calendar has a gap and falls back to "nearest
-        // upcoming term" (which would incorrectly treat an unstarted next
-        // semester as the in-session one).
-        const semStart = termStartDate(semester, "1A", year);
-        if (semStart) {
-          const startTs = new Date(semStart + "T00:00:00").getTime();
-          if (!isNaN(startTs) && today.getTime() >= startTs) continue;
+          // Also block updates that would land inside the current term — the
+          // change should wait for the current term to close.
+          if (cur && compareTerms(target, cur) <= 0 && compareTerms(te, cur) <= 0) {
+            // takes-effect is in the past or current → still respect "current
+            // term unchanged" guard for newly-added rotation rows.
+            // Skip if the target equals the current term.
+            if (compareTerms(target, cur) === 0) continue;
+          }
         }
         const k = offeringKey(c.id, semester, slot, year);
         if (!haveCombo.has(k)) {
@@ -4174,22 +3275,19 @@ function syncOfferingsFromRotation(defaultYear) {
 }
 
 /* ─── Term rollover ──────────────────────────────────────────────────────────
-   10 weeks after a term's last subterm ends, every offering in that term is
-   reset for the next academic year (regardless of whether it ever made it
-   through the Registrar). This was 12 weeks + registrar-completed-only until
-   May 2026 — Tony asked for the broader sweep so a stalled section doesn't
-   linger forever.
-     • instructor / programManager / notes are blanked so the term is ready
-       for fresh assignments
+   12 weeks after a term's last subterm ends, any offerings in that term that
+   have been "cleared" (registrar-completed and not currently canceled) are
+   reset for the next academic year:
+     • instructor / programManager / notes are blanked so the cleared instructor
+       is ready to resubmit
      • year advances by +1
-     • submitted / registrarCompleted flags are cleared so the section flows
-       back through the standard workflow
-     • the assignment deadline auto-derives from TERM_DATES at the new
-       (year+1) date — the deadline tile updates automatically
-   Canceled offerings are left alone — they're a deliberate close-out, not
-   data to roll forward. This is idempotent: rolled offerings have already
-   advanced year, so the next pass doesn't see them as eligible. */
-const TEN_WEEKS_MS = 10 * 7 * 24 * 60 * 60 * 1000;
+     • submitted/registrarCompleted flags are cleared so the section flows back
+       through the standard workflow
+     • the assignment deadline auto-derives from TERM_DATES at the new (year+1)
+       date — the deadline tile in the term-stats bar updates automatically
+   This is idempotent: an offering that has already rolled forward is skipped
+   on subsequent runs because its year no longer matches the eligible term. */
+const TWELVE_WEEKS_MS = 12 * 7 * 24 * 60 * 60 * 1000;
 
 function termLastEndDate(semester, year) {
   // The latest end-date among the three subterms in this semester.
@@ -4205,7 +3303,7 @@ function termLastEndDate(semester, year) {
 function rollOverCompletedAssignments(now) {
   const today = (now instanceof Date) ? now : new Date();
   // Build a list of (semester, year) buckets that are eligible for rollover —
-  // i.e., the last subterm ended at least 10 weeks ago.
+  // i.e., the last subterm ended at least 12 weeks ago.
   const eligible = new Set();
   // We only consider years actually present in TERM_DATES — no need to scan
   // forever.
@@ -4221,7 +3319,7 @@ function rollOverCompletedAssignments(now) {
       if (!lastEnd) continue;
       const endTs = new Date(lastEnd + "T23:59:59").getTime();
       if (isNaN(endTs)) continue;
-      if (today.getTime() - endTs >= TEN_WEEKS_MS) {
+      if (today.getTime() - endTs >= TWELVE_WEEKS_MS) {
         eligible.add(`${sem}|${yr}`);
       }
     }
@@ -4230,9 +3328,9 @@ function rollOverCompletedAssignments(now) {
   let rolled = 0;
   for (const o of state.offerings) {
     if (!eligible.has(`${o.semester}|${o.year}`)) continue;
-    // Canceled offerings stay canceled (a deliberate close-out, not a
-    // future-term assignment). Everything else rolls forward — including
-    // sections that never made it through the Registrar, per spec.
+    // Only roll over offerings the registrar has cleared. Canceled ones stay
+    // canceled (they're a deliberate close-out, not a future-term assignment).
+    if (!o.registrarCompleted) continue;
     if (o.canceled) continue;
     // Bump to next academic year (+1) and reset workflow state.
     o.year = Number(o.year) + 1;
@@ -4306,7 +3404,7 @@ function applyTermFilters(list) {
       }
     }
     if (s) {
-      const hay = `${c.code} ${c.title} ${o.instructor} ${deanForOffering(o)} ${pmForOffering(o)} ${o.notes}`.toLowerCase();
+      const hay = `${c.code} ${c.title} ${o.instructor} ${deanForOffering(o)} ${o.programManager} ${o.notes}`.toLowerCase();
       if (!hay.includes(s)) return false;
     }
     if (so === "unassigned" && o.instructor) return false;
@@ -4327,7 +3425,7 @@ function applyTermSort(list) {
         case "length":   return o.length || "";
         case "school":   return SCHOOL_BY_PREFIX[(co.code||"").split(" ")[0]] || "";
         case "dean":     return deanForOffering(o) || "";
-        case "pm":       return pmForOffering(o) || "";
+        case "pm":       return o.programManager || "";
         case "deadline": return o.deadline || "9999";
         case "ftNeeded": return o.fullTimeNeeded || "";
         case "instructor": return o.instructor || "";
@@ -4361,15 +3459,6 @@ function renderTermStats(list) {
   const year = state.termFilter.year;
   const startISO = termStartDate(def.semester, def.subterm, year);
   const deadlineISO = termAssignmentDeadline(def.semester, def.subterm, year);
-  // Admin-only "Clear Term" button — placed just left of the assignment
-  // deadline tile, per Tony's spec (May 2026). Confirms then wipes every
-  // instructor assignment in (semester, year).
-  const clearBtn = isAdmin()
-    ? `<div class="item term-clear-tile" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
-         <button type="button" id="btnClearTerm" class="danger" style="white-space:nowrap;font-size:12px;padding:8px 12px;"
-                 title="Clear every instructor assignment in ${def.label} ${year}">Clear ${escapeHtml(def.label)} ${year}</button>
-       </div>`
-    : "";
   document.getElementById("termStats").innerHTML = `
     <div class="item term-label-tile">
       <strong style="font-size:18px;">${def.label}</strong>
@@ -4379,53 +3468,11 @@ function renderTermStats(list) {
       <strong style="font-size:18px;">${escapeHtml(fmtDateShort(startISO))}</strong>
       <span class="label">term start</span>
     </div>
-    ${clearBtn}
     <div class="item term-deadline-tile" title="Auto-derived: 6 weeks before term start">
       <strong>${escapeHtml(fmtDateShort(deadlineISO))}</strong>
       <span class="label">assignment deadline</span>
     </div>
   `;
-  // Wire up the Clear button. We do this here rather than in bindTermEvents
-  // because the button is recreated on every renderTermStats.
-  const cb = document.getElementById("btnClearTerm");
-  if (cb) cb.addEventListener("click", () => clearTermAssignments(def.semester, year));
-}
-
-// Admin action: wipe every instructor assignment in (semester, year). Same
-// reset as the 10-week auto-rollover except the offerings stay in the SAME
-// year (admin is clearing the current term, not rolling it forward).
-function clearTermAssignments(semester, year) {
-  if (!isAdmin()) return;
-  // Count affected so the confirm prompt is honest.
-  const affected = state.offerings.filter(o =>
-    o.semester === semester && o.year === year && !o.canceled
-  );
-  if (!affected.length) {
-    toast(`No assignments to clear in ${semester} ${year}.`);
-    return;
-  }
-  const ok = window.confirm(
-    `Clear all ${affected.length} instructor assignment${affected.length === 1 ? "" : "s"} for ${semester} ${year}?\n\n` +
-    `This resets instructor, program manager, notes, submission, and registrar status on every section in this term ` +
-    `(including ones already submitted to the Registrar). Canceled sections are left alone.\n\n` +
-    `This cannot be undone.`
-  );
-  if (!ok) return;
-  for (const o of affected) {
-    o.instructor = "";
-    o.programManager = "";
-    o.notes = "";
-    o.submitted = false;
-    o.submittedAt = "";
-    o.submittedBy = "";
-    o.registrarCompleted = false;
-    o.registrarCompletedAt = "";
-    o.registrarCompletedBy = "";
-    o.deadline = "";
-  }
-  setDirty(true);
-  reRenderAll();
-  toast(`Cleared ${affected.length} assignment${affected.length === 1 ? "" : "s"} in ${semester} ${year}.`);
 }
 
 function renderTermTable(list) {
@@ -4485,7 +3532,7 @@ function renderTermTable(list) {
         <td>${escapeHtml(c.title || "")}</td>
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean (auto-assigned from ${escapeHtml(school)})">${escapeHtml(DEAN_BY_SCHOOL[school] || "—")}</td>
-        <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
+        <td><input type="text" data-field="programManager" list="pmList" value="${escapeHtml(o.programManager||"")}" placeholder="PM…"${o.canceled?' readonly tabindex="-1"':''}></td>
         <td><input type="text" data-field="instructor" list="instrList" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
         <td class="actions">${actionBtn}</td>
@@ -4684,8 +3731,7 @@ function refreshTermDatalists() {
   const deans = new Set(), pms = new Set(), instrs = new Set();
   for (const o of state.offerings) {
     if (o.dean) deans.add(o.dean);
-    const pm = pmForOffering(o);
-    if (pm) pms.add(pm);
+    if (o.programManager) pms.add(o.programManager);
     if (o.instructor) instrs.add(o.instructor);
   }
   const set = (id, vals) => {
@@ -4734,7 +3780,7 @@ function exportTermCsv() {
   for (const o of list) {
     const c = state.courses.find(x => x.id === o.courseId) || {};
     const prefix = (c.code||"").split(" ")[0];
-    const cells = [c.code||"", sectionNumberFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), pmForOffering(o)||"", deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
+    const cells = [c.code||"", sectionNumberFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), o.programManager||"", deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
       .map(v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; });
     rows.push(cells.join(","));
   }
@@ -4810,7 +3856,7 @@ function applyRegFilters(list) {
       const school = SCHOOL_BY_PREFIX[prefix] || "";
       if (f.school && school !== f.school) return false;
       if (s) {
-        const hay = `${c.code} ${c.title} ${o.instructor||""} ${deanForOffering(o)} ${pmForOffering(o)||""} ${o.notes||""}`.toLowerCase();
+        const hay = `${c.code} ${c.title} ${o.instructor||""} ${deanForOffering(o)} ${o.programManager||""} ${o.notes||""}`.toLowerCase();
         if (!hay.includes(s)) return false;
       }
     } else {
@@ -5428,269 +4474,6 @@ function bindChangelogEvents() {
   }
 }
 
-/* ======== Admin view (Phase 4) ========
-   • Tab visibility: rendered only when isAdmin().
-   • PM mapping: CSV upload replaces course_program_managers in Supabase;
-     the table on this page shows the current state, with delete buttons.
-   • Term dates: shows TERM_DATES + any overrides; one Save button writes
-     ALL non-empty edits at once (and deletes overrides for emptied cells).
-*/
-
-// Tiny CSV parser — handles quoted fields and embedded commas. Stays inline
-// to avoid pulling in PapaParse for a single use.
-function parseCsv(text) {
-  const out = [];
-  let row = [];
-  let field = "";
-  let i = 0;
-  let inQuotes = false;
-  const s = String(text || "").replace(/\r\n?/g, "\n");
-  while (i < s.length) {
-    const ch = s[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (s[i + 1] === '"') { field += '"'; i += 2; continue; }
-        inQuotes = false; i++; continue;
-      }
-      field += ch; i++; continue;
-    }
-    if (ch === '"') { inQuotes = true; i++; continue; }
-    if (ch === ",") { row.push(field); field = ""; i++; continue; }
-    if (ch === "\n") {
-      row.push(field);
-      // Skip wholly-empty lines so trailing newlines don't add blank rows.
-      if (row.length > 1 || row[0] !== "") out.push(row);
-      row = []; field = ""; i++; continue;
-    }
-    field += ch; i++;
-  }
-  // Last field
-  if (field !== "" || row.length) {
-    row.push(field);
-    if (row.length > 1 || row[0] !== "") out.push(row);
-  }
-  return out;
-}
-
-function renderAdmin() {
-  // Toggle the Admin tab itself based on role.
-  const adminTab = document.getElementById("tabAdmin");
-  if (adminTab) adminTab.style.display = isAdmin() ? "" : "none";
-  // Only render the body if the page is visible (saves work otherwise).
-  const section = document.getElementById("viewAdmin");
-  if (!section) return;
-  if (!isAdmin()) return;
-  renderAdminPmTable();
-  renderAdminTermTable();
-}
-
-function renderAdminPmTable() {
-  const tb = document.getElementById("admPmTbody");
-  if (!tb) return;
-  const entries = Object.entries(state.pmByCourse || {})
-    .sort(([a], [b]) => a.localeCompare(b));
-  if (!entries.length) {
-    tb.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
-    return;
-  }
-  tb.innerHTML = entries.map(([code, pm]) => `
-    <tr data-pmcode="${escapeHtml(code)}">
-      <td><strong>${escapeHtml(code)}</strong></td>
-      <td>${escapeHtml(pm)}</td>
-      <td><button type="button" class="btn-pm-del" style="font-size:11px;padding:3px 8px;color:var(--danger);background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;">Remove</button></td>
-    </tr>
-  `).join("");
-}
-
-function renderAdminTermTable() {
-  const tb = document.getElementById("admTermTbody");
-  if (!tb) return;
-  // Build the list of all known term keys: union of TERM_DATES and any
-  // existing overrides (so an admin who manually inserted a future year
-  // into the DB still sees it here).
-  const keys = new Set([
-    ...Object.keys(TERM_DATES || {}),
-    ...Object.keys(state.termDateOverrides || {}),
-  ]);
-  const sorted = [...keys].sort((a, b) => {
-    const [sa, sta, ya] = a.split("|");
-    const [sb_, stb, yb] = b.split("|");
-    if (ya !== yb) return Number(ya) - Number(yb);
-    const order = { Fall: 0, Spring: 1, Summer: 2 };
-    if (sa !== sb_) return (order[sa] ?? 9) - (order[sb_] ?? 9);
-    return sta.localeCompare(stb);
-  });
-  tb.innerHTML = sorted.map(k => {
-    const [sem, st, yr] = k.split("|");
-    const def = SUBTERMS.find(s => s.semester === sem && s.subterm === st);
-    const label = def ? def.label : `${sem} ${st}`;
-    const calc = TERM_DATES[k] || { start: "", end: "" };
-    const ov = (state.termDateOverrides && state.termDateOverrides[k]) || null;
-    const effStart = ov && ov.start ? ov.start : calc.start;
-    const effEnd   = ov && ov.end   ? ov.end   : calc.end;
-    const source = ov ? "<span style='color:var(--warn);'>Override</span>" : "Calculated";
-    return `
-      <tr data-tkey="${escapeHtml(k)}">
-        <td><strong>${escapeHtml(label)}</strong></td>
-        <td>${escapeHtml(yr)}</td>
-        <td><input type="date" data-adm="start" value="${escapeHtml(effStart || "")}" style="font-family:inherit;font-size:13px;padding:4px 8px;"></td>
-        <td><input type="date" data-adm="end"   value="${escapeHtml(effEnd   || "")}" style="font-family:inherit;font-size:13px;padding:4px 8px;"></td>
-        <td>${source}</td>
-      </tr>
-    `;
-  }).join("");
-}
-
-function bindAdminEvents() {
-  const $ = id => document.getElementById(id);
-  // Upload button reads the file the user picked, parses, and pushes to DB.
-  const uploadBtn = $("btnAdmPmUpload");
-  if (uploadBtn) uploadBtn.addEventListener("click", uploadProgramManagersCsv);
-  const dlBtn = $("btnAdmPmDownload");
-  if (dlBtn) dlBtn.addEventListener("click", downloadProgramManagersCsv);
-  const clearBtn = $("btnAdmPmClear");
-  if (clearBtn) clearBtn.addEventListener("click", clearAllProgramManagers);
-  // Per-row "Remove" delegation.
-  const pmTbody = $("admPmTbody");
-  if (pmTbody) {
-    pmTbody.addEventListener("click", async (e) => {
-      const btn = e.target.closest("button.btn-pm-del");
-      if (!btn) return;
-      const row = btn.closest("tr[data-pmcode]");
-      if (!row) return;
-      const code = row.dataset.pmcode;
-      if (!confirm(`Remove the PM mapping for ${code}?`)) return;
-      const { error } = await sb.from("course_program_managers").delete().eq("course_code", code);
-      if (error) { _err("Remove PM failed", error); return; }
-      delete state.pmByCourse[code];
-      renderAdminPmTable();
-      reRenderAll();
-      toast(`Removed PM mapping for ${code}.`);
-    });
-  }
-  // Save term-date overrides.
-  const saveBtn = $("btnAdmTermSave");
-  if (saveBtn) saveBtn.addEventListener("click", saveTermDateOverrides);
-}
-
-async function uploadProgramManagersCsv() {
-  const fileInput = document.getElementById("admPmCsv");
-  const statusEl = document.getElementById("admPmStatus");
-  const file = fileInput && fileInput.files && fileInput.files[0];
-  if (!file) { if (statusEl) statusEl.textContent = "Choose a CSV file first."; return; }
-  const text = await file.text();
-  const rows = parseCsv(text);
-  if (!rows.length) { if (statusEl) statusEl.textContent = "CSV looks empty."; return; }
-  // Detect header row: if either header cell looks like a known label, drop it.
-  const headerLike = /course|code|program|manager|pm/i;
-  if (rows[0] && rows[0].length >= 2 && (headerLike.test(rows[0][0]) || headerLike.test(rows[0][1]))) {
-    rows.shift();
-  }
-  const mapping = {};
-  const skipped = [];
-  for (const r of rows) {
-    if (!r || r.length < 2) continue;
-    const code = (r[0] || "").trim();
-    const pm   = (r[1] || "").trim();
-    if (!code || !pm) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
-    // Normalize whitespace inside the course code (e.g. "ACC  240" → "ACC 240").
-    mapping[code.replace(/\s+/g, " ")] = pm;
-  }
-  const codes = Object.keys(mapping);
-  if (!codes.length) { if (statusEl) statusEl.textContent = "No usable rows found in the CSV."; return; }
-  // Replace strategy: clear the table first, then upsert new rows. Done in
-  // two steps because Supabase doesn't have a "replace all" verb.
-  if (statusEl) statusEl.textContent = `Uploading ${codes.length} mapping${codes.length === 1 ? "" : "s"}…`;
-  // The .neq filter is needed because Supabase rejects a bare DELETE-all.
-  const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
-  if (delRes.error) { _err("Clear existing PM mapping failed", delRes.error); return; }
-  const rowsToInsert = codes.map(code => ({ course_code: code, program_manager: mapping[code] }));
-  const insRes = await sb.from("course_program_managers").insert(rowsToInsert);
-  if (insRes.error) { _err("Insert PM mapping failed", insRes.error); return; }
-  // Update local state (realtime will also push the same rows, harmlessly).
-  state.pmByCourse = { ...mapping };
-  renderAdminPmTable();
-  reRenderAll();
-  if (statusEl) {
-    statusEl.textContent = `Uploaded ${codes.length} mapping${codes.length === 1 ? "" : "s"}` +
-      (skipped.length ? ` • ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped (missing code or PM)` : "") + ".";
-  }
-  toast(`PM mapping updated (${codes.length} course${codes.length === 1 ? "" : "s"}).`);
-  // Clear the file input so the same file can be re-uploaded if needed.
-  if (fileInput) fileInput.value = "";
-}
-
-function downloadProgramManagersCsv() {
-  const lines = ["Course Code,Program Manager"];
-  for (const [code, pm] of Object.entries(state.pmByCourse || {}).sort(([a], [b]) => a.localeCompare(b))) {
-    const safe = (s) => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
-    lines.push(`${safe(code)},${safe(pm)}`);
-  }
-  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "program-managers.csv";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-}
-
-async function clearAllProgramManagers() {
-  if (!confirm("Remove ALL program-manager mappings? Every course's PM column will be blank until you upload a new CSV.")) return;
-  const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
-  if (delRes.error) { _err("Clear PM mapping failed", delRes.error); return; }
-  state.pmByCourse = {};
-  renderAdminPmTable();
-  reRenderAll();
-  toast("All PM mappings cleared.");
-}
-
-async function saveTermDateOverrides() {
-  const statusEl = document.getElementById("admTermStatus");
-  const rows = Array.from(document.querySelectorAll("#admTermTbody tr[data-tkey]"));
-  const toUpsert = [];
-  const toDelete = [];
-  for (const tr of rows) {
-    const k = tr.dataset.tkey;
-    const startInp = tr.querySelector('input[data-adm="start"]');
-    const endInp   = tr.querySelector('input[data-adm="end"]');
-    const start = startInp ? startInp.value : "";
-    const end   = endInp   ? endInp.value   : "";
-    const calc = TERM_DATES[k] || { start: "", end: "" };
-    // If both inputs match the calculated defaults, no override is needed —
-    // delete any existing one. Otherwise upsert with whatever non-empty
-    // values the admin supplied. Empty inputs revert to default (null in DB).
-    const wantsOverride = (start && start !== calc.start) || (end && end !== calc.end);
-    if (wantsOverride) {
-      toUpsert.push({ term_key: k, start_date: start || null, end_date: end || null });
-    } else if (state.termDateOverrides && state.termDateOverrides[k]) {
-      toDelete.push(k);
-    }
-  }
-  if (statusEl) statusEl.textContent = "Saving…";
-  if (toUpsert.length) {
-    const r = await sb.from("term_date_overrides").upsert(toUpsert);
-    if (r.error) { _err("Save term-date overrides failed", r.error); return; }
-  }
-  if (toDelete.length) {
-    const r = await sb.from("term_date_overrides").delete().in("term_key", toDelete);
-    if (r.error) { _err("Delete term-date overrides failed", r.error); return; }
-  }
-  // Mirror local state so the term filter sees overrides immediately.
-  state.termDateOverrides = state.termDateOverrides || {};
-  for (const row of toUpsert) {
-    state.termDateOverrides[row.term_key] = { start: row.start_date || "", end: row.end_date || "" };
-  }
-  for (const k of toDelete) delete state.termDateOverrides[k];
-  renderAdminTermTable();
-  reRenderAll();
-  if (statusEl) {
-    statusEl.textContent = `Saved (${toUpsert.length} override${toUpsert.length === 1 ? "" : "s"}, ${toDelete.length} cleared).`;
-  }
-  toast("Term-date overrides saved.");
-}
-
 /* ======== Add Section modal ======== */
 function rotationSlotForLength(length) {
   return length === "5 Weeks"  ? "A"
@@ -5740,11 +4523,6 @@ function openSectionModal() {
   // Reasonable length default based on current subterm (5-week subterms are 5W by default)
   document.getElementById("sfld_length").value   = "5 Weeks";
   document.getElementById("sfld_deanDisplay").textContent = "—";
-  // PM is now auto-derived from state.pmByCourse — the visible field is a
-  // display-only div; the hidden input mirrors the same value for the form
-  // submit handler that reads sfld_pm.value.
-  const pmDisp = document.getElementById("sfld_pmDisplay");
-  if (pmDisp) pmDisp.textContent = "—";
   document.getElementById("sfld_pm").value = "";
   document.getElementById("sfld_instructor").value = "";
   document.getElementById("sfld_notes").value = "";
@@ -5933,37 +4711,27 @@ function bindTermEvents() {
   document.getElementById("sfld_course").addEventListener("input", (e) => {
     const hint = document.getElementById("sfld_courseHint");
     const deanDisp = document.getElementById("sfld_deanDisplay");
-    const pmDisp = document.getElementById("sfld_pmDisplay");
-    const pmHidden = document.getElementById("sfld_pm");
     const c = findCourseByInput(e.target.value);
     if (!e.target.value.trim()) {
       hint.textContent = "";
       if (deanDisp) deanDisp.textContent = "—";
-      if (pmDisp) pmDisp.textContent = "—";
-      if (pmHidden) pmHidden.value = "";
       return;
     }
     if (c) {
       hint.textContent = `✓ ${c.code} — ${c.title || ""}`;
       hint.style.color = "var(--ok)";
       if (deanDisp) deanDisp.textContent = deanForCourse(c) || "—";
-      // PM is now auto-derived from the admin-uploaded CSV mapping.
-      const pm = (state.pmByCourse && state.pmByCourse[c.code]) || "";
-      if (pmDisp) pmDisp.textContent = pm || "—";
-      if (pmHidden) pmHidden.value = pm;
     } else {
       hint.textContent = "No course matches that yet";
       hint.style.color = "var(--text-muted)";
       if (deanDisp) deanDisp.textContent = "—";
-      if (pmDisp) pmDisp.textContent = "—";
-      if (pmHidden) pmHidden.value = "";
     }
   });
 }
 
 function newRequest(prefill = {}) {
   return Object.assign({
-    id: uuid(),     // Phase 3: real UUID so id matches Supabase change_requests.id type
+    id: "r-" + Math.random().toString(36).slice(2, 9),
     submitter: "",
     date: new Date().toISOString().slice(0, 10),
     section: "Undergrad",
@@ -6781,10 +5549,10 @@ function bindRequestEvents() {
 function seedExampleRequests() {
   if (state.requests.length) return;
   state.requests = [
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Modify Time/Day", explanation:"Change to TR 3:25-4:40 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Modify Time/Day", explanation:"Change to MW 4-5:15 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ id:"r-ex1", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Modify Time/Day", explanation:"Change to TR 3:25-4:40 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
+    newRequest({ id:"r-ex2", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Modify Time/Day", explanation:"Change to MW 4-5:15 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
+    newRequest({ id:"r-ex3", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ id:"r-ex4", submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
   ];
   state.requests.forEach(r => logRequestEvent(r, "Created from Schedule Change sheet sample"));
 }
@@ -6854,19 +5622,6 @@ function promptUserName(opts = {}) {
   });
 }
 async function requireUserName() {
-  // Phase 2: if Supabase auth is wired up, defer to it.  AUTH.ready blocks
-  // until the user has signed in AND has a non-pending role; we adopt the
-  // authenticated identity as the app's user name (overriding any stale
-  // localStorage value from a previous session).
-  if (window.AUTH && window.AUTH.ready) {
-    await window.AUTH.ready;
-    const u = window.AUTH.user;
-    if (u) {
-      const name = u.displayName || u.email;
-      setUserName(name);
-      return name;
-    }
-  }
   const stored = getUserName();
   if (stored) { setUserName(stored); return stored; }
   return await promptUserName();
@@ -6895,7 +5650,6 @@ function toggleTheme() {
 
 async function init() {
   loadTheme();
-  loadLastRotationSync();
   const themeBtn = document.getElementById("btnThemeToggle");
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
   // Hook up the user-name chip in the header — clicking it re-opens the prompt.
@@ -6908,94 +5662,42 @@ async function init() {
     });
     if (v) toast(`Now editing as ${v}`);
   });
-  // Gate the rest of the app on auth being resolved.  requireUserName()
-  // awaits window.AUTH.ready and adopts the signed-in identity as the
-  // editing display name (Phase 2).
+  // Gate the rest of the app on a name being entered.
   await requireUserName();
-  // 1) Restore the cached course list from localStorage FIRST so that when
-  // we load offerings from Supabase, rowToOffering can resolve course_code →
-  // courseId correctly. Without courses pre-loaded, every offering would land
-  // with a dangling courseId and the term grid would render empty.
+  // Restore user-edited state (offerings, requests, deadlines) from localStorage,
+  // but ALWAYS pull fresh course metadata from the rotation sheet on every load.
+  // Online-only behavior: if the sheet is unreachable we show an error overlay
+  // and refuse to start so the user never works against stale data.
   loadLocalDraft();
-  // 2) Phase 3: shared state lives in Supabase.  Load offerings +
-  // change_requests + PM mapping + term-date overrides.
-  const dbLoaded = await loadFromSupabase();
-  // termDeadlines stays in localStorage for now (not migrated).
-  try {
-    const s = localStorage.getItem(LS_KEY);
-    if (s) {
-      const d = JSON.parse(s);
-      if (d.termDeadlines && typeof d.termDeadlines === "object") state.termDeadlines = d.termDeadlines;
-    }
-  } catch (e) {}
   bindEvents();
   bindRequestEvents();
   bindTermEvents();
   bindRegistrarEvents();
   bindChangelogEvents();
-  bindAdminEvents();
-  // 3) Rotation sheet sync. We now run this at most once per day — at 4 AM
-  // America/Chicago. On a fresh load, we still need to sync if (a) we've
-  // never synced or (b) the cached date is from a prior calendar day in CT.
-  let synced = false;
-  if (!syncedAlreadyToday() || !state.courses.length) {
-    try {
-      await syncRotationFromSheet();
-      synced = true;
-    } catch (err) {
-      // If we have a cached course list, soldier on and just toast the
-      // failure. Only show the hard-block error when there's no fallback.
-      if (!state.courses.length) {
-        showRotationError(err);
-        return;
-      }
-      toast("Couldn't reach the rotation sheet — using cached copy.");
-    }
+  try {
+    await syncRotationFromSheet();
+  } catch (err) {
+    showRotationError(err);
+    return;
   }
-  // 4) After courses are loaded, re-resolve any offerings whose courseId
-  // doesn't match a current course (cross-browser id remap).
-  for (const o of state.offerings) {
-    if (!o.courseId || !state.courses.find(c => c.id === o.courseId)) {
-      // o.courseCode might be carried in the data blob; offeringToRow also
-      // stores the course code in the indexed column.
-      const code = o.courseCode || "";
-      if (code) {
-        const c = state.courses.find(x => x.code === code);
-        if (c) o.courseId = c.id;
-      }
-    }
-  }
-  // 5) syncRotationFromSheet may have added offerings the DB didn't yet know
-  // about (e.g., new courses in the sheet). Push them up so other users see
-  // them. Skipped if we didn't sync (nothing new locally).
-  if (dbLoaded && synced) {
-    flushToSupabase().catch(e => _err("post-sync flush failed", e));
-  }
-  // 6) Start listening for cross-user changes.
-  startRealtime();
   seedExampleRequests();
-  // Roll over assignments whose terms ended 10+ weeks ago.
+  // Roll over any cleared assignments whose terms ended 12+ weeks ago. Runs
+  // on every load so nothing falls through the cracks if the app sits idle.
   const rolled = rollOverCompletedAssignments();
-  if (rolled) toast(`${rolled} assignment${rolled===1?"":"s"} rolled forward to the next academic year`);
+  if (rolled) toast(`${rolled} cleared assignment${rolled===1?"":"s"} rolled forward to the next academic year`);
   render();
   renderRequests();
   renderTerms();
   renderRegistrar();
   renderChangelog();
-  renderAdmin();
   setDirty(state.dirty);
   toast(`Loaded ${state.courses.length} courses from rotation sheet`);
-  // 7) Schedule the next daily sync at 4 AM Central. Each tick reschedules
-  // itself, so the timer survives forever.
-  function scheduleNextDailySync() {
-    const delay = msUntilNextChicago4am(new Date());
-    setTimeout(async () => {
-      try { await syncRotationFromSheet(); }
-      catch (e) { toast("Rotation daily sync failed: " + (e && e.message || e)); }
-      scheduleNextDailySync();
-    }, Math.max(60_000, delay)); // safety floor at 1 minute
-  }
-  scheduleNextDailySync();
+  // Auto-resync the sheet every 15 minutes; failures during a poll are
+  // surfaced as a toast — they don't block the UI.
+  setInterval(async () => {
+    try { await syncRotationFromSheet(); }
+    catch (e) { toast("Rotation auto-sync failed: " + (e && e.message || e)); }
+  }, ROTATION_POLL_MS);
 }
 
 init();
