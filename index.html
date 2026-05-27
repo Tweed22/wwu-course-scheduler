@@ -4580,25 +4580,22 @@ function renderTermTable(list) {
     const isLocked = o.submitted || o.canceled;
     const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || "");
-    // Action buttons: when canceled, only Request Change is available (per spec).
-    // When submitted, Request Change is available. Otherwise show Submit + Cancel.
-    // When an instructor has been entered but not yet submitted, the Submit
-    // button gets a "needs-submit" pulse so PMs realize there's a next step —
-    // the previous styling was indistinguishable from a normal idle button.
+    // Action button: single dynamic button per Tony's spec (May 2026).
+    //   • Canceled section: Re-instate
+    //   • Submitted section: Request Change
+    //   • Editable section with instructor text: Submit to Registrar (pulsing)
+    //   • Editable section without instructor: Cancel Course
+    // The button morphs in place as the user types into the instructor field
+    // (see the keystroke handler in bindTermEvents that toggles class/text).
     let actionBtn;
     if (o.canceled) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.submitted) {
       actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" title="Open a Change Request for this submitted section">Request Change</button>`;
+    } else if (o.instructor && o.instructor.trim()) {
+      actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
     } else {
-      const needsSubmit = !!(o.instructor && o.instructor.trim());
-      const submitClasses = `btn-submit${needsSubmit ? ' needs-submit' : ''}`;
-      const submitTitle = needsSubmit
-        ? "An instructor is assigned — submit to the Registrar to lock it in"
-        : "Lock this section and send it to the Registrar";
-      const submitLabel = needsSubmit ? "→ Submit to Registrar" : "Submit to Registrar";
-      actionBtn = `<button type="button" class="${submitClasses}" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="${escapeHtml(submitTitle)}">${submitLabel}</button>
-                   <button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
+      actionBtn = `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
     const submittedBadge = o.submitted ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>` : "";
     const canceledBadge = o.canceled ? `<span class="submitted-badge" title="Course canceled${o.canceledAt ? ' on ' + escapeHtml(fmtDateShort(o.canceledAt)) : ''}" style="background:var(--danger);color:white;">CANCELED</span>` : "";
@@ -6034,17 +6031,18 @@ function bindTermEvents() {
       row.classList.toggle("overdue", isOverdue(o));
       updateTermBadge();
       renderTermSubtermChips();
-      // Also toggle the "needs-submit" pulse on the Submit button so the cue
-      // appears the moment a PM types a name in. Submitted/canceled rows
-      // don't have a .btn-submit, so the lookup safely no-ops there.
-      const submitBtn = row.querySelector(".btn-submit");
-      if (submitBtn) {
-        const needs = !!(o.instructor && o.instructor.trim()) && !o.submitted && !o.canceled;
-        submitBtn.classList.toggle("needs-submit", needs);
-        submitBtn.textContent = needs ? "→ Submit to Registrar" : "Submit to Registrar";
-        submitBtn.title = needs
-          ? "An instructor is assigned — submit to the Registrar to lock it in"
-          : "Lock this section and send it to the Registrar";
+      // Morph the single action button between Submit ↔ Cancel as the user
+      // types. Only fires for editable rows (submitted/canceled rows have
+      // Re-instate / Request Change which we don't touch).
+      if (f === "instructor" && !o.submitted && !o.canceled) {
+        const cell = row.querySelector("td.actions");
+        if (cell) {
+          const hasInstructor = !!(o.instructor && o.instructor.trim());
+          const oid = escapeHtml(o.id);
+          cell.innerHTML = hasInstructor
+            ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`
+            : `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${oid}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
+        }
       }
     }
   });
