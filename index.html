@@ -4506,41 +4506,40 @@ function renderTermStats(list) {
   if (cb) cb.addEventListener("click", () => clearTermAssignments(def.semester, year));
 }
 
-// Admin action: wipe every instructor assignment in (semester, year). Same
-// reset as the 10-week auto-rollover except the offerings stay in the SAME
-// year (admin is clearing the current term, not rolling it forward).
+// Admin action: nuke a term back to factory defaults. Per Tony's spec
+// (May 2026), this not only blanks instructor/PM/notes — it removes every
+// offering for the (semester, year) and re-runs the rotation sync so the
+// term is rebuilt exactly as a fresh load from the Google Sheet would
+// produce it. Extra sections (§02, §03 added via the "+" button), canceled
+// sections, and manually-tweaked rows are all wiped.
 function clearTermAssignments(semester, year) {
   if (!isAdmin()) return;
-  // Count affected so the confirm prompt is honest.
-  const affected = state.offerings.filter(o =>
-    o.semester === semester && o.year === year && !o.canceled
-  );
+  const affected = state.offerings.filter(o => o.semester === semester && o.year === year);
   if (!affected.length) {
-    toast(`No assignments to clear in ${semester} ${year}.`);
+    toast(`No offerings to clear in ${semester} ${year}.`);
     return;
   }
   const ok = window.confirm(
-    `Clear all ${affected.length} instructor assignment${affected.length === 1 ? "" : "s"} for ${semester} ${year}?\n\n` +
-    `This resets instructor, program manager, notes, submission, and registrar status on every section in this term ` +
-    `(including ones already submitted to the Registrar). Canceled sections are left alone.\n\n` +
+    `Reset ${semester} ${year} to its default state?\n\n` +
+    `Every offering in this term will be deleted (${affected.length} section${affected.length === 1 ? "" : "s"}), ` +
+    `then the term will be rebuilt from the rotation sheet. That clears all instructor assignments, ` +
+    `program manager / notes overrides, submission and registrar status, AND removes any extra sections ` +
+    `(§02, §03, …) plus any canceled sections.\n\n` +
     `This cannot be undone.`
   );
   if (!ok) return;
-  for (const o of affected) {
-    o.instructor = "";
-    o.programManager = "";
-    o.notes = "";
-    o.submitted = false;
-    o.submittedAt = "";
-    o.submittedBy = "";
-    o.registrarCompleted = false;
-    o.registrarCompletedAt = "";
-    o.registrarCompletedBy = "";
-    o.deadline = "";
-  }
+  const removedCount = affected.length;
+  // Drop every offering for this (semester, year) from local state. The
+  // debounced flush will propagate the deletes to Supabase (the diff query
+  // sees these ids in DB but not locally, so it issues DELETE for them).
+  state.offerings = state.offerings.filter(o => !(o.semester === semester && o.year === year));
+  // Rebuild from the rotation sheet defaults. syncOfferingsFromRotation
+  // operates on state.courses (already loaded) and adds back exactly the
+  // (course, slot) combos that the sheet says belong in this term.
+  try { syncOfferingsFromRotation(year); } catch (e) { _err("Rebuild after Clear Term failed", e); }
   setDirty(true);
   reRenderAll();
-  toast(`Cleared ${affected.length} assignment${affected.length === 1 ? "" : "s"} in ${semester} ${year}.`);
+  toast(`Reset ${semester} ${year} — removed ${removedCount} section${removedCount === 1 ? "" : "s"} and rebuilt from rotation.`);
 }
 
 function renderTermTable(list) {
