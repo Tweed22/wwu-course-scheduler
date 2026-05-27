@@ -1033,6 +1033,33 @@
     font-weight: 600;
   }
   .term-table .btn-submit:hover { background: #e6eefb; }
+  /* When an instructor is assigned but the section hasn't been submitted yet,
+     pulse the Submit button so PMs know there's a next step. The colour
+     swap from white-on-blue → blue-on-white draws the eye. */
+  .term-table .btn-submit.needs-submit {
+    background: #1d4989;
+    color: white;
+    border-color: #1d4989;
+    box-shadow: 0 0 0 0 rgba(29,73,137,0.6);
+    animation: pulseSubmit 1.6s ease-out infinite;
+  }
+  .term-table .btn-submit.needs-submit:hover {
+    background: #15376a;
+    color: white;
+  }
+  @keyframes pulseSubmit {
+    0%   { box-shadow: 0 0 0 0   rgba(29,73,137,0.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(29,73,137,0);    }
+    100% { box-shadow: 0 0 0 0   rgba(29,73,137,0);    }
+  }
+  html.dark .term-table .btn-submit.needs-submit {
+    background: #6dcaff;
+    color: #0a172e;
+    border-color: #6dcaff;
+  }
+  html.dark .term-table .btn-submit.needs-submit:hover {
+    background: #9ddcff;
+  }
   .term-table .btn-req-change {
     color: var(--wwu-green);
     border-color: var(--wwu-green);
@@ -1700,9 +1727,9 @@
           <th data-tsort="length" style="width:80px;">Length</th>
           <th data-tsort="dean">Dean</th>
           <th data-tsort="pm">Program Manager</th>
-          <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="width:140px;">Notes</th>
           <th class="no-sort" style="width:170px;">Actions</th>
+          <th data-tsort="instructor">Assigned Instructor</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -4503,13 +4530,22 @@ function renderTermTable(list) {
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || "");
     // Action buttons: when canceled, only Request Change is available (per spec).
     // When submitted, Request Change is available. Otherwise show Submit + Cancel.
+    // When an instructor has been entered but not yet submitted, the Submit
+    // button gets a "needs-submit" pulse so PMs realize there's a next step —
+    // the previous styling was indistinguishable from a normal idle button.
     let actionBtn;
     if (o.canceled) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.submitted) {
       actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" title="Open a Change Request for this submitted section">Request Change</button>`;
     } else {
-      actionBtn = `<button type="button" class="btn-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="Lock this section and send it to the Registrar">Submit to Registrar</button>
+      const needsSubmit = !!(o.instructor && o.instructor.trim());
+      const submitClasses = `btn-submit${needsSubmit ? ' needs-submit' : ''}`;
+      const submitTitle = needsSubmit
+        ? "An instructor is assigned — submit to the Registrar to lock it in"
+        : "Lock this section and send it to the Registrar";
+      const submitLabel = needsSubmit ? "→ Submit to Registrar" : "Submit to Registrar";
+      actionBtn = `<button type="button" class="${submitClasses}" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="${escapeHtml(submitTitle)}">${submitLabel}</button>
                    <button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
     const submittedBadge = o.submitted ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>` : "";
@@ -4538,9 +4574,9 @@ function renderTermTable(list) {
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean (auto-assigned from ${escapeHtml(school)})">${escapeHtml(DEAN_BY_SCHOOL[school] || "—")}</td>
         <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
-        <td><input type="text" data-field="instructor" list="instrList" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
         <td class="actions">${actionBtn}</td>
+        <td><input type="text" data-field="instructor" list="instrList" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
       </tr>
     `;
   }).join("");
@@ -5909,6 +5945,18 @@ function bindTermEvents() {
       row.classList.toggle("overdue", isOverdue(o));
       updateTermBadge();
       renderTermSubtermChips();
+      // Also toggle the "needs-submit" pulse on the Submit button so the cue
+      // appears the moment a PM types a name in. Submitted/canceled rows
+      // don't have a .btn-submit, so the lookup safely no-ops there.
+      const submitBtn = row.querySelector(".btn-submit");
+      if (submitBtn) {
+        const needs = !!(o.instructor && o.instructor.trim()) && !o.submitted && !o.canceled;
+        submitBtn.classList.toggle("needs-submit", needs);
+        submitBtn.textContent = needs ? "→ Submit to Registrar" : "Submit to Registrar";
+        submitBtn.title = needs
+          ? "An instructor is assigned — submit to the Registrar to lock it in"
+          : "Lock this section and send it to the Registrar";
+      }
     }
   });
   // Checkbox uses change not input
