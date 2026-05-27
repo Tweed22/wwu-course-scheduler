@@ -3196,6 +3196,22 @@ function loadLocalDraft() {
 // field for the rest of the session and toast the user to run phase 3 SQL.
 let _hasDataColumn = true;
 
+// Per-id "last touched locally" map. When realtime delivers an update for a
+// row that this browser edited within the last few seconds, we treat the
+// realtime payload as a stale echo of our own pending write and skip it.
+// Without this, the flicker symptom is: PM types "Tony", flush sends "T",
+// realtime echoes "T" back and overwrites local state, then next flush
+// re-sends and bounces again.
+const _localTouchedAt = new Map();
+const LOCAL_TOUCH_WINDOW_MS = 2500;
+function markLocallyTouched(id) {
+  if (id) _localTouchedAt.set(id, Date.now());
+}
+function recentlyTouched(id) {
+  const t = _localTouchedAt.get(id);
+  return t && (Date.now() - t < LOCAL_TOUCH_WINDOW_MS);
+}
+
 function _err(label, error) {
   // Compact, user-visible error toast — Supabase error objects can be deep,
   // so we only surface message + code.
@@ -3481,6 +3497,7 @@ function handleRealtimeOffering(payload) {
   if (event === "DELETE") {
     const id = (payload.old && payload.old.id) || null;
     if (!id) return;
+    if (recentlyTouched(id)) return; // ignore — we may be in the middle of editing
     const before = state.offerings.length;
     state.offerings = state.offerings.filter(o => o.id !== id);
     if (state.offerings.length !== before) scheduleReRender();
@@ -3491,6 +3508,11 @@ function handleRealtimeOffering(payload) {
   const incoming = rowToOffering(row);
   if (!incoming) return;
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
+  // If this row was just edited locally, treat the realtime payload as an
+  // echo of our own pending write and ignore it. Otherwise the user's
+  // partially-typed value gets overwritten by the older snapshot the
+  // server just acknowledged.
+  if (idx >= 0 && recentlyTouched(incoming.id)) return;
   if (idx >= 0) state.offerings[idx] = incoming;
   else state.offerings.push(incoming);
   scheduleReRender();
@@ -4523,6 +4545,22 @@ function clearTermAssignments(semester, year) {
 
 function renderTermTable(list) {
   const tb = document.getElementById("ttbody");
+  // Capture the currently-focused inline input so we can restore focus +
+  // caret after the rebuild. Otherwise any background re-render (cross-user
+  // update, term swap, etc.) yanks the user out of the field they're typing.
+  let focusSnapshot = null;
+  const ae = document.activeElement;
+  if (ae && tb.contains(ae) && ae.dataset && ae.dataset.field) {
+    const row = ae.closest("tr[data-oid]");
+    if (row) {
+      focusSnapshot = {
+        oid: row.dataset.oid,
+        field: ae.dataset.field,
+        selStart: typeof ae.selectionStart === "number" ? ae.selectionStart : null,
+        selEnd:   typeof ae.selectionEnd   === "number" ? ae.selectionEnd   : null,
+      };
+    }
+  }
   if (!list.length) {
     tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">No offerings in this subterm match the current filters. Try <code>Re-sync now</code> in the rotation banner if you recently edited rotation data.</td></tr>`;
     return;
@@ -4594,6 +4632,21 @@ function renderTermTable(list) {
       </tr>
     `;
   }).join("");
+  // Restore focus + caret if we yanked it out from under the user.
+  if (focusSnapshot) {
+    const row = tb.querySelector(`tr[data-oid="${CSS.escape(focusSnapshot.oid)}"]`);
+    if (row) {
+      const inp = row.querySelector(`input[data-field="${focusSnapshot.field}"]`);
+      if (inp) {
+        inp.focus();
+        try {
+          if (focusSnapshot.selStart != null) {
+            inp.setSelectionRange(focusSnapshot.selStart, focusSnapshot.selEnd);
+          }
+        } catch (_) { /* ignore */ }
+      }
+    }
+  }
 }
 
 /* Compute per-section index ("01", "02", "03", …) for an offering within its
@@ -5971,6 +6024,10 @@ function bindTermEvents() {
     // Guard: instructor is locked once a section has been submitted to the Registrar
     if (f === "instructor" && o.submitted) { inp.value = o.instructor || ""; return; }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
+    // Record the local touch so any realtime echo of our own write within
+    // the next few seconds gets ignored (prevents the disappear-reappear
+    // flicker while the user is still typing).
+    markLocallyTouched(o.id);
     setDirty(true);
     // For deadline/instructor changes, re-apply row styling + badge without full re-render
     if (f === "deadline" || f === "instructor") {
