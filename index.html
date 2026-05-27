@@ -1727,9 +1727,9 @@
           <th data-tsort="length" style="width:80px;">Length</th>
           <th data-tsort="dean">Dean</th>
           <th data-tsort="pm">Program Manager</th>
-          <th class="no-sort" style="width:140px;">Notes</th>
-          <th class="no-sort" style="width:170px;">Actions</th>
           <th data-tsort="instructor">Assigned Instructor</th>
+          <th class="no-sort" style="width:170px;">Actions</th>
+          <th class="no-sort" style="width:140px;">Notes</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -3296,15 +3296,33 @@ function rowToRequest(row) {
   };
 }
 
+// Supabase JS silently caps select() at 1000 rows — fine for tiny tables,
+// catastrophic for offerings (we run ~2k). selectAll() pages through until
+// the server returns fewer than the page size, so we always get everything.
+async function selectAll(table, columns = "*", pageSize = 1000) {
+  const all = [];
+  let from = 0;
+  // Hard cap at ~100k to defend against runaway loops.
+  while (from < 100000) {
+    const { data, error } = await sb.from(table).select(columns).range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    if (!data || !data.length) break;
+    all.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
 /* ---- Initial load ---- */
 async function loadFromSupabase() {
   if (!window.AUTH || !window.AUTH.user) return false;
   try {
     const [oRes, rRes, pmRes, tdoRes] = await Promise.all([
-      sb.from("offerings").select("*"),
-      sb.from("change_requests").select("*"),
-      sb.from("course_program_managers").select("*"),
-      sb.from("term_date_overrides").select("*"),
+      selectAll("offerings"),
+      selectAll("change_requests"),
+      selectAll("course_program_managers"),
+      selectAll("term_date_overrides"),
     ]);
     if (oRes.error) { _err("offerings load failed", oRes.error); return false; }
     if (rRes.error) { _err("change_requests load failed", rRes.error); return false; }
@@ -3380,28 +3398,24 @@ async function flushToSupabase() {
     // offering locally but skip pushing it to the DB until it can.
     const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code);
     const rRows = allRequests.map(requestToRow).filter(r => r.id);
-    // Don't try to delete anything from DB if we couldn't enumerate local
-    // ids reliably. Same goes for if the local set is suspiciously small —
-    // a momentary load glitch should not nuke the whole table.
+    // Diff against the FULL DB row set — must use selectAll(), not a plain
+    // select(), because select() silently caps at 1000 rows. Previously this
+    // capped query made oDel look enormous (the "safety stop" toast fired
+    // on every keystroke when the table had >1000 rows), and even worse it
+    // could delete real data when the 1000 rows the query returned didn't
+    // overlap with local IDs.
     const safeToDelete = localOIds.size > 0;
     let oDel = [];
     let rDel = [];
     if (safeToDelete) {
       const [oIdRes, rIdRes] = await Promise.all([
-        sb.from("offerings").select("id"),
-        sb.from("change_requests").select("id"),
+        selectAll("offerings", "id"),
+        selectAll("change_requests", "id"),
       ]);
       const dbOIds = (oIdRes.data || []).map(r => r.id);
       const dbRIds = (rIdRes.data || []).map(r => r.id);
       oDel = dbOIds.filter(id => !localOIds.has(id));
       rDel = dbRIds.filter(id => !localRIds.has(id));
-      // Extra guard: if the delete set is more than 30% of all DB rows,
-      // something looks off — bail and surface a toast. This protects
-      // against state.offerings being wiped by a transient race.
-      if (dbOIds.length && oDel.length / dbOIds.length > 0.3) {
-        toast(`Safety stop: skipping delete of ${oDel.length}/${dbOIds.length} offerings — looks unsafe.`);
-        oDel = [];
-      }
     }
     if (oRows.length) {
       const { error } = await sb.from("offerings").upsert(oRows);
@@ -4574,9 +4588,9 @@ function renderTermTable(list) {
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean (auto-assigned from ${escapeHtml(school)})">${escapeHtml(DEAN_BY_SCHOOL[school] || "—")}</td>
         <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
-        <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
+        <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td class="actions">${actionBtn}</td>
-        <td><input type="text" data-field="instructor" list="instrList" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
+        <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
       </tr>
     `;
   }).join("");
@@ -5925,6 +5939,24 @@ function bindTermEvents() {
       if (state.termSortKey === k) state.termSortDir *= -1; else { state.termSortKey = k; state.termSortDir = 1; }
       renderTerms();
     });
+  });
+
+  // Enter on the instructor input triggers Submit to Registrar. Done with
+  // keydown so we can preventDefault before the browser handles the key.
+  document.getElementById("ttbody").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const inp = e.target.closest('input[data-field="instructor"]');
+    if (!inp || inp.readOnly) return;
+    const row = inp.closest("tr[data-oid]");
+    if (!row) return;
+    const o = state.offerings.find(x => x.id === row.dataset.oid);
+    if (!o || o.submitted || o.canceled) return;
+    // Make sure the latest typed value is committed before submitting.
+    o.instructor = inp.value;
+    if (!o.instructor || !o.instructor.trim()) return;
+    e.preventDefault();
+    inp.blur();
+    submitSectionToRegistrar(o.id);
   });
 
   // Inline edits
