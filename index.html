@@ -1950,8 +1950,8 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
     <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Program Managers (CSV upload)</h3>
     <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
-      Upload a CSV with two columns: <code>Course Code</code> (e.g. <code>ACC 240</code>) and <code>Program Manager</code>.
-      A header row is optional. Each upload <strong>replaces</strong> the entire mapping. The PM column on the Term Assignments page reads from this list automatically.
+      Upload a CSV with at least a <code>Course Number &amp; Prefix</code> column and a <code>Program Manager</code> column (e.g. the master course list export). A simple 2-column CSV (<code>Course Code</code>, <code>Program Manager</code>) is also accepted.
+      A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM column on the Term Assignments page reads from this list automatically.
     </p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
@@ -3338,21 +3338,47 @@ async function flushToSupabase() {
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
   _flushInFlight = true;
   try {
-    const oRows = (state.offerings || []).map(offeringToRow).filter(r => r.id && r.course_code);
-    const rRows = (state.requests  || []).map(requestToRow).filter(r => r.id);
-    const localOIds = new Set(oRows.map(r => r.id));
-    const localRIds = new Set(rRows.map(r => r.id));
-    const [oIdRes, rIdRes] = await Promise.all([
-      sb.from("offerings").select("id"),
-      sb.from("change_requests").select("id"),
-    ]);
-    const oDel = ((oIdRes.data || []).map(r => r.id)).filter(id => !localOIds.has(id));
-    const rDel = ((rIdRes.data || []).map(r => r.id)).filter(id => !localRIds.has(id));
+    // localOIds tracks EVERY local offering id (including ones with missing
+    // course_code that we'll skip on upsert). That's important because the
+    // delete-sweep below removes any DB row whose id isn't in localOIds —
+    // if we skipped those ids, we'd silently delete the user's data from
+    // the server (May 2026 bug: this is what wiped most classes after a
+    // refresh; my own filter-during-flush change caused it).
+    const allOfferings = state.offerings || [];
+    const allRequests  = state.requests  || [];
+    const localOIds = new Set(allOfferings.map(o => o.id).filter(Boolean));
+    const localRIds = new Set(allRequests.map(r => r.id).filter(Boolean));
+    // Now build the upsert payload — only rows that have the required
+    // course_code make it in. If course_code can't be resolved, we keep the
+    // offering locally but skip pushing it to the DB until it can.
+    const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code);
+    const rRows = allRequests.map(requestToRow).filter(r => r.id);
+    // Don't try to delete anything from DB if we couldn't enumerate local
+    // ids reliably. Same goes for if the local set is suspiciously small —
+    // a momentary load glitch should not nuke the whole table.
+    const safeToDelete = localOIds.size > 0;
+    let oDel = [];
+    let rDel = [];
+    if (safeToDelete) {
+      const [oIdRes, rIdRes] = await Promise.all([
+        sb.from("offerings").select("id"),
+        sb.from("change_requests").select("id"),
+      ]);
+      const dbOIds = (oIdRes.data || []).map(r => r.id);
+      const dbRIds = (rIdRes.data || []).map(r => r.id);
+      oDel = dbOIds.filter(id => !localOIds.has(id));
+      rDel = dbRIds.filter(id => !localRIds.has(id));
+      // Extra guard: if the delete set is more than 30% of all DB rows,
+      // something looks off — bail and surface a toast. This protects
+      // against state.offerings being wiped by a transient race.
+      if (dbOIds.length && oDel.length / dbOIds.length > 0.3) {
+        toast(`Safety stop: skipping delete of ${oDel.length}/${dbOIds.length} offerings — looks unsafe.`);
+        oDel = [];
+      }
+    }
     if (oRows.length) {
       const { error } = await sb.from("offerings").upsert(oRows);
       if (error) {
-        // If the data column doesn't exist, drop it and retry once. Future
-        // writes in this session skip the data field entirely.
         if (/column .*data.* does not exist/i.test(error.message || "")) {
           _hasDataColumn = false;
           const retryRows = oRows.map(({ data, ...rest }) => rest);
@@ -4063,6 +4089,9 @@ function newOffering(prefill = {}) {
   return Object.assign({
     id: uuid(),     // Phase 3: real UUID so id matches Supabase offerings.id type
     courseId: "",
+    // Stable cross-browser identifier. We stamp this whenever we know the
+    // course code so DB upserts and dedup keys stay consistent across users.
+    courseCode: "",
     semester: "Fall",
     subterm: "1A",
     year: 2026,
@@ -4118,12 +4147,44 @@ function offeringKey(courseId, semester, slot, year) {
    sync from creating offerings for terms before that takes-effect, so changes
    to the rotation only flow into the assignments list once the current term
    closes. */
+// Before May 2026 this used per-browser `courseId` to dedupe offerings, but
+// courseId is regenerated locally on every page load. When state.courses was
+// empty during loadFromSupabase (cross-browser, no localStorage cache), each
+// loaded offering ended up with an empty courseId; the next sync then created
+// duplicates of every section because nothing matched the dedup keys. Result:
+// huge duplicate piles in the DB, and other browsers seeing "new rows" rather
+// than updates because the IDs didn't line up. The fix is to dedupe by stable
+// course CODE — that string survives any local id reshuffling.
 function syncOfferingsFromRotation(defaultYear) {
   const year = defaultYear || state.termFilter.year || 2026;
-  // Which (course, semester, slot, year) combos already have at least one section? If so, don't add a new one.
+  // Pass 1: re-resolve courseId for any offering whose courseId no longer
+  // points at a real course. This relies on courseCode having been stamped
+  // by rowToOffering on load — without that, offerings loaded from DB before
+  // courses were available would be orphaned.
+  for (const o of state.offerings) {
+    if (!o.courseId || !state.courses.find(c => c.id === o.courseId)) {
+      const code = o.courseCode || "";
+      if (code) {
+        const c = state.courses.find(x => x.code === code);
+        if (c) {
+          o.courseId = c.id;
+          o.courseCode = c.code; // keep in sync
+        }
+      }
+    } else {
+      // Make sure courseCode is set for any offering that doesn't have it
+      // yet (e.g., locally-created offerings that haven't round-tripped DB).
+      const c = state.courses.find(x => x.id === o.courseId);
+      if (c && !o.courseCode) o.courseCode = c.code;
+    }
+  }
+  // Pass 2: dedup by course CODE, not courseId.
   const haveCombo = new Set();
   for (const o of state.offerings) {
-    haveCombo.add(offeringKey(o.courseId, o.semester, o.rotationSlot, o.year));
+    const c = state.courses.find(x => x.id === o.courseId);
+    const code = (c && c.code) || o.courseCode || "";
+    if (!code) continue;
+    haveCombo.add(`${code}|${o.semester}|${o.rotationSlot}|${o.year}`);
   }
   const today = new Date();
   const toAdd = [];
@@ -4137,29 +4198,20 @@ function syncOfferingsFromRotation(defaultYear) {
     for (const [semester, slots] of pairs) {
       for (const slot of slots) {
         if (slot === "AN") continue; // As Needed: don't auto-schedule
-        // If this rotation row has a future takes-effect, refuse to create
-        // offerings for any term that's before takes-effect. Once the current
-        // term closes, the takes-effect will no longer be in the future and
-        // future syncs will pick this up.
         if (te) {
           const target = { semester, year };
           if (compareTerms(target, te) < 0) continue;
         }
-        // Don't auto-create offerings for a semester that has already started —
-        // the change should wait for that term to close. Uses an actual date
-        // check against TERM_DATES rather than currentTermAsOf(), which can
-        // mis-fire when the calendar has a gap and falls back to "nearest
-        // upcoming term" (which would incorrectly treat an unstarted next
-        // semester as the in-session one).
         const semStart = termStartDate(semester, "1A", year);
         if (semStart) {
           const startTs = new Date(semStart + "T00:00:00").getTime();
           if (!isNaN(startTs) && today.getTime() >= startTs) continue;
         }
-        const k = offeringKey(c.id, semester, slot, year);
+        const k = `${c.code}|${semester}|${slot}|${year}`;
         if (!haveCombo.has(k)) {
           toAdd.push(newOffering({
             courseId: c.id,
+            courseCode: c.code,     // stamp the stable code so cross-browser dedup works
             semester, year,
             rotationSlot: slot,
             subterm: (subtermsForSlot(slot)[0]) || "1A",
@@ -5581,17 +5633,26 @@ async function uploadProgramManagersCsv() {
   const text = await file.text();
   const rows = parseCsv(text);
   if (!rows.length) { if (statusEl) statusEl.textContent = "CSV looks empty."; return; }
-  // Detect header row: if either header cell looks like a known label, drop it.
-  const headerLike = /course|code|program|manager|pm/i;
-  if (rows[0] && rows[0].length >= 2 && (headerLike.test(rows[0][0]) || headerLike.test(rows[0][1]))) {
+  // Detect header row and resolve column indices.
+  // Supports both the simple 2-column format (Course Code, Program Manager)
+  // and the full master-list format (School, Course Number & Prefix, Credits, Title, Program Manager).
+  let codeCol = 0, pmCol = 1;
+  const headerLike = /course|code|program|manager|pm|school|prefix|credit|title/i;
+  const firstRow = rows[0] || [];
+  if (firstRow.length >= 2 && firstRow.some(cell => headerLike.test(cell))) {
+    const hdrs = firstRow.map(h => String(h).trim().toLowerCase());
+    const detectedCode = hdrs.findIndex(h => /course\s*(number|code|prefix)|number\s*&?\s*prefix/.test(h));
+    const detectedPm   = hdrs.findIndex(h => /program\s*(manager|mgr)|^pm$/.test(h));
+    if (detectedCode >= 0) codeCol = detectedCode;
+    if (detectedPm   >= 0) pmCol   = detectedPm;
     rows.shift();
   }
   const mapping = {};
   const skipped = [];
   for (const r of rows) {
-    if (!r || r.length < 2) continue;
-    const code = (r[0] || "").trim();
-    const pm   = (r[1] || "").trim();
+    if (!r || r.length <= Math.max(codeCol, pmCol)) continue;
+    const code = (r[codeCol] || "").trim();
+    const pm   = (r[pmCol]   || "").trim();
     if (!code || !pm) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
     // Normalize whitespace inside the course code (e.g. "ACC  240" → "ACC 240").
     mapping[code.replace(/\s+/g, " ")] = pm;
