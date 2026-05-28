@@ -2786,7 +2786,7 @@ function showRotationBanner(missing) {
   bar.innerHTML = `
     <span><strong>Rotation:</strong> last sync ${escapeHtml(stamp)} (${state.courses.length} courses)</span>
     ${missingHtml}
-    <button type="button" id="btnRotationRetry" style="margin-left:auto;padding:4px 10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);border-radius:4px;cursor:pointer;font-size:11.5px;">Re-sync now</button>
+    ${isAdmin() ? `<button type="button" id="btnRotationRetry" style="margin-left:auto;padding:4px 10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);border-radius:4px;cursor:pointer;font-size:11.5px;">Re-sync now</button>` : ""}
   `;
   const retry = document.getElementById("btnRotationRetry");
   if (retry) retry.onclick = async () => {
