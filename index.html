@@ -7207,7 +7207,7 @@ async function init() {
   // Auto-filter: admins and registrars see all courses; deans and program
   // managers default to seeing only the courses they are assigned to.
   // Any user can lift the filter with the "Show All Courses" button.
-  if (isAdmin() || currentRole() === "registrar") {
+  if (currentRole() === "registrar") {
     state.termFilter.myCoursesOnly = false;
   }
   // 1) Restore the cached course list from localStorage FIRST so that when
