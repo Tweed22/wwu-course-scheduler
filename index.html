@@ -1977,8 +1977,8 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
     <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Program Managers (CSV upload)</h3>
     <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
-      Upload a CSV with at least a <code>Course Number &amp; Prefix</code> column and a <code>Program Manager</code> column (e.g. the master course list export). A simple 2-column CSV (<code>Course Code</code>, <code>Program Manager</code>) is also accepted.
-      A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM column on the Term Assignments page reads from this list automatically.
+      Upload the master course list CSV. The parser auto-detects columns: <code>Course Number &amp; Prefix</code> (course code), <code>Program Manager</code>, and optionally <code>Dean</code> (overrides the school-based Dean assignment). A simple 2- or 3-column CSV (<code>Course Code</code>, <code>Program Manager</code>, <code>Dean</code>) also works.
+      A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM and Dean columns on the Term Assignments page read from this list automatically. <strong>Note:</strong> the <code>Dean</code> column requires running <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS dean text;</code> in Supabase once.
     </p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
@@ -1993,11 +1993,12 @@
           <tr>
             <th style="width:160px;">Course Code</th>
             <th>Program Manager</th>
+            <th>Dean (override)</th>
             <th style="width:90px;">Actions</th>
           </tr>
         </thead>
         <tbody id="admPmTbody">
-          <tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
+          <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
         </tbody>
       </table>
     </div>
@@ -2895,6 +2896,8 @@ const state = {
   // Phase 4: course → program manager mapping, loaded from Supabase.
   // Course code (e.g. "ACC 240") → program manager name.
   pmByCourse: {},
+  // Course code → dean name (CSV-uploaded, overrides DEAN_BY_SCHOOL lookup).
+  deanByCourse: {},
   // Phase 4: per-(semester, subterm, year) override of TERM_DATES.
   // Key format matches termKey(): "Fall|1A|2026" → { start, end } (YYYY-MM-DD).
   termDateOverrides: {},
@@ -2956,20 +2959,31 @@ const TERM_DATES = {
 function termKey(semester, subterm, year) {
   return `${semester}|${subterm}|${year}`;
 }
+/* Academic-year model: offerings store the year the Fall semester starts.
+   Spring and Summer belong to the NEXT calendar year, so a TERM_DATES lookup
+   for those semesters must use year+1.
+   e.g. academic year 2026 → Fall 2026 (key year 2026),
+                              Spring 2027 (key year 2027),
+                              Summer 2027 (key year 2027). */
+function calendarYearFor(semester, academicYear) {
+  return (semester === "Spring" || semester === "Summer") ? academicYear + 1 : academicYear;
+}
 function termStartDate(semester, subterm, year) {
   // Phase 4: admin overrides win. effectiveTermDates() falls back to the
   // hard-coded TERM_DATES bracket if there's no override for this key, so
   // existing code keeps working.
+  const calYear = calendarYearFor(semester, year);
   if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, year).start || "";
+    return effectiveTermDates(semester, subterm, calYear).start || "";
   }
-  return (TERM_DATES[termKey(semester, subterm, year)] || {}).start || "";
+  return (TERM_DATES[termKey(semester, subterm, calYear)] || {}).start || "";
 }
 function termEndDate(semester, subterm, year) {
+  const calYear = calendarYearFor(semester, year);
   if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, year).end || "";
+    return effectiveTermDates(semester, subterm, calYear).end || "";
   }
-  return (TERM_DATES[termKey(semester, subterm, year)] || {}).end || "";
+  return (TERM_DATES[termKey(semester, subterm, calYear)] || {}).end || "";
 }
 /* Assignment deadline = 6 weeks (42 days) before the subterm start date. */
 function termAssignmentDeadline(semester, subterm, year) {
@@ -3084,17 +3098,22 @@ const DEAN_BY_SCHOOL = {
   // "A&S" intentionally unmapped — no dean listed in source document.
 };
 
-// Resolve the dean for an offering by walking course → prefix → school → dean.
+// Resolve the dean for an offering.  CSV-uploaded mapping wins; falls back to
+// the school-based lookup so courses without an explicit mapping still show a dean.
 function deanForOffering(o) {
   if (!o) return "";
   const c = state.courses.find(x => x.id === o.courseId);
   if (!c) return "";
+  const csvDean = state.deanByCourse && state.deanByCourse[c.code];
+  if (csvDean) return csvDean;
   const prefix = (c.code || "").split(" ")[0];
   const school = SCHOOL_BY_PREFIX[prefix] || "";
   return DEAN_BY_SCHOOL[school] || "";
 }
 function deanForCourse(c) {
   if (!c) return "";
+  const csvDean = state.deanByCourse && state.deanByCourse[c.code];
+  if (csvDean) return csvDean;
   const prefix = (c.code || "").split(" ")[0];
   const school = SCHOOL_BY_PREFIX[prefix] || "";
   return DEAN_BY_SCHOOL[school] || "";
@@ -3363,9 +3382,13 @@ async function loadFromSupabase() {
     state.offerings = rows.map(rowToOffering).filter(Boolean);
     state.requests  = (rRes.data || []).map(rowToRequest).filter(Boolean);
     // Phase 4 lookups
-    state.pmByCourse = {};
+    state.pmByCourse   = {};
+    state.deanByCourse = {};
     for (const row of (pmRes.data || [])) {
-      if (row && row.course_code) state.pmByCourse[row.course_code] = row.program_manager || "";
+      if (row && row.course_code) {
+        state.pmByCourse[row.course_code]   = row.program_manager || "";
+        if (row.dean) state.deanByCourse[row.course_code] = row.dean;
+      }
     }
     state.termDateOverrides = {};
     for (const row of (tdoRes.data || [])) {
@@ -3540,10 +3563,17 @@ function handleRealtimePM(payload) {
   const event = payload.eventType || payload.type;
   if (event === "DELETE") {
     const key = payload.old && payload.old.course_code;
-    if (key && state.pmByCourse) delete state.pmByCourse[key];
+    if (key) {
+      if (state.pmByCourse)   delete state.pmByCourse[key];
+      if (state.deanByCourse) delete state.deanByCourse[key];
+    }
   } else if (payload.new && payload.new.course_code) {
-    state.pmByCourse = state.pmByCourse || {};
-    state.pmByCourse[payload.new.course_code] = payload.new.program_manager || "";
+    const key = payload.new.course_code;
+    state.pmByCourse   = state.pmByCourse   || {};
+    state.deanByCourse = state.deanByCourse || {};
+    state.pmByCourse[key] = payload.new.program_manager || "";
+    if (payload.new.dean) state.deanByCourse[key] = payload.new.dean;
+    else delete state.deanByCourse[key];
   }
   scheduleReRender();
 }
@@ -5120,11 +5150,12 @@ function renderRegTable(list) {
       const dean = DEAN_BY_SCHOOL[school] || "—";
       const sectionNum = sectionNumberFor(o);
       const received = o.submittedAt ? escapeHtml(fmtDateShort(o.submittedAt)) : "—";
-      // Section submissions: type is the submission itself; explanation is the
-      // course title; submitter is whoever clicked "Submit to Registrar"; the
-      // dean is the implicit approver (sections route through the dean).
-      const changeType = "New Section";
-      const explanation = c.title || "";
+      // Section submissions: shown as an Assign Instructor action — the key
+      // information for the Registrar is who is being assigned, not that a
+      // new section is being created (that already happened when the row was
+      // added to the term grid).
+      const changeType = "Assign Instructor";
+      const explanation = o.instructor ? `Assign to ${o.instructor}` : (c.title || "");
       const submitter = o.submittedBy || "—";
       const approver = dean;
       return `
@@ -5641,16 +5672,19 @@ function renderAdminPmTable() {
   const entries = Object.entries(state.pmByCourse || {})
     .sort(([a], [b]) => a.localeCompare(b));
   if (!entries.length) {
-    tb.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
     return;
   }
-  tb.innerHTML = entries.map(([code, pm]) => `
+  tb.innerHTML = entries.map(([code, pm]) => {
+    const dean = (state.deanByCourse || {})[code] || "";
+    return `
     <tr data-pmcode="${escapeHtml(code)}">
       <td><strong>${escapeHtml(code)}</strong></td>
       <td>${escapeHtml(pm)}</td>
+      <td style="color:${dean ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(dean || "—")}</td>
       <td><button type="button" class="btn-pm-del" style="font-size:11px;padding:3px 8px;color:var(--danger);background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;">Remove</button></td>
-    </tr>
-  `).join("");
+    </tr>`;
+  }).join("");
 }
 
 function renderAdminTermTable() {
@@ -5710,10 +5744,11 @@ function bindAdminEvents() {
       const row = btn.closest("tr[data-pmcode]");
       if (!row) return;
       const code = row.dataset.pmcode;
-      if (!confirm(`Remove the PM mapping for ${code}?`)) return;
+      if (!confirm(`Remove the PM/Dean mapping for ${code}?`)) return;
       const { error } = await sb.from("course_program_managers").delete().eq("course_code", code);
       if (error) { _err("Remove PM failed", error); return; }
       delete state.pmByCourse[code];
+      if (state.deanByCourse) delete state.deanByCourse[code];
       renderAdminPmTable();
       reRenderAll();
       toast(`Removed PM mapping for ${code}.`);
@@ -5733,58 +5768,89 @@ async function uploadProgramManagersCsv() {
   const rows = parseCsv(text);
   if (!rows.length) { if (statusEl) statusEl.textContent = "CSV looks empty."; return; }
   // Detect header row and resolve column indices.
-  // Supports both the simple 2-column format (Course Code, Program Manager)
-  // and the full master-list format (School, Course Number & Prefix, Credits, Title, Program Manager).
-  let codeCol = 0, pmCol = 1;
-  const headerLike = /course|code|program|manager|pm|school|prefix|credit|title/i;
+  // Supports the simple 2-column format (Course Code, Program Manager) and the
+  // full master-list format (School, Course Number & Prefix, Credits, Title,
+  // Program Manager, Dean).  The Dean column is optional.
+  let codeCol = 0, pmCol = 1, deanCol = -1;
+  const headerLike = /course|code|program|manager|pm|school|prefix|credit|title|dean/i;
   const firstRow = rows[0] || [];
   if (firstRow.length >= 2 && firstRow.some(cell => headerLike.test(cell))) {
     const hdrs = firstRow.map(h => String(h).trim().toLowerCase());
     const detectedCode = hdrs.findIndex(h => /course\s*(number|code|prefix)|number\s*&?\s*prefix/.test(h));
     const detectedPm   = hdrs.findIndex(h => /program\s*(manager|mgr)|^pm$/.test(h));
-    if (detectedCode >= 0) codeCol = detectedCode;
-    if (detectedPm   >= 0) pmCol   = detectedPm;
+    const detectedDean = hdrs.findIndex(h => /^dean$|^dean\s/.test(h));
+    if (detectedCode >= 0) codeCol  = detectedCode;
+    if (detectedPm   >= 0) pmCol    = detectedPm;
+    if (detectedDean >= 0) deanCol  = detectedDean;
     rows.shift();
   }
-  const mapping = {};
+  const pmMapping   = {};
+  const deanMapping = {};
   const skipped = [];
   for (const r of rows) {
-    if (!r || r.length <= Math.max(codeCol, pmCol)) continue;
+    const minCol = deanCol >= 0 ? Math.max(codeCol, pmCol, deanCol) : Math.max(codeCol, pmCol);
+    if (!r || r.length <= minCol) continue;
     const code = (r[codeCol] || "").trim();
     const pm   = (r[pmCol]   || "").trim();
     if (!code || !pm) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
     // Normalize whitespace inside the course code (e.g. "ACC  240" → "ACC 240").
-    mapping[code.replace(/\s+/g, " ")] = pm;
+    const normCode = code.replace(/\s+/g, " ");
+    pmMapping[normCode] = pm;
+    if (deanCol >= 0) {
+      const dean = (r[deanCol] || "").trim();
+      if (dean) deanMapping[normCode] = dean;
+    }
   }
-  const codes = Object.keys(mapping);
+  const codes = Object.keys(pmMapping);
   if (!codes.length) { if (statusEl) statusEl.textContent = "No usable rows found in the CSV."; return; }
+  const hasDean = Object.keys(deanMapping).length > 0;
   // Replace strategy: clear the table first, then upsert new rows. Done in
   // two steps because Supabase doesn't have a "replace all" verb.
   if (statusEl) statusEl.textContent = `Uploading ${codes.length} mapping${codes.length === 1 ? "" : "s"}…`;
   // The .neq filter is needed because Supabase rejects a bare DELETE-all.
   const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
   if (delRes.error) { _err("Clear existing PM mapping failed", delRes.error); return; }
-  const rowsToInsert = codes.map(code => ({ course_code: code, program_manager: mapping[code] }));
+  const rowsToInsert = codes.map(code => {
+    const row = { course_code: code, program_manager: pmMapping[code] };
+    if (hasDean) row.dean = deanMapping[code] || null;
+    return row;
+  });
   const insRes = await sb.from("course_program_managers").insert(rowsToInsert);
-  if (insRes.error) { _err("Insert PM mapping failed", insRes.error); return; }
+  if (insRes.error) {
+    // If the error is a missing `dean` column, retry without it and surface a
+    // note so the admin knows to run the migration SQL.
+    if (/column.*dean.*does not exist/i.test(insRes.error.message || "")) {
+      const retryRows = rowsToInsert.map(({ dean, ...rest }) => rest);
+      const r2 = await sb.from("course_program_managers").insert(retryRows);
+      if (r2.error) { _err("Insert PM mapping failed", r2.error); return; }
+      toast("PM mapping uploaded (dean column not found — run migration SQL to enable dean overrides).");
+    } else {
+      _err("Insert PM mapping failed", insRes.error);
+      return;
+    }
+  }
   // Update local state (realtime will also push the same rows, harmlessly).
-  state.pmByCourse = { ...mapping };
+  state.pmByCourse   = { ...pmMapping };
+  state.deanByCourse = { ...deanMapping };
   renderAdminPmTable();
   reRenderAll();
   if (statusEl) {
     statusEl.textContent = `Uploaded ${codes.length} mapping${codes.length === 1 ? "" : "s"}` +
+      (hasDean ? ` with dean overrides for ${Object.keys(deanMapping).length} course${Object.keys(deanMapping).length === 1 ? "" : "s"}` : "") +
       (skipped.length ? ` • ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped (missing code or PM)` : "") + ".";
   }
-  toast(`PM mapping updated (${codes.length} course${codes.length === 1 ? "" : "s"}).`);
+  toast(`PM${hasDean ? " + Dean" : ""} mapping updated (${codes.length} course${codes.length === 1 ? "" : "s"}).`);
   // Clear the file input so the same file can be re-uploaded if needed.
   if (fileInput) fileInput.value = "";
 }
 
 function downloadProgramManagersCsv() {
-  const lines = ["Course Code,Program Manager"];
+  const safe = (s) => { s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const hasDeans = Object.keys(state.deanByCourse || {}).length > 0;
+  const lines = [hasDeans ? "Course Code,Program Manager,Dean" : "Course Code,Program Manager"];
   for (const [code, pm] of Object.entries(state.pmByCourse || {}).sort(([a], [b]) => a.localeCompare(b))) {
-    const safe = (s) => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
-    lines.push(`${safe(code)},${safe(pm)}`);
+    const dean = (state.deanByCourse || {})[code] || "";
+    lines.push(hasDeans ? `${safe(code)},${safe(pm)},${safe(dean)}` : `${safe(code)},${safe(pm)}`);
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -5797,13 +5863,14 @@ function downloadProgramManagersCsv() {
 }
 
 async function clearAllProgramManagers() {
-  if (!confirm("Remove ALL program-manager mappings? Every course's PM column will be blank until you upload a new CSV.")) return;
+  if (!confirm("Remove ALL program-manager and dean mappings? Every course's PM and Dean columns will fall back to defaults until you upload a new CSV.")) return;
   const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
   if (delRes.error) { _err("Clear PM mapping failed", delRes.error); return; }
-  state.pmByCourse = {};
+  state.pmByCourse   = {};
+  state.deanByCourse = {};
   renderAdminPmTable();
   reRenderAll();
-  toast("All PM mappings cleared.");
+  toast("All PM + Dean mappings cleared.");
 }
 
 async function saveTermDateOverrides() {
@@ -5968,7 +6035,15 @@ function saveSectionFromModal() {
 function bindTermEvents() {
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
-  document.getElementById("tfYear").addEventListener("change", (e) => { state.termFilter.year = Number(e.target.value); renderTerms(); });
+  document.getElementById("tfYear").addEventListener("change", (e) => {
+    state.termFilter.year = Number(e.target.value);
+    // Ensure rotation offerings exist for the newly-selected academic year.
+    // syncOfferingsFromRotation is idempotent — it only adds rows that are
+    // missing, so switching years back and forth is safe.
+    syncOfferingsFromRotation(state.termFilter.year);
+    setDirty(true); // flush any newly-created offerings to Supabase
+    renderTerms();
+  });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
   document.getElementById("tfShowOnly").addEventListener("change", (e) => { state.termFilter.showOnly = e.target.value; renderTerms(); });
 
