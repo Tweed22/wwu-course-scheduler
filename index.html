@@ -7250,6 +7250,9 @@ async function init() {
       toast("Couldn't reach the rotation sheet — using cached copy.");
     }
   }
+  // Always show the rotation banner (and Re-sync button for admins) even on
+  // days when the daily sync is skipped — otherwise the banner never appears.
+  if (!synced) showRotationBanner(missingDeanPrefixes());
   // 4) After courses are loaded, re-resolve any offerings whose courseId
   // doesn't match a current course (cross-browser id remap).
   for (const o of state.offerings) {
