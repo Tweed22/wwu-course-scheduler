@@ -4503,18 +4503,20 @@ function renderTermSubtermChips() {
   const year = state.termFilter.year;
   wrap.innerHTML = SUBTERMS.map(st => {
     const active = (state.termFilter.semester === st.semester && state.termFilter.subterm === st.subterm) ? " active" : "";
+    const calYear = calendarYearFor(st.semester, year);
     const startISO = termStartDate(st.semester, st.subterm, year);
     const deadlineISO = termAssignmentDeadline(st.semester, st.subterm, year);
     const tooltip = startISO
       ? `Starts ${fmtDateShort(startISO)} • Deadline ${fmtDateShort(deadlineISO)}`
-      : `${st.label} ${year}`;
-    return `<button type="button" class="term-subchip${active}" data-semester="${st.semester}" data-subterm="${st.subterm}" title="${escapeHtml(tooltip)}">${st.label}</button>`;
+      : `${st.label} ${calYear}`;
+    return `<button type="button" class="term-subchip${active}" data-semester="${st.semester}" data-subterm="${st.subterm}" title="${escapeHtml(tooltip)}">${st.label} ${calYear}</button>`;
   }).join("");
 }
 
 function renderTermStats(list) {
   const def = activeSubtermDef();
   const year = state.termFilter.year;
+  const calYear = calendarYearFor(def.semester, year);
   const startISO = termStartDate(def.semester, def.subterm, year);
   const deadlineISO = termAssignmentDeadline(def.semester, def.subterm, year);
   // Toggle button: "Show All Courses" ↔ "Hide Others". Always visible so the
@@ -4532,13 +4534,13 @@ function renderTermStats(list) {
   const clearBtn = isAdmin()
     ? `<div class="item term-clear-tile" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
          <button type="button" id="btnClearTerm" class="danger" style="white-space:nowrap;font-size:12px;padding:8px 12px;"
-                 title="Clear every instructor assignment in ${def.label} ${year}">Clear ${escapeHtml(def.label)} ${year}</button>
+                 title="Clear every instructor assignment in ${def.label} ${calYear}">Clear ${escapeHtml(def.label)} ${calYear}</button>
        </div>`
     : "";
   document.getElementById("termStats").innerHTML = `
     <div class="item term-label-tile">
       <strong style="font-size:18px;">${def.label}</strong>
-      <span class="label">${year}</span>
+      <span class="label">${calYear}</span>
     </div>
     <div class="item term-start-tile" title="Subterm start date">
       <strong style="font-size:18px;">${escapeHtml(fmtDateShort(startISO))}</strong>
