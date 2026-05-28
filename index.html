@@ -2747,11 +2747,27 @@ function reconcileCourses(fresh) {
   state.courses = merged;
 }
 
+/* Return the sorted list of course prefixes that have no dean assigned —
+   checks the full resolution chain: CSV override → DEAN_BY_SCHOOL fallback.
+   A prefix only appears here if EVERY course under it lacks a dean. */
 function missingDeanPrefixes() {
   const seen = new Set();
   for (const c of state.courses) {
     const pfx = (c.code || "").split(/\s+/)[0];
-    if (pfx && !SCHOOL_BY_PREFIX[pfx]) seen.add(pfx);
+    if (pfx && !deanForCourse(c)) seen.add(pfx);
+  }
+  return [...seen].sort();
+}
+
+/* Return the sorted list of course prefixes that have no program manager
+   assigned via the CSV mapping.  Returns null when no CSV has been uploaded
+   yet (so the banner can distinguish "not configured" from "partially missing"). */
+function missingPmPrefixes() {
+  if (!state.pmByCourse || !Object.keys(state.pmByCourse).length) return null;
+  const seen = new Set();
+  for (const c of state.courses) {
+    const pfx = (c.code || "").split(/\s+/)[0];
+    if (pfx && !state.pmByCourse[c.code]) seen.add(pfx);
   }
   return [...seen].sort();
 }
@@ -2764,28 +2780,40 @@ async function syncRotationFromSheet() {
   setDirty(true);
   if (typeof renderTerms === "function") renderTerms();
   if (typeof renderRegistrar === "function") renderRegistrar();
-  showRotationBanner(missingDeanPrefixes());
+  showRotationBanner();
   return fresh.length;
 }
 
-function showRotationBanner(missing) {
+function showRotationBanner() {
   let bar = document.getElementById("rotationBanner");
   if (!bar) {
     bar = document.createElement("div");
     bar.id = "rotationBanner";
-    bar.style.cssText = "max-width:1600px;margin:8px auto 0;padding:8px 14px;border-radius:6px;font-size:12.5px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);";
+    bar.style.cssText = "max-width:1600px;margin:8px auto 0;padding:8px 14px;border-radius:6px;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);";
     const main = document.querySelector("main");
     if (main) main.parentNode.insertBefore(bar, main);
   }
   const stamp = lastRotationSyncAt
     ? (new Date(lastRotationSyncAt)).toLocaleString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit", hour12: true, timeZoneName: "short" })
     : "never";
-  const missingHtml = (missing && missing.length)
-    ? `<span style="color:var(--warn);"><strong>${missing.length} prefix${missing.length===1?"":"es"} missing a dean:</strong> ${missing.join(", ")}</span>`
-    : `<span style="color:var(--ok);">All course prefixes have a dean mapped.</span>`;
+
+  const missingDean = missingDeanPrefixes();
+  const missingPm   = missingPmPrefixes();   // null = no CSV uploaded yet
+
+  const deanHtml = missingDean.length
+    ? `<span style="color:var(--warn);"><strong>${missingDean.length} prefix${missingDean.length===1?"":"es"} missing a dean:</strong> ${missingDean.join(", ")}</span>`
+    : `<span style="color:var(--ok);">✓ All prefixes have a dean.</span>`;
+
+  const pmHtml = missingPm === null
+    ? `<span style="color:var(--text-muted);">No PM mapping uploaded.</span>`
+    : missingPm.length
+      ? `<span style="color:var(--warn);"><strong>${missingPm.length} prefix${missingPm.length===1?"":"es"} missing a PM:</strong> ${missingPm.join(", ")}</span>`
+      : `<span style="color:var(--ok);">✓ All prefixes have a PM.</span>`;
+
   bar.innerHTML = `
     <span><strong>Rotation:</strong> last sync ${escapeHtml(stamp)} (${state.courses.length} courses)</span>
-    ${missingHtml}
+    ${deanHtml}
+    ${pmHtml}
     ${isAdmin() ? `<button type="button" id="btnRotationRetry" style="margin-left:auto;padding:4px 10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);border-radius:4px;cursor:pointer;font-size:11.5px;">Re-sync now</button>` : ""}
   `;
   const retry = document.getElementById("btnRotationRetry");
@@ -7252,7 +7280,7 @@ async function init() {
   }
   // Always show the rotation banner (and Re-sync button for admins) even on
   // days when the daily sync is skipped — otherwise the banner never appears.
-  if (!synced) showRotationBanner(missingDeanPrefixes());
+  if (!synced) showRotationBanner();
   // 4) After courses are loaded, re-resolve any offerings whose courseId
   // doesn't match a current course (cross-browser id remap).
   for (const o of state.offerings) {
