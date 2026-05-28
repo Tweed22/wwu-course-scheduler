@@ -2888,7 +2888,7 @@ const state = {
   // semesterFilter can be "" (show all), "Fall", "Spring", or "Summer". When
   // non-empty it restricts the queue to that semester (and its subterm chips).
   // When empty, every subterm in every semester is shown together.
-  regFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", level: "", source: "", school: "", semesterFilter: "Fall" },
+  regFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", level: "", source: "", school: "", semesterFilter: "" },
   regSortKey: "submittedAt",
   regSortDir: 1,
   clFilter: { search: "", type: "", range: "" },
@@ -3556,6 +3556,8 @@ function handleRealtimeRequest(payload) {
   const incoming = rowToRequest(row);
   if (!incoming) return;
   const idx = state.requests.findIndex(r => r.id === incoming.id);
+  // Suppress echoes of our own writes during the touch-suppression window.
+  if (idx >= 0 && recentlyTouched(incoming.id)) return;
   if (idx >= 0) state.requests[idx] = incoming;
   else state.requests.push(incoming);
   scheduleReRender();
@@ -4882,6 +4884,7 @@ function submitSectionToRegistrar(offeringId) {
   o.submitted    = true;
   o.submittedAt  = new Date().toISOString();
   o.submittedBy  = state.userName || "(unknown)";
+  markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
   toast(`${c ? c.code : "Section"} ${sectionNumberFor(o)} submitted to Registrar`);
@@ -5245,6 +5248,7 @@ function markRegistrarItemComplete(regId) {
     o.registrarCompleted   = true;
     o.registrarCompletedAt = new Date().toISOString();
     o.registrarCompletedBy = state.userName || "(unknown)";
+    markLocallyTouched(o.id);
     setDirty(true);
     renderRegistrar();
     if (typeof renderChangelog === "function") renderChangelog();
@@ -5255,6 +5259,7 @@ function markRegistrarItemComplete(regId) {
     r.status = "Finalized";
     r.registrarDate = new Date().toISOString().slice(0, 10);
     r.registrarBy = state.userName || "(unknown)";
+    markLocallyTouched(r.id);
     // Apply each change in the request to the term-assignments / rotation
     // state. Multi-change requests apply all blocks; legacy single-change
     // requests run through the same path via requestChanges(r).
@@ -6867,6 +6872,7 @@ function transitionRequest(id, action) {
     r.approvedDate = now;
     r.sentDate = now;
     logRequestEvent(r, `Approved & sent to Registrar by ${who} (${code})`);
+    markLocallyTouched(r.id);
     setDirty(true);
     renderRequests();
     if (typeof renderRegistrar === "function") renderRegistrar();
@@ -7288,6 +7294,8 @@ async function init() {
   renderChangelog();
   renderAdmin();
   setDirty(state.dirty);
+  // Registrar users land on the Registrar page by default.
+  if (currentRole() === "registrar") switchView("registrar");
   toast(`Loaded ${state.courses.length} courses from rotation sheet`);
   // 7) Schedule the next daily sync at 4 AM Central. Each tick reschedules
   // itself, so the timer survives forever.
