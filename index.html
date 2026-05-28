@@ -3125,6 +3125,7 @@ const STATUS_ORDER = { "Draft":0, "Pending Approval":1, "Approved":2, "Rejected"
 const STATUS_CLASS = { "Draft":"st-draft", "Pending Approval":"st-pending", "Approved":"st-approved", "Rejected":"st-rejected", "Sent to Registrar":"st-sent", "Finalized":"st-finalized" };
 const CHANGE_TYPE_CLASS = {
   "Add Course":"ct-add", "Remove Course":"ct-remove",
+  "Add Section & Split Enrollment":"ct-add",
   "Cancel Course":"ct-remove", "Re-instate Course":"ct-add",
   "Assign Instructor":"ct-instr", "Modify Time/Day":"ct-time",
   "Modify Location":"ct-location", "Other":"ct-pill",
@@ -4715,12 +4716,11 @@ function sectionNumberFor(o) {
   return String(n).padStart(2, "0");
 }
 
-/* Auto-create an "Add Course" Change Request for a freshly added section so
-   the Registrar sees a paper trail. Used by both the "+" duplicate button on
-   the Term Assignments page and the "Add Section" modal. If the section
-   already has an instructor assigned, the request is created with the
-   instructor field pre-filled so the Registrar can see the assignment in one
-   step. */
+/* Auto-create an "Add Section & Split Enrollment" Change Request for a freshly
+   added section so the Registrar sees a paper trail. Used by both the "+"
+   duplicate button on the Term Assignments page and the "Add Section" modal.
+   If the section already has an instructor assigned, the request is created
+   with the instructor field pre-filled. */
 function createAddCourseRequestForNewSection(o, opts = {}) {
   if (!o) return null;
   const c = state.courses.find(x => x.id === o.courseId) || {};
@@ -4732,7 +4732,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const termLabel = def ? def.label : `${o.semester} ${o.subterm}`;
   const instr = (o.instructor || "").trim();
   const changes = [{
-    type: "Add Course",
+    type: "Add Section & Split Enrollment",
     fields: instr ? { instructor: instr } : {},
   }];
   const draft = newRequest({
@@ -4745,7 +4745,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
     prefix:      parts[0] || "",
     number:      parts[1] || "",
     sectionNumber: sectionNumberFor(o),
-    changeType:  "Add Course",
+    changeType:  "Add Section & Split Enrollment",
     explanation: `Add ${code || "new course"} ${termLabel} ${o.year} (${sectionLabel})${instr ? ` — instructor: ${instr}` : ""}`,
     rationale:   "",
     courseId:    o.courseId,
@@ -4753,7 +4753,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
     changes:     changes,
     status:      "Pending Approval",
   });
-  logRequestEvent(draft, `Auto-created from Add Section by ${who}${instr ? ` (instructor: ${instr})` : " — instructor pending"}`);
+  logRequestEvent(draft, `Auto-created Add Section & Split Enrollment by ${who}${instr ? ` (instructor: ${instr})` : " — instructor pending"}`);
   state.requests.push(draft);
   // Tag the offering so we can wire follow-up automation to its originating request.
   o.isNewSection = true;
@@ -4791,7 +4791,7 @@ function duplicateSection(offeringId) {
   if (typeof renderChangelog === "function") renderChangelog();
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   const c = state.courses.find(x => x.id === dup.courseId);
-  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — Add Course request queued`);
+  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — Add Section & Split Enrollment request queued`);
 }
 
 /* Remove an added section. Refuses if the section has been submitted to the
@@ -6053,7 +6053,7 @@ function saveSectionFromModal() {
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   closeSectionModal();
   const instrNote = (o.instructor && o.instructor.trim()) ? ` (instructor: ${o.instructor.trim()})` : " — instructor pending";
-  toast(`Added ${c.code} to ${o.semester} ${o.subterm} ${o.year}${instrNote} — Add Course request queued`);
+  toast(`Added ${c.code} to ${o.semester} ${o.subterm} ${o.year}${instrNote} — Add Section & Split Enrollment request queued`);
 }
 
 function bindTermEvents() {
@@ -6458,6 +6458,9 @@ const CHANGE_TYPE_DEFS = {
   "Add Course":         { fields: [
     { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Norlian Vickers", full: true },
   ]},
+  "Add Section & Split Enrollment": { fields: [
+    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Norlian Vickers", full: true },
+  ]},
   "Cancel Course":      { fields: [] },
   "Re-instate Course":  { fields: [] },
   "Assign Instructor":  { fields: [
@@ -6500,6 +6503,7 @@ function changeSummary(ch) {
   if (!ch) return "";
   const f = ch.fields || {};
   if (ch.type === "Add Course") return f.instructor ? `Add (instructor: ${f.instructor})` : "Add course";
+  if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section (instructor: ${f.instructor})` : "Add section & split enrollment";
   if (ch.type === "Assign Instructor") return f.instructor ? `Assign to ${f.instructor}` : "Assign instructor";
   if (ch.type === "Modify Time/Day") {
     const parts = [f.days, f.time].filter(Boolean).join(" ");
