@@ -2882,7 +2882,7 @@ const state = {
   reqFilters: { search:"", status:"", type:"", termYear:"", submitter:"" },
   editingRequestId: null,
   offerings: [],
-  termFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", showOnly: "", level: "" },
+  termFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", showOnly: "", level: "", myCoursesOnly: true },
   termSortKey: "code",
   termSortDir: 1,
   // semesterFilter can be "" (show all), "Fall", "Spring", or "Summer". When
@@ -4435,9 +4435,20 @@ function applyTermFilters(list) {
   const s = (state.termFilter.search || "").trim().toLowerCase();
   const so = state.termFilter.showOnly;
   const lvl = state.termFilter.level;
+  // Pre-compute the current user's name once for the my-courses filter.
+  const myName = state.termFilter.myCoursesOnly
+    ? (state.userName || "").trim().toLowerCase()
+    : "";
   return list.filter(o => {
     const c = state.courses.find(x => x.id === o.courseId);
     if (!c) return false;
+    // My-courses filter: only show offerings where the signed-in user is the
+    // dean or program manager.  Skipped when myName is empty (no name set yet).
+    if (myName) {
+      const dean = (deanForOffering(o) || "").trim().toLowerCase();
+      const pm   = (pmForOffering(o)  || "").trim().toLowerCase();
+      if (dean !== myName && pm !== myName) return false;
+    }
     if (lvl) {
       const courseLvl = c.level || courseLevel(c.code);
       // "graduate" is the broad bucket (500+); the four granular values
@@ -4506,6 +4517,15 @@ function renderTermStats(list) {
   const year = state.termFilter.year;
   const startISO = termStartDate(def.semester, def.subterm, year);
   const deadlineISO = termAssignmentDeadline(def.semester, def.subterm, year);
+  // "Show All Courses" — visible whenever the my-courses filter is active so
+  // the user can lift it with one click.
+  const showAllBtn = state.termFilter.myCoursesOnly
+    ? `<div class="item" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
+         <button type="button" id="btnShowAllCourses"
+                 style="white-space:nowrap;font-size:12px;padding:8px 12px;background:var(--wwu-gold);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;"
+                 title="Remove the dean/PM filter and show every course">Show All Courses</button>
+       </div>`
+    : "";
   // Admin-only "Clear Term" button — placed just left of the assignment
   // deadline tile, per Tony's spec (May 2026). Confirms then wipes every
   // instructor assignment in (semester, year).
@@ -4524,12 +4544,16 @@ function renderTermStats(list) {
       <strong style="font-size:18px;">${escapeHtml(fmtDateShort(startISO))}</strong>
       <span class="label">term start</span>
     </div>
+    ${showAllBtn}
     ${clearBtn}
     <div class="item term-deadline-tile" title="Auto-derived: 6 weeks before term start">
       <strong>${escapeHtml(fmtDateShort(deadlineISO))}</strong>
       <span class="label">assignment deadline</span>
     </div>
   `;
+  // Wire up the Show All Courses button.
+  const sab = document.getElementById("btnShowAllCourses");
+  if (sab) sab.addEventListener("click", () => { state.termFilter.myCoursesOnly = false; renderTerms(); });
   // Wire up the Clear button. We do this here rather than in bindTermEvents
   // because the button is recreated on every renderTermStats.
   const cb = document.getElementById("btnClearTerm");
@@ -7180,6 +7204,12 @@ async function init() {
   // awaits window.AUTH.ready and adopts the signed-in identity as the
   // editing display name (Phase 2).
   await requireUserName();
+  // Auto-filter: admins and registrars see all courses; deans and program
+  // managers default to seeing only the courses they are assigned to.
+  // Any user can lift the filter with the "Show All Courses" button.
+  if (isAdmin() || currentRole() === "registrar") {
+    state.termFilter.myCoursesOnly = false;
+  }
   // 1) Restore the cached course list from localStorage FIRST so that when
   // we load offerings from Supabase, rowToOffering can resolve course_code →
   // courseId correctly. Without courses pre-loaded, every offering would land
