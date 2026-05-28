@@ -2807,18 +2807,37 @@ function missingDeanPrefixes() {
   return [...seen].sort();
 }
 
-/* Return the sorted list of course codes that have no program manager
-   assigned via the CSV mapping.  Returns null when no CSV has been uploaded
-   yet (so the banner can distinguish "not configured" from "partially missing").
-   Comparison is done per course code (e.g. "ACC 240"), not per prefix. */
+/* Canonical course code: exactly "PREFIX NUMBER" (first two whitespace-
+   separated tokens), upper-cased, single space.  Strips section suffixes
+   like "ACC 240 01" → "ACC 240". */
+function canonicalCourseCode(raw) {
+  const parts = (raw || "").trim().toUpperCase().split(/\s+/);
+  return parts.slice(0, 2).join(" ");
+}
+
+/* Look up a PM by course code, trying the exact code first then the
+   canonical (PREFIX NUMBER) form.  This lets pmByCourse work regardless
+   of whether section numbers are appended. */
+function pmForCode(code) {
+  if (!state.pmByCourse) return "";
+  return state.pmByCourse[code]
+      || state.pmByCourse[canonicalCourseCode(code)]
+      || "";
+}
+
+/* Return the sorted list of unique canonical course codes that have no
+   program manager assigned via the CSV mapping.  Returns null when no
+   CSV has been uploaded yet.  Deduplicates state.courses by canonical
+   code so duplicates in the array don't inflate the count. */
 function missingPmCourses() {
   if (!state.pmByCourse || !Object.keys(state.pmByCourse).length) return null;
+  const seen   = new Set();
   const missing = [];
   for (const c of state.courses) {
-    const code = (c.code || "").trim();
-    if (!code) continue;
-    const pm = state.pmByCourse[code] || state.pmByCourse[code.replace(/\s+/g, " ")];
-    if (!pm) missing.push(code);
+    const code = canonicalCourseCode(c.code);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    if (!pmForCode(code)) missing.push(code);
   }
   return missing.sort();
 }
@@ -3740,7 +3759,8 @@ function pmForOffering(o) {
   if (state.pmByCourse) {
     const course = (state.courses || []).find(c => c.id === o.courseId);
     const code = (course && course.code) || o.courseCode || "";
-    if (code && state.pmByCourse[code]) return state.pmByCourse[code];
+    const pm = pmForCode(code);
+    if (pm) return pm;
   }
   return o.programManager || "";
 }
@@ -6299,7 +6319,7 @@ function bindTermEvents() {
       hint.style.color = "var(--ok)";
       if (deanDisp) deanDisp.textContent = deanForCourse(c) || "—";
       // PM is now auto-derived from the admin-uploaded CSV mapping.
-      const pm = (state.pmByCourse && state.pmByCourse[c.code]) || "";
+      const pm = pmForCode(c.code);
       if (pmDisp) pmDisp.textContent = pm || "—";
       if (pmHidden) pmHidden.value = pm;
     } else {
