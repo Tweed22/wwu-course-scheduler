@@ -4517,15 +4517,15 @@ function renderTermStats(list) {
   const year = state.termFilter.year;
   const startISO = termStartDate(def.semester, def.subterm, year);
   const deadlineISO = termAssignmentDeadline(def.semester, def.subterm, year);
-  // "Show All Courses" — visible whenever the my-courses filter is active so
-  // the user can lift it with one click.
-  const showAllBtn = state.termFilter.myCoursesOnly
-    ? `<div class="item" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
-         <button type="button" id="btnShowAllCourses"
-                 style="white-space:nowrap;font-size:12px;padding:8px 12px;background:var(--wwu-gold);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;"
-                 title="Remove the dean/PM filter and show every course">Show All Courses</button>
-       </div>`
-    : "";
+  // Toggle button: "Show All Courses" ↔ "Hide Others". Always visible so the
+  // user can flip the filter in either direction without hunting for a control.
+  const filterOn = state.termFilter.myCoursesOnly;
+  const showAllBtn = `<div class="item" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
+       <button type="button" id="btnShowAllCourses"
+               style="white-space:nowrap;font-size:12px;padding:8px 12px;background:${filterOn ? "var(--wwu-gold)" : "var(--surface-2)"};color:${filterOn ? "#fff" : "var(--text)"};border:1px solid ${filterOn ? "var(--wwu-gold)" : "var(--border-strong)"};border-radius:6px;cursor:pointer;font-weight:600;"
+               title="${filterOn ? "Remove the dean/PM filter and show every course" : "Re-apply the dean/PM filter to show only your courses"}"
+       >${filterOn ? "Show All Courses" : "Hide Others"}</button>
+     </div>`;
   // Admin-only "Clear Term" button — placed just left of the assignment
   // deadline tile, per Tony's spec (May 2026). Confirms then wipes every
   // instructor assignment in (semester, year).
@@ -4551,9 +4551,9 @@ function renderTermStats(list) {
       <span class="label">assignment deadline</span>
     </div>
   `;
-  // Wire up the Show All Courses button.
+  // Wire up the Show All Courses / Hide Others toggle.
   const sab = document.getElementById("btnShowAllCourses");
-  if (sab) sab.addEventListener("click", () => { state.termFilter.myCoursesOnly = false; renderTerms(); });
+  if (sab) sab.addEventListener("click", () => { state.termFilter.myCoursesOnly = !state.termFilter.myCoursesOnly; renderTerms(); });
   // Wire up the Clear button. We do this here rather than in bindTermEvents
   // because the button is recreated on every renderTermStats.
   const cb = document.getElementById("btnClearTerm");
