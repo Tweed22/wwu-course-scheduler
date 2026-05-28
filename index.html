@@ -4650,7 +4650,7 @@ function renderTermTable(list) {
         </td>
         <td>${escapeHtml(c.title || "")}</td>
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
-        <td class="dean-cell" title="Dean (auto-assigned from ${escapeHtml(school)})">${escapeHtml(DEAN_BY_SCHOOL[school] || "—")}</td>
+        <td class="dean-cell" title="Dean">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
         <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td class="actions">${actionBtn}</td>
@@ -5031,11 +5031,11 @@ function regItemSortFields(item) {
     const o = item.offering;
     const c = state.courses.find(x => x.id === o.courseId) || {};
     const prefix = (c.code||"").split(" ")[0];
-    const dean = DEAN_BY_SCHOOL[SCHOOL_BY_PREFIX[prefix] || ""] || "";
+    const dean = deanForOffering(o) || "";
     return {
       source: "1-section",
       code: c.code || "",
-      changeType: "New Section",
+      changeType: "Assign Instructor",
       explanation: c.title || "",
       submitter: o.submittedBy || "",
       approver: dean,
@@ -5145,9 +5145,7 @@ function renderRegTable(list) {
     if (item.kind === "section") {
       const o = item.offering;
       const c = state.courses.find(x => x.id === o.courseId) || {};
-      const prefix = (c.code||"").split(" ")[0];
-      const school = SCHOOL_BY_PREFIX[prefix] || "";
-      const dean = DEAN_BY_SCHOOL[school] || "—";
+      const dean = deanForOffering(o) || "—";
       const sectionNum = sectionNumberFor(o);
       const received = o.submittedAt ? escapeHtml(fmtDateShort(o.submittedAt)) : "—";
       // Section submissions: shown as an Assign Instructor action — the key
