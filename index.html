@@ -266,8 +266,10 @@
     background: transparent;
     color: #ffaad9;
     border-color: #ff66c4;
-    font-weight: 700;
-    padding: 4px 10px;
+    font-weight: 600;
+    font-size: 11.5px;
+    padding: 4px 8px;
+    white-space: nowrap;
     letter-spacing: 0.2px;
   }
   html.dark .term-table .btn-submit:hover {
@@ -506,6 +508,43 @@
     border-radius: var(--radius);
     background: white;
   }
+  /* ── Inline clear-button (×) for text inputs ─────────────────────────────
+     JS wraps each text input in .iclear-wrap; the × button hides itself via
+     pointer-events:none / opacity:0 when the field is empty, and becomes
+     clickable when the field has a value (:not(:placeholder-shown)). */
+  .iclear-wrap { position: relative; display: block; }
+  .iclear-wrap input[type=text], .iclear-wrap input[type=search] { padding-right: 26px !important; }
+  .iclear-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(100,100,100,0.28);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s, background 0.12s;
+  }
+  .iclear-btn::before { content: "×"; }
+  .iclear-wrap:has(input:not(:placeholder-shown)) .iclear-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .iclear-btn:hover { background: rgba(100,100,100,0.55); }
+  html.dark .iclear-btn { background: rgba(180,200,255,0.18); color: #e7f4ff; }
+  html.dark .iclear-btn:hover { background: rgba(180,200,255,0.38); }
   .toolbar input[type=text]:focus, .toolbar select:focus {
     outline: 2px solid var(--wwu-green);
     outline-offset: -1px;
@@ -837,6 +876,11 @@
   .toast.show { opacity: 1; }
 
   /* -------- View tabs (Rotation / Change Requests) -------- */
+  .sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 200;
+  }
   .view-tabs {
     display: flex;
     gap: 4px;
@@ -940,6 +984,8 @@
 
   /* -------- Term-assignment table -------- */
   .term-table { width: 100%; border-collapse: collapse; }
+  /* Length column (3rd) — centered in both header and body. */
+  .term-table th:nth-child(3), .term-table td:nth-child(3) { text-align: center; }
   .term-table th, .term-table td {
     padding: 6px 8px;
     border-bottom: 1px solid var(--border);
@@ -1534,6 +1580,7 @@
   </div>
 </div>
 
+<div class="sticky-top">
 <header class="app-header">
   <div>
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
@@ -1561,6 +1608,7 @@
        wiring/teardown trivial. -->
   <button type="button" data-view="admin" id="tabAdmin" style="display:none;">Admin</button>
 </nav>
+</div><!-- /.sticky-top -->
 
 <main>
 
@@ -2759,17 +2807,20 @@ function missingDeanPrefixes() {
   return [...seen].sort();
 }
 
-/* Return the sorted list of course prefixes that have no program manager
+/* Return the sorted list of course codes that have no program manager
    assigned via the CSV mapping.  Returns null when no CSV has been uploaded
-   yet (so the banner can distinguish "not configured" from "partially missing"). */
-function missingPmPrefixes() {
+   yet (so the banner can distinguish "not configured" from "partially missing").
+   Comparison is done per course code (e.g. "ACC 240"), not per prefix. */
+function missingPmCourses() {
   if (!state.pmByCourse || !Object.keys(state.pmByCourse).length) return null;
-  const seen = new Set();
+  const missing = [];
   for (const c of state.courses) {
-    const pfx = (c.code || "").split(/\s+/)[0];
-    if (pfx && !state.pmByCourse[c.code]) seen.add(pfx);
+    const code = (c.code || "").trim();
+    if (!code) continue;
+    const pm = state.pmByCourse[code] || state.pmByCourse[code.replace(/\s+/g, " ")];
+    if (!pm) missing.push(code);
   }
-  return [...seen].sort();
+  return missing.sort();
 }
 
 async function syncRotationFromSheet() {
@@ -2798,7 +2849,7 @@ function showRotationBanner() {
     : "never";
 
   const missingDean = missingDeanPrefixes();
-  const missingPm   = missingPmPrefixes();   // null = no CSV uploaded yet
+  const missingPm   = missingPmCourses();    // null = no CSV uploaded yet
 
   const deanHtml = missingDean.length
     ? `<span style="color:var(--warn);"><strong>${missingDean.length} prefix${missingDean.length===1?"":"es"} missing a dean:</strong> ${missingDean.join(", ")}</span>`
@@ -2807,8 +2858,8 @@ function showRotationBanner() {
   const pmHtml = missingPm === null
     ? `<span style="color:var(--text-muted);">No PM mapping uploaded.</span>`
     : missingPm.length
-      ? `<span style="color:var(--warn);"><strong>${missingPm.length} prefix${missingPm.length===1?"":"es"} missing a PM:</strong> ${missingPm.join(", ")}</span>`
-      : `<span style="color:var(--ok);">✓ All prefixes have a PM.</span>`;
+      ? `<span style="color:var(--warn);"><strong>${missingPm.length} course${missingPm.length===1?"":"s"} missing a PM</strong></span>`
+      : `<span style="color:var(--ok);">✓ All courses have a PM.</span>`;
 
   bar.innerHTML = `
     <span><strong>Rotation:</strong> last sync ${escapeHtml(stamp)} (${state.courses.length} courses)</span>
@@ -7223,8 +7274,53 @@ function toggleTheme() {
   try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
 }
 
+/* ── Inline clear (×) button for every text input ───────────────────────────
+   Wraps each input[type=text] in a .iclear-wrap span and appends a small ×
+   button. CSS shows it only when the field is non-empty. A MutationObserver
+   handles inputs added by dynamic renders (modals, etc.). Auth/overlay inputs
+   are skipped so the sign-in flow stays untouched. */
+function setupInputClears() {
+  function addClear(input) {
+    if (input.dataset.clearSetup) return;
+    if (input.type === 'hidden' || input.type === 'checkbox' || input.type === 'number' ||
+        input.type === 'email' || input.readOnly || input.disabled) return;
+    if (input.closest('.auth-card') || input.closest('#rotationErrorOverlay') ||
+        input.closest('#pendingOverlay')) return;
+    input.dataset.clearSetup = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'iclear-wrap';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'iclear-btn';
+    btn.title = 'Clear';
+    btn.setAttribute('aria-label', 'Clear field');
+    wrap.appendChild(btn);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.focus();
+    });
+  }
+  document.querySelectorAll('input[type=text], input[type=search]').forEach(addClear);
+  const obs = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches('input[type=text], input[type=search]')) addClear(node);
+        node.querySelectorAll('input[type=text], input[type=search]').forEach(addClear);
+      }
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
 async function init() {
   loadTheme();
+  setupInputClears();
   loadLastRotationSync();
   const themeBtn = document.getElementById("btnThemeToggle");
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
