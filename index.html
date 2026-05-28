@@ -1428,32 +1428,39 @@
     backdrop-filter: blur(6px);
   }
   .auth-card {
-    background: var(--card-bg, #162033);
-    border: 1px solid var(--border, #2a3850);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 32px;
     max-width: 440px;
     width: 90%;
-    color: var(--text-default, #e6ebf2);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    color: var(--text);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
   }
-  .auth-card h2 { margin: 0 0 8px; font-size: 22px; }
-  .auth-card .auth-sub { margin: 0 0 20px; color: var(--text-muted, #8a96a8); font-size: 14px; line-height: 1.5; }
-  .auth-card label { font-size: 11px; color: var(--text-muted, #8a96a8); text-transform: uppercase; letter-spacing: 0.5px; }
-  .auth-card input[type=email] {
+  .auth-card h2 { margin: 0 0 8px; font-size: 22px; color: var(--text); }
+  .auth-card .auth-sub { margin: 0 0 20px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+  .auth-card label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .auth-card input[type=email],
+  .auth-card input[type=text] {
     padding: 10px 14px;
-    background: var(--bg-app, #0e1525);
-    border: 1px solid var(--border, #2a3850);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
-    color: var(--text-default, #e6ebf2);
+    color: var(--text);
     font-size: 15px;
     width: 100%;
     box-sizing: border-box;
   }
+  .auth-card input[type=email]:focus,
+  .auth-card input[type=text]:focus {
+    outline: none;
+    border-color: var(--wwu-green);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--wwu-green) 20%, transparent);
+  }
   .auth-card .btn-primary {
     padding: 11px 14px;
-    background: var(--wwu-green, #27d8a5);
-    color: #0e1525;
+    background: var(--wwu-green);
+    color: #fff;
     border: none;
     border-radius: 8px;
     font-weight: 600;
@@ -1461,18 +1468,19 @@
     cursor: pointer;
     width: 100%;
   }
+  .auth-card .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
   .auth-card .btn-primary:disabled { opacity: 0.6; cursor: wait; }
   .auth-card .btn-secondary {
     padding: 9px 18px;
     background: transparent;
-    color: var(--text-default, #e6ebf2);
-    border: 1px solid var(--border, #2a3850);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     cursor: pointer;
     font-size: 13px;
   }
-  .auth-card .auth-msg { margin: 14px 0 0; font-size: 13px; color: var(--text-muted, #8a96a8); min-height: 18px; }
-  .auth-card .auth-msg.error { color: #ff8a8a; }
+  .auth-card .auth-msg { margin: 14px 0 0; font-size: 13px; color: var(--text-muted); min-height: 18px; }
+  .auth-card .auth-msg.error { color: var(--danger); }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -1520,7 +1528,7 @@
   <div class="auth-card" style="text-align:center;">
     <h2>Waiting for approval</h2>
     <p class="auth-sub">
-      You're signed in as <strong id="pendingEmail" style="color:var(--text-default,#e6ebf2);"></strong>, but an admin still needs to assign your role before you can use the app. You'll get full access automatically once they do.
+      You're signed in as <strong id="pendingEmail" style="color:var(--text);"></strong>, but an admin still needs to assign your role before you can use the app. You'll get full access automatically once they do.
     </p>
     <button id="pendingSignOut" type="button" class="btn-secondary">Sign out</button>
   </div>
@@ -1531,14 +1539,10 @@
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
   </div>
   <div class="header-actions">
-    <button type="button" id="btnUserName" title="Change name"
-            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;display:flex;align-items:center;gap:6px;">
-      <span style="opacity:0.7;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">User</span>
-      <span id="userNameLabel">—</span>
-    </button>
+    <span id="userNameLabel" style="color:rgba(255,255,255,0.75);font-size:13px;font-weight:500;padding:0 4px;"></span>
     <button type="button" id="btnThemeToggle" title="Toggle dark mode" aria-label="Toggle dark mode"
-            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
-      <span id="themeToggleLabel">Dark mode</span>
+            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">
+      <span id="themeToggleIcon"></span>
     </button>
     <button type="button" id="btnSignOut" title="Sign out"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
@@ -1676,19 +1680,10 @@
 </section>
 
 <section id="viewTerms" class="view active">
-  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto auto;">
+  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto;">
     <div>
       <label for="tfSearch">Search</label>
       <input id="tfSearch" type="text" placeholder="Course, instructor, dean, PM…">
-    </div>
-    <div>
-      <label for="tfYear">Year</label>
-      <select id="tfYear">
-        <option value="2025">2025</option>
-        <option value="2026" selected>2026</option>
-        <option value="2027">2027</option>
-        <option value="2028">2028</option>
-      </select>
     </div>
     <div>
       <label for="tfLevel">Level</label>
@@ -1739,9 +1734,9 @@
   <details style="margin-top:16px;">
     <summary style="cursor:pointer;font-weight:600;color:var(--wwu-green-dark);">How this view works</summary>
     <div style="margin-top:8px;color:var(--text-muted);font-size:13px;line-height:1.5;">
-      <p>Each row is one <strong>offering</strong> — a single term instance of a course, derived from the registrar's online rotation. 5-week slots (A/B/C) land in subterms 1A / 2B / 3C. 10-week courses (F = First, L = Last) appear in both of the subterms they span. Full-semester online courses (15W / 16W) are anchored to the 1A subterm for planning.</p>
-      <p>Fill in <strong>Assigned Instructor</strong> inline. The <strong>Dean</strong> and <strong>Program Manager</strong> are auto-assigned — Dean from the course's school, PM from the admin-uploaded mapping (Admin page → Program Managers CSV). Rows turn <strong style="color:#b03a2e;">red</strong> when the assignment deadline has passed and no instructor is assigned.</p>
-      <p>Click <strong>Submit to Registrar</strong> when a section is ready — the instructor is locked, the row is tagged <code>SENT</code>, and the button swaps to <strong>Request Change</strong> (which opens a Change Request for any post-submission edit). Click the <code>+</code> to the left of a course code to add another section of the same course (ACC 240 01, ACC 240 02, etc.). New rotation slots are pulled in automatically — use the <code>Re-sync now</code> button in the rotation banner above the page if you want to force an immediate refresh.</p>
+      <p>Each row is one <strong>offering</strong> — a single term instance of a course. 5-week slots (A/B/C) land in subterms 1A / 2B / 3C. 10-week courses (F = First, L = Last) appear in both subterms they span. Full-semester online courses are anchored to the 1A subterm for planning.</p>
+      <p>Fill in <strong>Assigned Instructor</strong> inline. The <strong>Dean</strong> and <strong>Program Manager</strong> columns are auto-assigned from the course mapping. Rows turn <strong style="color:#b03a2e;">red</strong> when the assignment deadline has passed and no instructor is assigned.</p>
+      <p>Click <strong>Submit to Registrar</strong> when a section is ready — the instructor is locked, the row is tagged <code>SENT</code>, and the button swaps to <strong>Request Change</strong> for any post-submission edits. Click the <code>+</code> to the left of a course code to add another section of the same course (e.g. ACC 240 01, ACC 240 02).</p>
     </div>
   </details>
 </section>
@@ -1896,8 +1891,7 @@
   <details class="help" open>
     <summary>How the Change Request workflow works</summary>
     <div class="body">
-      <p>This view mirrors the <em>Schedule Change</em> Google Sheet exactly. Each request captures the same 14 columns: Submitter, Date, Grad/Undergrad, Modality, Term, Subterm, Year, Prefix, Number, Type of Change, Explanation, Rationale, Approved By, Approval Notes. Status transitions add registrar-side fields (Sent date, Processed date, Registrar notes).</p>
-      <p><strong>Lifecycle:</strong></p>
+      <p>Submit a change request for any course adjustment — instructor assignments, time/day changes, location moves, add a section, or course adds/cancellations. Requests follow this lifecycle:</p>
       <div class="legend" style="gap:6px;">
         <span class="item"><span class="status-pill st-pending">Pending Approval</span></span>
         <span class="arrow">→</span>
@@ -1907,8 +1901,7 @@
         <span class="arrow">→</span>
         <span class="item"><span class="status-pill st-finalized">Finalized</span></span>
       </div>
-      <p>A Dean or Program Manager submits a request by clicking <code>+ New Request</code> (or <code>Request Change</code> on a specific course row in the Rotation view). The Associate Provost then reviews — clicking <strong>Approve &amp; Send</strong> routes the request directly to the <strong>Registrar Queue</strong>, or <strong>Reject</strong> closes it with a reason. The Registrar works from the <em>Registrar Queue</em> chip above the table and clicks <strong>Mark Finalized</strong> once processed (CRN, section #, etc.). Finalized requests expose an <strong>Apply to Rotation</strong> button that writes the change back to the course row. All actions are visible in this prototype (no role gating).</p>
-      <p>When a request reaches <em>Finalized</em>, click <code>Apply to Rotation</code> to write the change back onto the course row in the Rotation view (for add / remove / instructor / location changes).</p>
+      <p>Click <code>+ New Request</code> to open a new change request, or use <strong>Request Change</strong> on any assigned course row. A Dean or Associate Provost then reviews — <strong>Approve &amp; Send</strong> routes the request to the Registrar Queue, or <strong>Reject</strong> closes it with a reason. The Registrar marks requests <strong>Finalized</strong> once processed.</p>
     </div>
   </details>
 </section>
@@ -3125,7 +3118,7 @@ const STATUS_ORDER = { "Draft":0, "Pending Approval":1, "Approved":2, "Rejected"
 const STATUS_CLASS = { "Draft":"st-draft", "Pending Approval":"st-pending", "Approved":"st-approved", "Rejected":"st-rejected", "Sent to Registrar":"st-sent", "Finalized":"st-finalized" };
 const CHANGE_TYPE_CLASS = {
   "Add Course":"ct-add", "Remove Course":"ct-remove",
-  "Add Section & Split Enrollment":"ct-add",
+  "Add Section":"ct-add", "Add Section & Split Enrollment":"ct-add",
   "Cancel Course":"ct-remove", "Re-instate Course":"ct-add",
   "Assign Instructor":"ct-instr", "Modify Time/Day":"ct-time",
   "Modify Location":"ct-location", "Other":"ct-pill",
@@ -4536,7 +4529,8 @@ function renderTermStats(list) {
   // instructor assignment in (semester, year).
   const clearBtn = isAdmin()
     ? `<div class="item term-clear-tile" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
-         <button type="button" id="btnClearTerm" class="danger" style="white-space:nowrap;font-size:12px;padding:8px 12px;"
+         <button type="button" id="btnClearTerm"
+                 style="white-space:nowrap;font-size:12px;padding:8px 12px;background:var(--danger);color:white;border:1px solid var(--danger);border-radius:6px;cursor:pointer;font-weight:600;"
                  title="Clear every instructor assignment in ${def.label} ${calYear}">Clear ${escapeHtml(def.label)} ${calYear}</button>
        </div>`
     : "";
@@ -6064,15 +6058,6 @@ function saveSectionFromModal() {
 function bindTermEvents() {
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
-  document.getElementById("tfYear").addEventListener("change", (e) => {
-    state.termFilter.year = Number(e.target.value);
-    // Ensure rotation offerings exist for the newly-selected academic year.
-    // syncOfferingsFromRotation is idempotent — it only adds rows that are
-    // missing, so switching years back and forth is safe.
-    syncOfferingsFromRotation(state.termFilter.year);
-    setDirty(true); // flush any newly-created offerings to Supabase
-    renderTerms();
-  });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
   document.getElementById("tfShowOnly").addEventListener("change", (e) => { state.termFilter.showOnly = e.target.value; renderTerms(); });
 
@@ -6461,19 +6446,30 @@ const CHANGE_TYPE_DEFS = {
   // surface the same instructor field here. The applier writes the name onto
   // the new course (and any newly-created offering) when finalized.
   "Add Course":         { fields: [
-    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Norlian Vickers", full: true },
+    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
+    { key: "days",       label: "Days",            type: "text", placeholder: "e.g., MW, TR" },
+    { key: "time",       label: "Time",            type: "text", placeholder: "e.g., 3:25–4:40" },
+    { key: "location",   label: "Location",        type: "text", placeholder: "e.g., BB 002" },
+  ]},
+  // On-ground sections use "Add Section"; online/split-enrollment sections use
+  // "Add Section & Split Enrollment". The dialog filters options by modality.
+  "Add Section":        { fields: [
+    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
+    { key: "days",       label: "Days",            type: "text", placeholder: "e.g., MW, TR" },
+    { key: "time",       label: "Time",            type: "text", placeholder: "e.g., 3:25–4:40" },
+    { key: "location",   label: "Location",        type: "text", placeholder: "e.g., BB 002" },
   ]},
   "Add Section & Split Enrollment": { fields: [
-    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Norlian Vickers", full: true },
+    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
   ]},
   "Cancel Course":      { fields: [] },
   "Re-instate Course":  { fields: [] },
   "Assign Instructor":  { fields: [
-    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Norlian Vickers", full: true },
+    { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
   ]},
   "Modify Time/Day":    { fields: [
     { key: "days",       label: "Days",     type: "text", placeholder: "e.g., MW, TR" },
-    { key: "time",       label: "Time",     type: "text", placeholder: "e.g., 3:25-4:40" },
+    { key: "time",       label: "Time",     type: "text", placeholder: "e.g., 3:25–4:40" },
   ]},
   "Modify Location":    { fields: [
     { key: "location",   label: "New location", type: "text", placeholder: "e.g., BB 002", full: true },
@@ -6508,6 +6504,7 @@ function changeSummary(ch) {
   if (!ch) return "";
   const f = ch.fields || {};
   if (ch.type === "Add Course") return f.instructor ? `Add (instructor: ${f.instructor})` : "Add course";
+  if (ch.type === "Add Section") return f.instructor ? `Add section (instructor: ${f.instructor})` : "Add section";
   if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section (instructor: ${f.instructor})` : "Add section & split enrollment";
   if (ch.type === "Assign Instructor") return f.instructor ? `Assign to ${f.instructor}` : "Assign instructor";
   if (ch.type === "Modify Time/Day") {
@@ -6528,9 +6525,18 @@ function composeExplanation(changes) {
 /* Render a single change block into the dialog list. */
 function renderChangeBlock(idx, ch) {
   const def = CHANGE_TYPE_DEFS[ch.type] || CHANGE_TYPE_DEFS["Other"];
-  const opts = CHANGE_TYPE_OPTIONS.map(t =>
-    `<option value="${escapeHtml(t)}"${t === ch.type ? " selected" : ""}>${escapeHtml(t)}</option>`
-  ).join("");
+  // Filter change-type options by modality: on-ground uses "Add Section";
+  // online/other uses "Add Section & Split Enrollment".
+  const modality = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
+  const isOnGround = modality === "On-Ground";
+  const opts = CHANGE_TYPE_OPTIONS
+    .filter(t => {
+      if (t === "Add Section" && !isOnGround) return false;
+      if (t === "Add Section & Split Enrollment" && isOnGround) return false;
+      return true;
+    })
+    .map(t => `<option value="${escapeHtml(t)}"${t === ch.type ? " selected" : ""}>${escapeHtml(t)}</option>`)
+    .join("");
   const fieldsHtml = def.fields.length
     ? def.fields.map(f => {
         const v = (ch.fields && ch.fields[f.key]) || "";
@@ -7087,8 +7093,8 @@ function seedExampleRequests() {
   state.requests = [
     newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Modify Time/Day", explanation:"Change to TR 3:25-4:40 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
     newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Modify Time/Day", explanation:"Change to MW 4-5:15 in BB 002", rationale:"fit adjunct schedule", status:"Pending Approval" }),
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
-    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Norlian Vickers", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"211", changeType:"Assign Instructor", explanation:"assign to Egon Spengler", rationale:"needs instructor", status:"Pending Approval" }),
+    newRequest({ submitter:"Zach Dowdle", date:"2026-04-23", section:"Undergrad", modality:"On-Ground", term:"Fall", subterm:"Semester", year:2026, prefix:"ITP", number:"450", changeType:"Assign Instructor", explanation:"assign to Egon Spengler", rationale:"needs instructor", status:"Pending Approval" }),
   ];
   state.requests.forEach(r => logRequestEvent(r, "Created from Schedule Change sheet sample"));
 }
@@ -7179,11 +7185,15 @@ async function requireUserName() {
 /* ======== Init ======== */
 /* ======== Dark mode ======== */
 const THEME_KEY = "wwu-theme";
+const ICON_SUN  = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+const ICON_MOON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
 function applyTheme(theme) {
   const dark = theme === "dark";
   document.documentElement.classList.toggle("dark", dark);
-  const label = document.getElementById("themeToggleLabel");
-  if (label) label.textContent = dark ? "Light mode" : "Dark mode";
+  const icon = document.getElementById("themeToggleIcon");
+  if (icon) icon.innerHTML = dark ? ICON_SUN : ICON_MOON;
+  const btn = document.getElementById("btnThemeToggle");
+  if (btn) btn.setAttribute("title", dark ? "Switch to light mode" : "Switch to dark mode");
 }
 function loadTheme() {
   let t = "light";
@@ -7202,16 +7212,6 @@ async function init() {
   loadLastRotationSync();
   const themeBtn = document.getElementById("btnThemeToggle");
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
-  // Hook up the user-name chip in the header — clicking it re-opens the prompt.
-  const nameBtn = document.getElementById("btnUserName");
-  if (nameBtn) nameBtn.addEventListener("click", async () => {
-    const v = await promptUserName({
-      heading: "Change your name",
-      subtitle: "Future changes will be tagged with the new name. Past changelog entries keep whatever name was set when they happened.",
-      cancelable: true,
-    });
-    if (v) toast(`Now editing as ${v}`);
-  });
   // Gate the rest of the app on auth being resolved.  requireUserName()
   // awaits window.AUTH.ready and adopts the signed-in identity as the
   // editing display name (Phase 2).
