@@ -4232,10 +4232,9 @@ function offeringKey(courseId, semester, slot, year) {
 }
 
 /* Rebuild state.offerings from state.courses rotation data, preserving any edits.
-   Honors each course's "Takes Effect" field — a future takes-effect blocks the
-   sync from creating offerings for terms before that takes-effect, so changes
-   to the rotation only flow into the assignments list once the current term
-   closes. */
+   All courses in the rotation are synced unconditionally — the "Takes Effect"
+   date and past-term-start guard have been removed so every scheduled course
+   appears in term assignments regardless of when it takes effect. */
 // Before May 2026 this used per-browser `courseId` to dedupe offerings, but
 // courseId is regenerated locally on every page load. When state.courses was
 // empty during loadFromSupabase (cross-browser, no localStorage cache), each
@@ -4275,10 +4274,8 @@ function syncOfferingsFromRotation(defaultYear) {
     if (!code) continue;
     haveCombo.add(`${code}|${o.semester}|${o.rotationSlot}|${o.year}`);
   }
-  const today = new Date();
   const toAdd = [];
   for (const c of state.courses) {
-    const te = parseTakesEffect(c.takesEffect);
     const pairs = [
       ["Fall",   courseChunksToSlots(c.onlineFall)],
       ["Spring", courseChunksToSlots(c.onlineSpring)],
@@ -4287,15 +4284,6 @@ function syncOfferingsFromRotation(defaultYear) {
     for (const [semester, slots] of pairs) {
       for (const slot of slots) {
         if (slot === "AN") continue; // As Needed: don't auto-schedule
-        if (te) {
-          const target = { semester, year };
-          if (compareTerms(target, te) < 0) continue;
-        }
-        const semStart = termStartDate(semester, "1A", year);
-        if (semStart) {
-          const startTs = new Date(semStart + "T00:00:00").getTime();
-          if (!isNaN(startTs) && today.getTime() >= startTs) continue;
-        }
         const k = `${c.code}|${semester}|${slot}|${year}`;
         if (!haveCombo.has(k)) {
           toAdd.push(newOffering({
