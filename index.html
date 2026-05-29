@@ -2837,6 +2837,15 @@ function missingPmCourses() {
     const code = canonicalCourseCode(c.code);
     if (!code || seen.has(code)) continue;
     seen.add(code);
+    // Skip courses whose only rotation slots are "AN" (As Needed) — they
+    // never auto-schedule into any term and don't appear in term assignments.
+    const allSlots = [
+      ...(c.onlineFall   || []),
+      ...(c.onlineSpring || []),
+      ...(c.onlineSummer || []),
+    ];
+    const hasScheduledSlot = allSlots.some(s => s && s !== "AN");
+    if (!hasScheduledSlot) continue;
     if (!pmForCode(code)) missing.push(code);
   }
   return missing.sort();
