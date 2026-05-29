@@ -6866,8 +6866,14 @@ function renderChangeBlock(idx, ch) {
     })
     .map(t => `<option value="${escapeHtml(t)}"${t === ch.type ? " selected" : ""}>${escapeHtml(t)}</option>`)
     .join("");
-  const fieldsHtml = def.fields.length
-    ? def.fields.map(f => {
+  // For Add Course / Add Section, hide the physical-presence fields (days,
+  // time, location) when the section is online — they don't apply.
+  const onGroundOnlyKeys = new Set(["days", "time", "location"]);
+  const visibleFields = def.fields.filter(f =>
+    isOnGround || !onGroundOnlyKeys.has(f.key)
+  );
+  const fieldsHtml = visibleFields.length
+    ? visibleFields.map(f => {
         const v = (ch.fields && ch.fields[f.key]) || "";
         const cls = f.full ? "full" : "";
         if (f.type === "textarea") {
@@ -7030,6 +7036,12 @@ function renderRequestHeader(editable) {
     });
     ["rs_modality_sel","rs_term_sel","rs_year_in","rs_subterm_sel"].forEach(id => {
       document.getElementById(id).addEventListener("change", sync);
+    });
+    // When modality changes, re-render change blocks so the type dropdown and
+    // field visibility update immediately (Online hides time/day/location).
+    document.getElementById("rs_modality_sel").addEventListener("change", () => {
+      syncChangeListFromDom();
+      renderChangeList();
     });
     return;
   }
