@@ -1048,6 +1048,8 @@
     vertical-align: middle;
   }
   .term-table .add-section-btn:hover { background: var(--wwu-green); color: white; border-color: var(--wwu-green); }
+  .term-table .add-section-btn.remove-section-btn { color: var(--danger); border-color: var(--danger); background: white; }
+  .term-table .add-section-btn.remove-section-btn:hover { background: var(--danger); color: white; }
   .term-table tr.submitted { background: #f4f7f5; }
   .term-table tr.submitted input[data-field="instructor"] {
     background: #eef0ef;
@@ -4828,6 +4830,9 @@ function renderTermTable(list) {
     let sectionActionBtn = "";
     if (!isLocked && sectionIdx === 1) {
       sectionActionBtn = `<button type="button" class="add-section-btn" data-tact="addsection" data-oid="${escapeHtml(o.id)}" title="Add another section of this course">+</button>`;
+    } else if (o.isNewSection && !o.submitted) {
+      // Added sections that haven't been sent to the Registrar can still be removed.
+      sectionActionBtn = `<button type="button" class="add-section-btn remove-section-btn" data-tact="removesection" data-oid="${escapeHtml(o.id)}" title="Remove this added section">−</button>`;
     }
     return `
       <tr data-oid="${escapeHtml(o.id)}"${clsAttr}>
@@ -5328,6 +5333,13 @@ function renderRegTable(list) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">Registrar queue is clear for this subterm.</td></tr>`;
     return;
   }
+  // Only admins and registrars can mark items completed; PMs and deans see "In Progress".
+  const canComplete = isAdmin() || currentRole() === "registrar";
+  const undoBtn = (regId) =>
+    `<button type="button" data-ract="undo" data-regid="${escapeHtml(regId)}"
+      style="margin-left:6px;padding:2px 7px;font-size:11px;border:1px solid var(--border-strong);background:transparent;color:var(--text-muted);border-radius:4px;cursor:pointer;"
+      title="Undo — return this item to its previous state">↩ Undo</button>`;
+
   tbody.innerHTML = list.map(item => {
     if (item.kind === "section") {
       const o = item.offering;
@@ -5335,14 +5347,13 @@ function renderRegTable(list) {
       const dean = deanForOffering(o) || "—";
       const sectionNum = sectionNumberFor(o);
       const received = o.submittedAt ? escapeHtml(fmtDateShort(o.submittedAt)) : "—";
-      // Section submissions: shown as an Assign Instructor action — the key
-      // information for the Registrar is who is being assigned, not that a
-      // new section is being created (that already happened when the row was
-      // added to the term grid).
       const changeType = "Assign Instructor";
       const explanation = o.instructor ? `Assign to ${o.instructor}` : (c.title || "");
       const submitter = o.submittedBy || "—";
       const approver = dean;
+      const actionCell = canComplete
+        ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark as processed by Registrar">Completed</button>${undoBtn(item.id)}`
+        : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
       return `
         <tr data-regid="${escapeHtml(item.id)}">
           <td><span class="status-pill st-sent" title="Section submitted to Registrar">Section</span></td>
@@ -5352,7 +5363,7 @@ function renderRegTable(list) {
           <td>${escapeHtml(submitter)}</td>
           <td>${escapeHtml(approver)}</td>
           <td>${received}</td>
-          <td><button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark as processed by Registrar">Completed</button></td>
+          <td style="white-space:nowrap;">${actionCell}</td>
         </tr>
       `;
     }
@@ -5360,6 +5371,9 @@ function renderRegTable(list) {
     const code = `${r.prefix||""} ${r.number||""}`.trim() || "(no course)";
     const received = r.sentDate ? escapeHtml(fmtDateShort(r.sentDate)) : (r.date ? escapeHtml(fmtDateShort(r.date)) : "—");
     const approver = r.approvedBy || "—";
+    const actionCell = canComplete
+      ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark request as Finalized">Completed</button>${undoBtn(item.id)}`
+      : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
     return `
       <tr data-regid="${escapeHtml(item.id)}">
         <td><span class="status-pill st-pending" style="background:#7a4ea0;color:white;" title="Change request sent to Registrar">Request</span></td>
@@ -5369,7 +5383,7 @@ function renderRegTable(list) {
         <td>${escapeHtml(r.submitter||"—")}</td>
         <td>${escapeHtml(approver)}</td>
         <td>${received}</td>
-        <td><button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark request as Finalized">Completed</button></td>
+        <td style="white-space:nowrap;">${actionCell}</td>
       </tr>
     `;
   }).join("");
@@ -5444,6 +5458,47 @@ function markRegistrarItemComplete(regId) {
     if (typeof renderRequests === "function") renderRequests();
     if (typeof renderChangelog === "function") renderChangelog();
     toast(`Request ${(r.prefix||"")} ${(r.number||"")} marked Finalized`);
+  }
+}
+
+/* Undo a registrar queue item — return it to its pre-submission state.
+   • Sections → clear submission flags + instructor, re-show in term assignments
+     as an unsubmitted row with the "−" button restored (isNewSection preserved).
+   • Requests → revert from "Sent to Registrar" back to "Approved" so the item
+     returns to the Change Requests page for further review. */
+function undoRegistrarItem(regId) {
+  const [kind, id] = regId.split(":");
+  if (kind === "sec") {
+    const o = state.offerings.find(x => x.id === id);
+    if (!o) return;
+    const c = state.courses.find(x => x.id === o.courseId) || {};
+    if (!confirm(`Undo submission of ${c.code || "this section"} §${sectionNumberFor(o)}? The row will return to Term Assignments as unsubmitted with no instructor assigned.`)) return;
+    o.submitted      = false;
+    o.submittedAt    = "";
+    o.submittedBy    = "";
+    o.instructor     = "";
+    markLocallyTouched(o.id);
+    setDirty(true);
+    renderRegistrar();
+    if (typeof renderTerms === "function") renderTerms();
+    if (typeof renderChangelog === "function") renderChangelog();
+    toast(`${c.code || "Section"} returned to Term Assignments (unsubmitted)`);
+  } else if (kind === "req") {
+    const r = state.requests.find(x => x.id === id);
+    if (!r) return;
+    const code = `${r.prefix || ""} ${r.number || ""}`.trim() || "request";
+    if (!confirm(`Undo — return the "${r.changeType || "change"}" request for ${code} to the Change Requests page (status: Approved)?`)) return;
+    r.status = "Approved";
+    r.sentDate = "";
+    if (typeof logRequestEvent === "function") {
+      logRequestEvent(r, `Returned to Approved (undone from Registrar queue) by ${state.userName || "(unknown)"}`);
+    }
+    markLocallyTouched(r.id);
+    setDirty(true);
+    renderRegistrar();
+    if (typeof renderRequests === "function") renderRequests();
+    if (typeof renderChangelog === "function") renderChangelog();
+    toast(`Request for ${code} returned to Change Requests (Approved)`);
   }
 }
 
@@ -5570,14 +5625,18 @@ function bindRegistrarEvents() {
     state.regFilter.subterm  = chip.dataset.subterm;
     renderRegistrar();
   });
-  // Completed button
+  // Completed + Undo buttons
   $("rgtbody").addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-ract='complete']");
+    const btn = e.target.closest("[data-ract]");
     if (!btn) return;
     const id = btn.dataset.regid;
     if (!id) return;
-    if (!confirm("Mark this item as completed by the Registrar? It will be removed from this queue.")) return;
-    markRegistrarItemComplete(id);
+    if (btn.dataset.ract === "complete") {
+      if (!confirm("Mark this item as completed by the Registrar? It will be removed from this queue.")) return;
+      markRegistrarItemComplete(id);
+    } else if (btn.dataset.ract === "undo") {
+      undoRegistrarItem(id);
+    }
   });
   document.querySelectorAll('#viewRegistrar th[data-rgsort]').forEach(th => {
     th.addEventListener("click", () => {
@@ -6393,11 +6452,24 @@ function bindTermEvents() {
       const label = c ? c.code : "this course";
       if (!confirm(`Add another section of ${label}?`)) return;
       duplicateSection(oid);
+    } else if (act === "removesection") {
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      const o = state.offerings.find(x => x.id === oid);
+      const c = o && state.courses.find(x => x.id === o.courseId);
+      const label = c ? c.code : "this section";
+      if (!confirm(`Remove the added section of ${label}? This will also remove any associated change request.`)) return;
+      // Cancel the linked Add Section change request if it's still pending.
+      if (o && o.addRequestId) {
+        const req = state.requests.find(r => r.id === o.addRequestId);
+        if (req && req.status !== "Finalized" && req.status !== "Sent to Registrar") {
+          state.requests = state.requests.filter(r => r.id !== o.addRequestId);
+        }
+      }
+      removeSectionOffering(oid);
+      if (typeof renderRequests === "function") renderRequests();
+      if (typeof renderChangelog === "function") renderChangelog();
     }
-    // The "−" remove-section action was retired — new sections now flow through
-    // the same Cancel Course / Request Change path as any other row, so there
-    // is no longer an inline remove button. removeSectionOffering() is kept
-    // available for internal callers but no UI element binds to it here.
   });
 
   // "Sync from Rotation" was removed — the rotation banner's "Re-sync now" is the
