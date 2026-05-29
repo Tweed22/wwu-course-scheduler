@@ -3609,6 +3609,13 @@ async function flushToSupabase() {
   if (!window.AUTH || !window.AUTH.user) return;
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
   _flushInFlight = true;
+  // Mark every local id as touched before writing to DB. flushToSupabase
+  // upserts ALL rows (not just changed ones), so Supabase fires a realtime
+  // UPDATE for every offering and request. Without this, those echoes all
+  // hit handleRealtime* as unrecognised updates and call scheduleReRender(),
+  // causing the flicker the user sees on every save/reject/delete action.
+  (state.offerings || []).forEach(o => { if (o.id) markLocallyTouched(o.id); });
+  (state.requests  || []).forEach(r => { if (r.id) markLocallyTouched(r.id); });
   try {
     // localOIds tracks EVERY local offering id (including ones with missing
     // course_code that we'll skip on upsert). That's important because the
@@ -3725,11 +3732,10 @@ function handleRealtimeOffering(payload) {
   const incoming = rowToOffering(row);
   if (!incoming) return;
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
-  // If this row was just edited locally, treat the realtime payload as an
-  // echo of our own pending write and ignore it. Otherwise the user's
-  // partially-typed value gets overwritten by the older snapshot the
-  // server just acknowledged.
-  if (idx >= 0 && recentlyTouched(incoming.id)) return;
+  // Suppress echoes of our own writes (both UPDATE and INSERT) during the
+  // touch-suppression window — the guard was previously idx>=0 only, which
+  // allowed INSERT echoes from newly-created sections to slip through.
+  if (recentlyTouched(incoming.id)) return;
   if (idx >= 0) state.offerings[idx] = incoming;
   else state.offerings.push(incoming);
   scheduleReRender();
@@ -3749,8 +3755,8 @@ function handleRealtimeRequest(payload) {
   const incoming = rowToRequest(row);
   if (!incoming) return;
   const idx = state.requests.findIndex(r => r.id === incoming.id);
-  // Suppress echoes of our own writes during the touch-suppression window.
-  if (idx >= 0 && recentlyTouched(incoming.id)) return;
+  // Suppress echoes of our own writes (UPDATE and INSERT) during the window.
+  if (recentlyTouched(incoming.id)) return;
   if (idx >= 0) state.requests[idx] = incoming;
   else state.requests.push(incoming);
   scheduleReRender();
