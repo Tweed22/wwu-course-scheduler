@@ -4952,6 +4952,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
     status:      "Pending Approval",
   });
   logRequestEvent(draft, `Auto-created Add Section & Split Enrollment by ${who}${instr ? ` (instructor: ${instr})` : " — instructor pending"}`);
+  markLocallyTouched(draft.id);
   state.requests.push(draft);
   // Tag the offering so we can wire follow-up automation to its originating request.
   o.isNewSection = true;
@@ -5060,6 +5061,7 @@ function cancelCourseOffering(offeringId) {
     status:      "Pending Approval",
   });
   logRequestEvent(draft, `Created from Cancel Course button by ${who}`);
+  markLocallyTouched(draft.id);
   state.requests.push(draft);
   setDirty(true);
   renderTerms();
@@ -5778,6 +5780,7 @@ function restoreRequestFromChangelog(requestId) {
   r.registrarDate = "";
   r.registrarNotes = "";
   logRequestEvent(r, `Restored from Changelog by ${who} (${code})`);
+  markLocallyTouched(r.id);
   setDirty(true);
   if (typeof renderRequests === "function") renderRequests();
   if (typeof renderChangelog === "function") renderChangelog();
@@ -7166,9 +7169,11 @@ function saveRequestFromModal() {
   if (existing) {
     Object.assign(existing, draft);
     logRequestEvent(existing, "Edited");
+    markLocallyTouched(existing.id);
     toast("Request updated");
   } else {
     logRequestEvent(draft, "Created");
+    markLocallyTouched(draft.id);
     state.requests.push(draft);
     toast("Request created");
   }
@@ -7210,6 +7215,7 @@ function transitionRequest(id, action) {
     r.archivedBy = who;
     r.archivedReason = "Rejected" + (reason ? `: ${reason}` : "");
     logRequestEvent(r, `Rejected by ${who} (${code})${reason ? ` — ${reason}` : ""}`);
+    markLocallyTouched(r.id);
     setDirty(true);
     renderRequests();
     if (typeof renderChangelog === "function") renderChangelog();
@@ -7223,6 +7229,7 @@ function transitionRequest(id, action) {
     r.archivedBy = who;
     r.archivedReason = "Deleted";
     logRequestEvent(r, `Deleted from queue by ${who} (${code})`);
+    markLocallyTouched(r.id);
     setDirty(true);
     renderRequests();
     if (typeof renderChangelog === "function") renderChangelog();
@@ -7285,6 +7292,7 @@ function applyRequestToCourse(r) {
     logRequestEvent(r, `Applied (other change type — no auto-write)`);
     toast("Applied (logged)");
   }
+  markLocallyTouched(r.id);
   setDirty(true);
   render();
   renderRequests();
