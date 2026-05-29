@@ -2858,6 +2858,34 @@ async function syncRotationFromSheet() {
   return fresh.length;
 }
 
+/* Show a small dismissible dialog listing banner warning items (missing deans
+   or missing PMs).  Re-uses the app's .modal-backdrop / .modal CSS. */
+function showBannerListDialog(title, items, colorVar) {
+  let bd = document.getElementById("bannerListDialog");
+  if (!bd) {
+    bd = document.createElement("div");
+    bd.id = "bannerListDialog";
+    bd.className = "modal-backdrop";
+    bd.innerHTML = `
+      <div class="modal" role="dialog" style="max-width:480px;width:100%;">
+        <header>
+          <h2 id="bannerListDialogTitle" style="font-size:15px;"></h2>
+          <button type="button" class="close" id="bannerListDialogClose" aria-label="Close">×</button>
+        </header>
+        <div class="body" id="bannerListDialogBody" style="max-height:60vh;overflow-y:auto;padding:16px 18px;"></div>
+      </div>`;
+    document.body.appendChild(bd);
+    document.getElementById("bannerListDialogClose").addEventListener("click", () => bd.classList.remove("open"));
+    bd.addEventListener("click", e => { if (e.target === bd) bd.classList.remove("open"); });
+  }
+  document.getElementById("bannerListDialogTitle").textContent = title;
+  const body = document.getElementById("bannerListDialogBody");
+  body.innerHTML = items.map(item =>
+    `<div style="padding:5px 0;border-bottom:1px solid var(--border);color:${colorVar ? `var(${colorVar})` : "var(--text)"};font-size:13.5px;">${escapeHtml(item)}</div>`
+  ).join("") || `<p style="color:var(--text-muted);margin:0;">None.</p>`;
+  bd.classList.add("open");
+}
+
 function showRotationBanner() {
   let bar = document.getElementById("rotationBanner");
   if (!bar) {
@@ -2875,13 +2903,13 @@ function showRotationBanner() {
   const missingPm   = missingPmCourses();    // null = no CSV uploaded yet
 
   const deanHtml = missingDean.length
-    ? `<span style="color:var(--warn);"><strong>${missingDean.length} prefix${missingDean.length===1?"":"es"} missing a dean:</strong> ${missingDean.join(", ")}</span>`
+    ? `<button type="button" id="btnBannerDeanWarn" style="background:none;border:none;padding:0;cursor:pointer;color:var(--warn);font:inherit;font-size:inherit;text-decoration:underline dotted;">⚠ ${missingDean.length} prefix${missingDean.length===1?"":"es"} missing a dean</button>`
     : `<span style="color:var(--ok);">✓ All prefixes have a dean.</span>`;
 
   const pmHtml = missingPm === null
     ? `<span style="color:var(--text-muted);">No PM mapping uploaded.</span>`
     : missingPm.length
-      ? `<span style="color:var(--warn);"><strong>${missingPm.length} course${missingPm.length===1?"":"s"} missing a PM</strong></span>`
+      ? `<button type="button" id="btnBannerPmWarn" style="background:none;border:none;padding:0;cursor:pointer;color:var(--warn);font:inherit;font-size:inherit;text-decoration:underline dotted;">⚠ ${missingPm.length} course${missingPm.length===1?"":"s"} missing a PM</button>`
       : `<span style="color:var(--ok);">✓ All courses have a PM.</span>`;
 
   bar.innerHTML = `
@@ -2890,6 +2918,17 @@ function showRotationBanner() {
     ${pmHtml}
     ${isAdmin() ? `<button type="button" id="btnRotationRetry" style="margin-left:auto;padding:4px 10px;border:1px solid var(--border-strong);background:transparent;color:var(--text);border-radius:4px;cursor:pointer;font-size:11.5px;">Re-sync now</button>` : ""}
   `;
+
+  const deanBtn = document.getElementById("btnBannerDeanWarn");
+  if (deanBtn) deanBtn.addEventListener("click", () =>
+    showBannerListDialog(`Prefixes missing a dean (${missingDean.length})`, missingDean, "--warn")
+  );
+
+  const pmBtn = document.getElementById("btnBannerPmWarn");
+  if (pmBtn) pmBtn.addEventListener("click", () =>
+    showBannerListDialog(`Courses missing a program manager (${missingPm.length})`, missingPm, "--warn")
+  );
+
   const retry = document.getElementById("btnRotationRetry");
   if (retry) retry.onclick = async () => {
     retry.disabled = true; retry.textContent = "Syncing…";
