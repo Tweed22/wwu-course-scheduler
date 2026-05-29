@@ -3195,15 +3195,12 @@ function deanForOffering(o) {
   if (!o) return "";
   const c = state.courses.find(x => x.id === o.courseId);
   if (!c) return "";
-  const csvDean = state.deanByCourse && state.deanByCourse[c.code];
-  if (csvDean) return csvDean;
-  const prefix = (c.code || "").split(" ")[0];
-  const school = SCHOOL_BY_PREFIX[prefix] || "";
-  return DEAN_BY_SCHOOL[school] || "";
+  return deanForCourse(c);
 }
 function deanForCourse(c) {
   if (!c) return "";
-  const csvDean = state.deanByCourse && state.deanByCourse[c.code];
+  const key = canonicalCourseCode(c.code);
+  const csvDean = state.deanByCourse && (state.deanByCourse[key] || state.deanByCourse[c.code]);
   if (csvDean) return csvDean;
   const prefix = (c.code || "").split(" ")[0];
   const school = SCHOOL_BY_PREFIX[prefix] || "";
@@ -3478,8 +3475,9 @@ async function loadFromSupabase() {
     state.deanByCourse = {};
     for (const row of (pmRes.data || [])) {
       if (row && row.course_code) {
-        state.pmByCourse[row.course_code]   = row.program_manager || "";
-        if (row.dean) state.deanByCourse[row.course_code] = row.dean;
+        const key = canonicalCourseCode(row.course_code);   // normalize to "PREFIX NUMBER" uppercase
+        if (!state.pmByCourse[key]) state.pmByCourse[key] = row.program_manager || "";
+        if (row.dean && !state.deanByCourse[key]) state.deanByCourse[key] = row.dean;
       }
     }
     state.termDateOverrides = {};
@@ -3656,13 +3654,14 @@ function handleRealtimeRequest(payload) {
 function handleRealtimePM(payload) {
   const event = payload.eventType || payload.type;
   if (event === "DELETE") {
-    const key = payload.old && payload.old.course_code;
-    if (key) {
+    const rawKey = payload.old && payload.old.course_code;
+    if (rawKey) {
+      const key = canonicalCourseCode(rawKey);
       if (state.pmByCourse)   delete state.pmByCourse[key];
       if (state.deanByCourse) delete state.deanByCourse[key];
     }
   } else if (payload.new && payload.new.course_code) {
-    const key = payload.new.course_code;
+    const key = canonicalCourseCode(payload.new.course_code);
     state.pmByCourse   = state.pmByCourse   || {};
     state.deanByCourse = state.deanByCourse || {};
     state.pmByCourse[key] = payload.new.program_manager || "";
@@ -5903,8 +5902,9 @@ async function uploadProgramManagersCsv() {
     const code = (r[codeCol] || "").trim();
     const pm   = (r[pmCol]   || "").trim();
     if (!code || !pm) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
-    // Normalize whitespace inside the course code (e.g. "ACC  240" → "ACC 240").
-    const normCode = code.replace(/\s+/g, " ");
+    // Normalize to canonical uppercase "PREFIX NUMBER" form so lookups are
+    // case-insensitive and section numbers are stripped (e.g. "acc 240 01" → "ACC 240").
+    const normCode = canonicalCourseCode(code);
     pmMapping[normCode] = pm;
     if (deanCol >= 0) {
       const dean = (r[deanCol] || "").trim();
