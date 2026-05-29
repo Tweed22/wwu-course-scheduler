@@ -2715,6 +2715,9 @@ function rowToCourse(row, existingByCode) {
   const splitLetters = (s) => {
     s = (s || "").trim().toUpperCase();
     if (!s) return [];
+    // Normalize multi-word variants before tokenizing so they survive the split.
+    // "16 weeks" / "16WEEKS" → "16W",  "15 weeks" / "15WEEKS" → "15W"
+    s = s.replace(/16\s*WEEKS?/g, "16W").replace(/15\s*WEEKS?/g, "15W");
     const out = [];
     for (const t of s.split(/\s+/)) {
       const cleaned = t.replace(/[^A-Z0-9]/g, "");
@@ -2795,12 +2798,19 @@ function reconcileCourses(fresh) {
   state.courses = merged;
 }
 
+/* NUR courses are excluded from scheduling, counts, and all warnings. */
+function isNurCode(code) {
+  return /^NUR\s/i.test((code || "").trim() + " ");
+}
+
 /* Return the sorted list of course prefixes that have no dean assigned —
    checks the full resolution chain: CSV override → DEAN_BY_SCHOOL fallback.
-   A prefix only appears here if EVERY course under it lacks a dean. */
+   A prefix only appears here if EVERY course under it lacks a dean.
+   NUR courses are excluded. */
 function missingDeanPrefixes() {
   const seen = new Set();
   for (const c of state.courses) {
+    if (isNurCode(c.code)) continue;
     const pfx = (c.code || "").split(/\s+/)[0];
     if (pfx && !deanForCourse(c)) seen.add(pfx);
   }
@@ -2841,6 +2851,7 @@ function missingPmCourses() {
     const code = canonicalCourseCode((c && c.code) || o.courseCode || "");
     if (!code || seen.has(code)) continue;
     seen.add(code);
+    if (isNurCode(code)) continue;          // NUR courses are always excluded
     if (!pmForCode(code)) missing.push(code);
   }
   return missing.sort();
@@ -4417,6 +4428,7 @@ function syncOfferingsFromRotation(defaultYear) {
   }
   const toAdd = [];
   for (const c of state.courses) {
+    if (isNurCode(c.code)) continue;        // NUR courses are excluded from scheduling
     const pairs = [
       ["Fall",   courseChunksToSlots(c.onlineFall)],
       ["Spring", courseChunksToSlots(c.onlineSpring)],
@@ -4531,11 +4543,15 @@ function activeSubtermDef() {
 function offeringsForSubterm(semester, subterm) {
   const def = SUBTERMS.find(s => s.semester === semester && s.subterm === subterm);
   if (!def) return [];
-  return state.offerings.filter(o =>
-    o.semester === semester &&
-    o.year === state.termFilter.year &&
-    def.includes.includes(o.rotationSlot)
-  );
+  return state.offerings.filter(o => {
+    if (o.semester !== semester) return false;
+    if (o.year !== state.termFilter.year) return false;
+    if (!def.includes.includes(o.rotationSlot)) return false;
+    // Exclude NUR courses from term assignments display.
+    const c = state.courses.find(x => x.id === o.courseId);
+    if (isNurCode((c && c.code) || o.courseCode || "")) return false;
+    return true;
+  });
 }
 
 function deadlineKeyFor(o) {
