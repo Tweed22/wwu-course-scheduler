@@ -2748,6 +2748,12 @@ function rowToCourse(row, existingByCode) {
       // already explodes them into individual term letters downstream.
       out.push(cleaned);
     }
+    // If the cell contains a full-semester descriptor (16W or 15W), strip any
+    // individual letter tokens that also resolve to subterm 1A ("A", "F") —
+    // they would create duplicate visible rows in Term Assignments.
+    if (out.includes("16W") || out.includes("15W")) {
+      return out.filter(x => x !== "A" && x !== "F" && !(out.includes("16W") && x === "15W"));
+    }
     return out;
   };
   const existing = existingByCode.get(code);
@@ -4439,13 +4445,33 @@ function syncOfferingsFromRotation(defaultYear) {
       if (c && !o.courseCode) o.courseCode = c.code;
     }
   }
-  // Pass 2: dedup by course CODE, not courseId.
-  const haveCombo = new Set();
+  // Pass 1b: purge offerings with invalid rotation slots (artefacts from the
+  // old "16 weeks" parser that produced "1", "6", "W", etc.).  Only remove
+  // auto-generated, non-submitted, non-isNewSection offerings so user edits
+  // and submitted rows are never lost.
+  const VALID_SLOTS = new Set(["A","B","C","F","L","15W","16W","AN"]);
+  state.offerings = state.offerings.filter(o => {
+    if (!o.rotationSlot) return true;           // keep if no slot (manually added)
+    if (VALID_SLOTS.has(o.rotationSlot)) return true;  // keep valid slots
+    if (o.submitted || o.registrarCompleted) return true; // always keep submitted
+    if (o.isNewSection) return true;            // keep user-added extra sections
+    return false;                               // drop stale invalid-slot artefact
+  });
+
+  // Pass 2: dedup by course CODE + slot (not courseId, which is browser-local).
+  // Also track which (code, semester, subterm, year) combinations are already
+  // covered so two slots that display in the same tab (e.g. "A" and "16W"
+  // both appear in Term 1A) don't produce duplicate visible rows.
+  const haveCombo   = new Set(); // code|semester|slot|year
+  const haveSubterm = new Set(); // code|semester|subterm|year  — for display dedup
   for (const o of state.offerings) {
+    if (o.isNewSection) continue;  // extra sections don't block rotation slots
     const c = state.courses.find(x => x.id === o.courseId);
     const code = (c && c.code) || o.courseCode || "";
     if (!code) continue;
     haveCombo.add(`${code}|${o.semester}|${o.rotationSlot}|${o.year}`);
+    const sub = (subtermsForSlot(o.rotationSlot) || [])[0];
+    if (sub) haveSubterm.add(`${code}|${o.semester}|${sub}|${o.year}`);
   }
   const toAdd = [];
   for (const c of state.courses) {
@@ -4459,16 +4485,23 @@ function syncOfferingsFromRotation(defaultYear) {
       for (const slot of slots) {
         if (slot === "AN") continue; // As Needed: don't auto-schedule
         const k = `${c.code}|${semester}|${slot}|${year}`;
-        if (!haveCombo.has(k)) {
-          toAdd.push(newOffering({
-            courseId: c.id,
-            courseCode: c.code,     // stamp the stable code so cross-browser dedup works
-            semester, year,
-            rotationSlot: slot,
-            subterm: (subtermsForSlot(slot)[0]) || "1A",
-            length: SLOT_LENGTH[slot] || "5 Weeks",
-          }));
-        }
+        if (haveCombo.has(k)) continue;
+        // Also skip if this slot's primary subterm is already covered for
+        // this course — prevents duplicate rows in the same Term tab.
+        const primarySubterm = (subtermsForSlot(slot) || [])[0];
+        const sk = primarySubterm ? `${c.code}|${semester}|${primarySubterm}|${year}` : null;
+        if (sk && haveSubterm.has(sk)) continue;
+        const offering = newOffering({
+          courseId: c.id,
+          courseCode: c.code,
+          semester, year,
+          rotationSlot: slot,
+          subterm: primarySubterm || "1A",
+          length: SLOT_LENGTH[slot] || "5 Weeks",
+        });
+        toAdd.push(offering);
+        haveCombo.add(k);
+        if (sk) haveSubterm.add(sk);
       }
     }
   }
