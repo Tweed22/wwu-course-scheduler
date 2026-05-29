@@ -7244,8 +7244,23 @@ function transitionRequest(id, action) {
     r.archivedReason = "Rejected" + (reason ? `: ${reason}` : "");
     logRequestEvent(r, `Rejected by ${who} (${code})${reason ? ` — ${reason}` : ""}`);
     markLocallyTouched(r.id);
+    // If this request created an added section, cancel that offering so it
+    // enters the Canceled state on the Term Assignments page.
+    const isAddSection = ["Add Section", "Add Section & Split Enrollment", "Add Course"].includes(r.changeType);
+    if (isAddSection) {
+      // Find via the linked addRequestId stamp on the offering.
+      const linked = state.offerings.find(o => o.addRequestId === r.id);
+      if (linked && !linked.canceled) {
+        linked.canceled   = true;
+        linked.canceledAt = now;
+        linked.canceledBy = who;
+        markLocallyTouched(linked.id);
+        logRequestEvent(r, `Linked section canceled (rejected by ${who})`);
+      }
+    }
     setDirty(true);
     renderRequests();
+    if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
     toast(`${code} rejected`);
     return;
