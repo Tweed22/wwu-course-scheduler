@@ -1888,6 +1888,7 @@
         <option value="Assign Instructor">Assign Instructor</option>
         <option value="Modify Time/Day">Modify Time/Day</option>
         <option value="Modify Location">Modify Location</option>
+        <option value="Change Course Cap">Change Course Cap</option>
         <option value="Other">Other</option>
       </select>
     </div>
@@ -3297,7 +3298,7 @@ const CHANGE_TYPE_CLASS = {
   "Add Section":"ct-add", "Add Section & Split Enrollment":"ct-add",
   "Cancel Course":"ct-remove", "Re-instate Course":"ct-add",
   "Assign Instructor":"ct-instr", "Modify Time/Day":"ct-time",
-  "Modify Location":"ct-location", "Other":"ct-pill",
+  "Modify Location":"ct-location", "Change Course Cap":"ct-pill", "Other":"ct-pill",
 };
 
 /* ======== Utilities ======== */
@@ -6796,6 +6797,9 @@ const CHANGE_TYPE_DEFS = {
   "Modify Location":    { fields: [
     { key: "location",   label: "New location", type: "text", placeholder: "e.g., BB 002", full: true },
   ]},
+  "Change Course Cap":  { fields: [
+    { key: "cap",        label: "New course cap", type: "number", placeholder: "e.g., 25", full: true },
+  ]},
   "Other":              { fields: [
     { key: "detail",     label: "Detail",   type: "textarea", placeholder: "Describe the change in detail", full: true, rows: 3 },
   ]},
@@ -6834,6 +6838,7 @@ function changeSummary(ch) {
     return parts ? `Change to ${parts}` : "Modify time/day";
   }
   if (ch.type === "Modify Location") return f.location ? `Move to ${f.location}` : "Modify location";
+  if (ch.type === "Change Course Cap") return f.cap ? `Set cap to ${f.cap}` : "Change course cap";
   if (ch.type === "Other") return f.detail || "Other change";
   // Cancel/Re-instate — type itself is descriptive enough.
   return ch.type;
@@ -6855,6 +6860,8 @@ function renderChangeBlock(idx, ch) {
     .filter(t => {
       if (t === "Add Section" && !isOnGround) return false;
       if (t === "Add Section & Split Enrollment" && isOnGround) return false;
+      // Online sections don't have a physical time/day or location.
+      if (!isOnGround && (t === "Modify Time/Day" || t === "Modify Location")) return false;
       return true;
     })
     .map(t => `<option value="${escapeHtml(t)}"${t === ch.type ? " selected" : ""}>${escapeHtml(t)}</option>`)
@@ -6865,6 +6872,9 @@ function renderChangeBlock(idx, ch) {
         const cls = f.full ? "full" : "";
         if (f.type === "textarea") {
           return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><textarea data-cb-key="${escapeHtml(f.key)}" rows="${f.rows||2}" placeholder="${escapeHtml(f.placeholder||"")}">${escapeHtml(v)}</textarea></div>`;
+        }
+        if (f.type === "number") {
+          return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="number" min="1" step="1" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
         }
         return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
       }).join("")
