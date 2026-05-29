@@ -3654,13 +3654,19 @@ async function flushToSupabase() {
         }
       }
     }
-    if (oDel.length) {
-      const { error } = await sb.from("offerings").delete().in("id", oDel);
-      if (error) _err("offerings delete failed", error);
+    // Delete in chunks of 100 to stay within Supabase/PostgREST URL-length
+    // limits. A single .in() with hundreds of 36-char UUIDs easily exceeds
+    // browser URL caps and throws "TypeError: failed to fetch".
+    const DEL_CHUNK = 100;
+    for (let i = 0; i < oDel.length; i += DEL_CHUNK) {
+      const chunk = oDel.slice(i, i + DEL_CHUNK);
+      const { error } = await sb.from("offerings").delete().in("id", chunk);
+      if (error) { _err("offerings delete failed", error); break; }
     }
-    if (rDel.length) {
-      const { error } = await sb.from("change_requests").delete().in("id", rDel);
-      if (error) _err("change_requests delete failed", error);
+    for (let i = 0; i < rDel.length; i += DEL_CHUNK) {
+      const chunk = rDel.slice(i, i + DEL_CHUNK);
+      const { error } = await sb.from("change_requests").delete().in("id", chunk);
+      if (error) { _err("change_requests delete failed", error); break; }
     }
   } finally {
     _flushInFlight = false;
