@@ -2045,6 +2045,25 @@
     </div>
   </div>
 
+  <!-- Clear Change Log -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
+    <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Clear Change Log</h3>
+    <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
+      Permanently delete change requests whose creation date falls within the selected range.
+      This cannot be undone. Leave a date blank to clear from the beginning or through today.
+    </p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+        From <input type="date" id="admClearLogFrom" style="font-family:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface-2);color:var(--text);">
+      </label>
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+        To <input type="date" id="admClearLogTo" style="font-family:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface-2);color:var(--text);">
+      </label>
+      <button type="button" id="btnAdmClearLog" class="danger" style="padding:6px 14px;">Delete entries</button>
+      <span id="admClearLogStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
+    </div>
+  </div>
+
   <!-- Term Date Overrides -->
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;">
     <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Term Start / End Dates</h3>
@@ -5922,6 +5941,9 @@ function bindAdminEvents() {
       toast(`Removed PM mapping for ${code}.`);
     });
   }
+  // Clear change log by date range.
+  const clearLogBtn = $("btnAdmClearLog");
+  if (clearLogBtn) clearLogBtn.addEventListener("click", clearChangeLogByDateRange);
   // Save term-date overrides.
   const saveBtn = $("btnAdmTermSave");
   if (saveBtn) saveBtn.addEventListener("click", saveTermDateOverrides);
@@ -6029,6 +6051,46 @@ function downloadProgramManagersCsv() {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+async function clearChangeLogByDateRange() {
+  const statusEl = document.getElementById("admClearLogStatus");
+  const fromVal  = (document.getElementById("admClearLogFrom")?.value || "").trim();
+  const toVal    = (document.getElementById("admClearLogTo")?.value   || "").trim();
+
+  // Determine which requests fall in range.
+  const inRange = (state.requests || []).filter(r => {
+    const d = (r.date || "").slice(0, 10);   // "YYYY-MM-DD"
+    if (!d) return false;
+    if (fromVal && d < fromVal) return false;
+    if (toVal   && d > toVal)   return false;
+    return true;
+  });
+
+  if (!inRange.length) {
+    if (statusEl) statusEl.textContent = "No entries found in that range.";
+    return;
+  }
+
+  const fromLabel = fromVal || "the beginning";
+  const toLabel   = toVal   || "today";
+  if (!confirm(`Delete ${inRange.length} change log entr${inRange.length === 1 ? "y" : "ies"} from ${fromLabel} through ${toLabel}? This cannot be undone.`)) return;
+
+  if (statusEl) statusEl.textContent = "Deleting…";
+  const ids = inRange.map(r => r.id);
+  // Delete in chunks of 100 to stay within Supabase URL-length limits.
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { error } = await sb.from("change_requests").delete().in("id", chunk);
+    if (error) { _err("Clear change log failed", error); if (statusEl) statusEl.textContent = "Error — see console."; return; }
+  }
+  state.requests = state.requests.filter(r => !ids.includes(r.id));
+  setDirty(true);
+  if (typeof renderRegistrar === "function") renderRegistrar();
+  const msg = `Deleted ${ids.length} entr${ids.length === 1 ? "y" : "ies"}.`;
+  if (statusEl) statusEl.textContent = msg;
+  toast(msg);
 }
 
 async function clearAllProgramManagers() {
