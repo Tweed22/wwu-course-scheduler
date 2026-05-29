@@ -2831,21 +2831,16 @@ function pmForCode(code) {
    code so duplicates in the array don't inflate the count. */
 function missingPmCourses() {
   if (!state.pmByCourse || !Object.keys(state.pmByCourse).length) return null;
-  const seen   = new Set();
+  // Base the check on state.offerings — those are exactly the rows that appear
+  // on the term assignments page. AN-only courses never produce offerings, so
+  // they're automatically excluded.
+  const seen    = new Set();
   const missing = [];
-  for (const c of state.courses) {
-    const code = canonicalCourseCode(c.code);
+  for (const o of state.offerings) {
+    const c = state.courses.find(x => x.id === o.courseId);
+    const code = canonicalCourseCode((c && c.code) || o.courseCode || "");
     if (!code || seen.has(code)) continue;
     seen.add(code);
-    // Skip courses whose only rotation slots are "AN" (As Needed) — they
-    // never auto-schedule into any term and don't appear in term assignments.
-    const allSlots = [
-      ...(c.onlineFall   || []),
-      ...(c.onlineSpring || []),
-      ...(c.onlineSummer || []),
-    ];
-    const hasScheduledSlot = allSlots.some(s => s && s !== "AN");
-    if (!hasScheduledSlot) continue;
     if (!pmForCode(code)) missing.push(code);
   }
   return missing.sort();
