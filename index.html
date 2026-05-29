@@ -380,6 +380,11 @@
     color: #5cdaef;
     border: 1px solid rgba(92, 218, 239, 0.4);
   }
+  html.dark .done-badge {
+    background: rgba(255, 102, 196, 0.18);
+    color: #ff66c4;
+    border: 1px solid rgba(255, 102, 196, 0.4);
+  }
   html.dark .ct-pill, html.dark .status-pill {
     background: var(--surface-2);
     color: var(--text);
@@ -1064,6 +1069,17 @@
     font-weight: 700;
     color: var(--wwu-green-dark);
     background: #e7efe9;
+    border-radius: 3px;
+    padding: 1px 6px;
+    vertical-align: middle;
+  }
+  .term-table .done-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #5a2d87;
+    background: #ece4f5;
     border-radius: 3px;
     padding: 1px 6px;
     vertical-align: middle;
@@ -4848,14 +4864,23 @@ function renderTermTable(list) {
     let actionBtn;
     if (o.canceled) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
+    } else if (o.registrarCompleted) {
+      // Registrar has processed this section — allow a change request but no undo.
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" title="Open a Change Request for this completed section">Request Change</button>`;
     } else if (o.submitted) {
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" title="Open a Change Request for this submitted section">Request Change</button>`;
+      // Sent to registrar but not yet processed — allow undo back to unassigned.
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>`;
     } else if (o.instructor && o.instructor.trim()) {
       actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
     } else {
       actionBtn = `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
-    const submittedBadge = o.submitted ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>` : "";
+    // Badge: DONE (purple) once registrar completes, SENT (green) while in queue.
+    const submittedBadge = o.registrarCompleted
+      ? `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`
+      : o.submitted
+        ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>`
+        : "";
     const canceledBadge = o.canceled ? `<span class="submitted-badge" title="Course canceled${o.canceledAt ? ' on ' + escapeHtml(fmtDateShort(o.canceledAt)) : ''}" style="background:var(--danger);color:white;">CANCELED</span>` : "";
     // Orphan warning — course was removed from the current rotation but this
     // offering still references it. Hover text matches the spec exactly.
@@ -6512,6 +6537,23 @@ function bindTermEvents() {
       removeSectionOffering(oid);
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
+    } else if (act === "undosubmit") {
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      const o = state.offerings.find(x => x.id === oid);
+      if (!o) return;
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      if (!confirm(`Remove ${c.code || "this section"} from the Registrar queue and clear the instructor assignment?`)) return;
+      o.submitted      = false;
+      o.submittedAt    = "";
+      o.submittedBy    = "";
+      o.instructor     = "";
+      markLocallyTouched(o.id);
+      setDirty(true);
+      renderTerms();
+      if (typeof renderRegistrar === "function") renderRegistrar();
+      if (typeof renderChangelog === "function") renderChangelog();
+      toast(`${c.code || "Section"} removed from Registrar queue`);
     }
   });
 
