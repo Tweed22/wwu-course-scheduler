@@ -2258,6 +2258,7 @@
         <input id="rfld_prefix" type="hidden">
         <input id="rfld_number" type="hidden">
         <input id="rfld_sectionNumber" type="hidden">
+        <input id="rfld_offeringId"    type="hidden">
 
         <!-- Multi-change list. Each block carries its own type + type-specific
              fields. Use the + button to add additional changes for the same
@@ -3313,7 +3314,7 @@ const CHANGE_TYPE_CLASS = {
   "Add Course":"ct-add", "Remove Course":"ct-remove",
   "Add Section":"ct-add", "Add Section & Split Enrollment":"ct-add",
   "Cancel Course":"ct-remove", "Re-instate Course":"ct-add",
-  "Assign Instructor":"ct-instr", "Modify Time/Day":"ct-time",
+  "Assign Instructor":"ct-instr", "Change Instructor":"ct-instr", "Modify Time/Day":"ct-time",
   "Modify Location":"ct-location", "Change Course Cap":"ct-pill", "Other":"ct-pill",
 };
 
@@ -5610,11 +5611,12 @@ function markRegistrarItemComplete(regId) {
     // state. Multi-change requests apply all blocks; legacy single-change
     // requests run through the same path via requestChanges(r).
     for (const ch of requestChanges(r)) {
-      if (ch.type === "Assign Instructor") {
+      if (ch.type === "Assign Instructor" || ch.type === "Change Instructor") {
         const name = (ch.fields && ch.fields.instructor) || "";
-        // If this request was generated for a specific added section (the
-        // offering has addRequestId pointing back to this request), update
-        // only that offering — not every section of the same course.
+        // Priority order for scoping:
+        // 1. addRequestId link (new-section flow)
+        // 2. r.offeringId (set when Request Change opened from a specific row)
+        // 3. Course-wide fallback (legacy requests with no scoping info)
         const linkedOffering = state.offerings.find(o => o.addRequestId === r.id);
         if (linkedOffering && name) {
           linkedOffering.instructor    = name;
@@ -5624,7 +5626,7 @@ function markRegistrarItemComplete(regId) {
         } else {
           const propagated = applyAssignInstructorToOffering(r, name);
           if (propagated) {
-            logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm} ${propagated.year}`);
+            logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm || ""}${propagated.section ? " §"+propagated.section : ""} ${propagated.year}`);
           }
         }
       } else if (ch.type === "Re-instate Course") {
@@ -7009,6 +7011,9 @@ const CHANGE_TYPE_DEFS = {
   "Assign Instructor":  { fields: [
     { key: "instructor", label: "Instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
   ]},
+  "Change Instructor":  { fields: [
+    { key: "instructor", label: "New instructor name", type: "text", placeholder: "e.g., Egon Spengler", full: true },
+  ]},
   "Modify Time/Day":    { fields: [
     { key: "days",       label: "Days",     type: "text", placeholder: "e.g., MW, TR" },
     { key: "time",       label: "Time",     type: "text", placeholder: "e.g., 3:25–4:40" },
@@ -7079,6 +7084,7 @@ function renderChangeBlock(idx, ch) {
   // only a curated subset of types is relevant.
   const TERM_ASSIGNMENT_TYPES = new Set([
     "Assign Instructor",
+    "Change Instructor",               // replaces Assign Instructor when section already has one
     "Cancel Course",
     "Change Course Cap",
     "Add Section",                     // on-ground variant
@@ -7315,6 +7321,7 @@ function openRequestModal(r) {
   document.getElementById("rfld_prefix").value = r.prefix || "";
   document.getElementById("rfld_number").value = r.number || "";
   document.getElementById("rfld_sectionNumber").value = r.sectionNumber || "";
+  document.getElementById("rfld_offeringId").value    = r.offeringId    || "";
   document.getElementById("rfld_changeType").value = r.changeType || "Add Course";
   document.getElementById("rfld_explanation").value = r.explanation || "";
   document.getElementById("rfld_rationale").value = r.rationale || "";
@@ -7392,6 +7399,11 @@ function openRequestForCourse(courseId, offeringId) {
   // Mark the context so renderChangeBlock restricts the type dropdown to the
   // subset that makes sense when editing from the Term Assignments page.
   state.requestModalContext = "terms";
+  // If the section already has an instructor, default the change type to
+  // "Change Instructor" so it's clear this replaces an existing assignment
+  // and is scoped to this section only.
+  const hasInstructor = o && (o.instructor || "").trim().length > 0;
+  const defaultChangeType = hasInstructor ? "Change Instructor" : "Assign Instructor";
   openNewRequest({
     prefix:        parts[0] || "",
     number:        parts[1] || "",
@@ -7403,6 +7415,8 @@ function openRequestForCourse(courseId, offeringId) {
     term:          o ? o.semester : "",
     subterm:       o ? o.subterm  : "",
     year:          o ? o.year     : "",
+    changeType:    defaultChangeType,
+    changes:       [{ type: defaultChangeType, fields: hasInstructor ? { instructor: o.instructor } : {} }],
   });
 }
 
@@ -7420,6 +7434,7 @@ function saveRequestFromModal() {
   draft.prefix = document.getElementById("rfld_prefix").value.trim().toUpperCase();
   draft.number = document.getElementById("rfld_number").value.trim();
   draft.sectionNumber = document.getElementById("rfld_sectionNumber").value.trim();
+  draft.offeringId    = document.getElementById("rfld_offeringId").value.trim() || "";
   // Sync per-block field values from the DOM, then persist the multi-change
   // list. The first change's type becomes the canonical changeType for legacy
   // readers; the explanation is a composite of all block summaries.
