@@ -7670,6 +7670,10 @@ function bindRequestEvents() {
     if (!row) return;
     const id = row.dataset.rid;
     const act = btn.dataset.ract;
+    // Pre-touch all ids so any in-flight flush echo can't re-show a row
+    // that was just deleted/archived before the next flush picks up the change.
+    (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
+    (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
     if (act === "edit") openEditRequest(id);
     else transitionRequest(id, act);
   });
