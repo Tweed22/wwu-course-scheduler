@@ -4994,32 +4994,46 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const sectionLabel = `section ${sectionNumberFor(o)}`;
   const termLabel = def ? def.label : `${o.semester} ${o.subterm}`;
   const instr = (o.instructor || "").trim();
-  const changes = [{
-    type: "Add Section & Split Enrollment",
-    fields: instr ? { instructor: instr } : {},
-  }];
+
+  // Determine the correct Add Section type from the course modality.
+  const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+  const addSectionType = isOnline ? "Add Section & Split Enrollment" : "Add Section";
+  const modality       = isOnline ? "Online" : "On-Ground";
+
+  // Build the change list.  The Add Section block never carries the instructor
+  // field — if an instructor has been assigned, it becomes a separate
+  // Assign Instructor change block so both actions flow through the approval
+  // process independently and neither bypasses the Registrar.
+  const changes = [{ type: addSectionType, fields: {} }];
+  if (instr) changes.push({ type: "Assign Instructor", fields: { instructor: instr } });
+
+  const explanation = `Add ${code || "new course"} ${termLabel} ${o.year} (${sectionLabel})`
+    + (instr ? ` + assign instructor: ${instr}` : "");
+
   const draft = newRequest({
-    submitter:   who,
-    section:     c.section === "graduate" ? "Grad" : "Undergrad",
-    modality:    (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
-    term:        o.semester,
-    subterm:     o.subterm,
-    year:        o.year,
-    prefix:      parts[0] || "",
-    number:      parts[1] || "",
+    submitter:     who,
+    section:       c.section === "graduate" ? "Grad" : "Undergrad",
+    modality,
+    term:          o.semester,
+    subterm:       o.subterm,
+    year:          o.year,
+    prefix:        parts[0] || "",
+    number:        parts[1] || "",
     sectionNumber: sectionNumberFor(o),
-    changeType:  "Add Section & Split Enrollment",
-    explanation: `Add ${code || "new course"} ${termLabel} ${o.year} (${sectionLabel})${instr ? ` — instructor: ${instr}` : ""}`,
-    rationale:   "",
-    courseId:    o.courseId,
-    courseTitle: c.title || "",
-    changes:     changes,
-    status:      "Pending Approval",
+    changeType:    addSectionType,
+    explanation,
+    rationale:     "",
+    courseId:      o.courseId,
+    courseTitle:   c.title || "",
+    changes,
+    status:        "Pending Approval",
   });
-  logRequestEvent(draft, `Auto-created Add Section & Split Enrollment by ${who}${instr ? ` (instructor: ${instr})` : " — instructor pending"}`);
+  const logMsg = instr
+    ? `${addSectionType} + Assign Instructor (${instr}) submitted for approval by ${who}`
+    : `${addSectionType} submitted for approval by ${who} — instructor pending`;
+  logRequestEvent(draft, logMsg);
   markLocallyTouched(draft.id);
   state.requests.push(draft);
-  // Tag the offering so we can wire follow-up automation to its originating request.
   o.isNewSection = true;
   o.addRequestId = draft.id;
   return draft;
@@ -6639,6 +6653,7 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      const instr2 = (o.instructor || "").trim();
       createAddCourseRequestForNewSection(o);
       markLocallyTouched(o.id);
       setDirty(true);
@@ -6646,7 +6661,11 @@ function bindTermEvents() {
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
       const c2 = state.courses.find(x => x.id === o.courseId);
-      toast(`${c2 ? c2.code : "Section"} ${sectionNumberFor(o)} — Add Section request submitted for approval`);
+      const sec2 = sectionNumberFor(o);
+      const toastMsg = instr2
+        ? `${c2 ? c2.code : "Section"} §${sec2} — Add Section + Assign Instructor (${instr2}) sent to Change Requests for approval`
+        : `${c2 ? c2.code : "Section"} §${sec2} — Add Section sent to Change Requests for approval (no instructor yet)`;
+      toast(toastMsg);
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
