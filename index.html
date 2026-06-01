@@ -6578,18 +6578,21 @@ function bindTermEvents() {
       inp.blur();
       submitSectionToRegistrar(o.id);  // calls renderTerms() internally
     }
-    // Always advance to the next unlocked instructor field.
-    // submitSectionToRegistrar / submitNewSectionChange rebuilt the DOM
-    // synchronously, so we query fresh rows here.
-    const tb = document.getElementById("ttbody");
-    const allRows = [...tb.querySelectorAll("tr[data-oid]")];
-    const curIdx  = allRows.findIndex(r => r.dataset.oid === currentOid);
-    if (curIdx >= 0) {
-      for (let i = curIdx + 1; i < allRows.length; i++) {
-        const next = allRows[i].querySelector('input[data-field="instructor"]:not([readonly])');
-        if (next) { next.focus(); break; }
+    // Advance to the next unlocked instructor field.  Use requestAnimationFrame
+    // so the browser has one paint frame to commit the rebuilt DOM (and any
+    // browser-side focus/blur bookkeeping) before we programmatically focus.
+    const snapOid = currentOid;
+    requestAnimationFrame(() => {
+      const tb2 = document.getElementById("ttbody");
+      const rows2 = [...tb2.querySelectorAll("tr[data-oid]")];
+      const idx2  = rows2.findIndex(r => r.dataset.oid === snapOid);
+      if (idx2 >= 0) {
+        for (let i = idx2 + 1; i < rows2.length; i++) {
+          const next = rows2[i].querySelector('input[data-field="instructor"]:not([readonly])');
+          if (next) { next.focus(); break; }
+        }
       }
-    }
+    });
   });
 
   // Inline edits
