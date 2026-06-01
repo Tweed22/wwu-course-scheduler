@@ -6923,8 +6923,20 @@ function renderChangeBlock(idx, ch) {
   // online/other uses "Add Section & Split Enrollment".
   const modality = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
   const isOnGround = modality === "On-Ground";
+  // When the dialog is opened from Term Assignments ("Request Change" button),
+  // only a curated subset of types is relevant.
+  const TERM_ASSIGNMENT_TYPES = new Set([
+    "Assign Instructor",
+    "Cancel Course",
+    "Change Course Cap",
+    "Add Section",                     // on-ground variant
+    "Add Section & Split Enrollment",  // online variant
+    "Other",
+  ]);
+  const isTermContext = state.requestModalContext === "terms";
   const opts = CHANGE_TYPE_OPTIONS
     .filter(t => {
+      if (isTermContext && !TERM_ASSIGNMENT_TYPES.has(t)) return false;
       if (t === "Add Section" && !isOnGround) return false;
       if (t === "Add Section & Split Enrollment" && isOnGround) return false;
       // Online sections don't have a physical time/day or location.
@@ -7181,6 +7193,7 @@ function openRequestModal(r) {
 function closeRequestModal() {
   document.getElementById("reqModal").classList.remove("open");
   state.editingRequestId = null;
+  state.requestModalContext = null;   // clear source context
 }
 
 function openNewRequest(prefill = {}) {
@@ -7221,6 +7234,9 @@ function openRequestForCourse(courseId) {
   const c = state.courses.find(x => x.id === courseId);
   if (!c) return;
   const parts = (c.code || "").split(/\s+/);
+  // Mark the context so renderChangeBlock restricts the type dropdown to the
+  // subset that makes sense when editing from the Term Assignments page.
+  state.requestModalContext = "terms";
   openNewRequest({
     prefix: parts[0] || "",
     number: parts[1] || "",
