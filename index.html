@@ -6520,7 +6520,7 @@ function bindTermEvents() {
       // Morph the single action button between Submit ↔ Cancel as the user
       // types. Only fires for editable rows (submitted/canceled rows have
       // Re-instate / Request Change which we don't touch).
-      if (f === "instructor" && !o.submitted && !o.canceled) {
+      if (f === "instructor" && !o.submitted && !o.canceled && !o.isNewSection) {
         const cell = row.querySelector("td.actions");
         if (cell) {
           const hasInstructor = !!(o.instructor && o.instructor.trim());
