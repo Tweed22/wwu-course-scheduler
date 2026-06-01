@@ -4899,7 +4899,9 @@ function renderTermTable(list) {
     // so the only inline action is the "+" on the first section.
     const sectionIdx = parseInt(sectionNum, 10) || 1;
     let sectionActionBtn = "";
-    if (!isLocked && sectionIdx === 1) {
+    if (sectionIdx === 1 && !o.canceled) {
+      // "+" always visible on the first section — even after submission or
+      // registrar completion — so a new section can be added at any time.
       sectionActionBtn = `<button type="button" class="add-section-btn" data-tact="addsection" data-oid="${escapeHtml(o.id)}" title="Add another section of this course">+</button>`;
     } else if (o.isNewSection && !o.submitted) {
       // Added sections that haven't been sent to the Registrar can still be removed.
