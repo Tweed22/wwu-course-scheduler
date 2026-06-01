@@ -5048,6 +5048,11 @@ function duplicateSection(offeringId) {
     submitted:      false,
   });
   state.offerings.push(dup);
+  // Touch the new offering immediately so any realtime echo or in-flight
+  // flush that doesn't yet know about dup can't cause the appear/disappear
+  // flicker. (flushToSupabase bulk-touches at flush-start, but if a flush
+  // was already in-flight when + was clicked, dup wasn't in its snapshot.)
+  markLocallyTouched(dup.id);
   const req = createAddCourseRequestForNewSection(dup);
   setDirty(true);
   renderTerms();
@@ -6412,6 +6417,7 @@ function saveSectionFromModal() {
     o.submittedBy = state.userName || "(unknown)";
   }
   state.offerings.push(o);
+  markLocallyTouched(o.id);   // suppress echo before the flush catches up
   // Auto-push an "Add Course" Change Request for the registrar.
   const req = createAddCourseRequestForNewSection(o);
   setDirty(true);
