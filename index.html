@@ -7470,11 +7470,24 @@ function saveRequestFromModal() {
     logRequestEvent(draft, "Created");
     markLocallyTouched(draft.id);
     state.requests.push(draft);
+    // If the request targets a specific section that is already DONE
+    // (registrarCompleted), transition it back to SENT so it's clear a
+    // new change is pending and the registrar needs to act again.
+    if (draft.offeringId) {
+      const linkedO = state.offerings.find(o => o.id === draft.offeringId);
+      if (linkedO && linkedO.registrarCompleted) {
+        linkedO.registrarCompleted   = false;
+        linkedO.registrarCompletedAt = "";
+        linkedO.registrarCompletedBy = "";
+        markLocallyTouched(linkedO.id);
+      }
+    }
     toast("Request created");
   }
   setDirty(true);
   closeRequestModal();
   renderRequests();
+  if (typeof renderTerms === "function") renderTerms();
   if (typeof renderChangelog === "function") renderChangelog();
 }
 
