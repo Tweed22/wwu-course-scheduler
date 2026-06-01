@@ -4876,6 +4876,10 @@ function renderTermTable(list) {
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
       actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>`;
+    } else if (o.isNewSection) {
+      // Added sections never go straight to the Registrar — they need a
+      // Change Request so a dean can approve first.
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="requestnewsection" data-oid="${escapeHtml(o.id)}" title="Send this new section to the Change Requests queue for approval">Request Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
       actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
     } else {
@@ -5047,20 +5051,18 @@ function duplicateSection(offeringId) {
     notes:          "",
     submitted:      false,
   });
+  // Mark as a manually-added section so the table shows "Request Change"
+  // instead of "Submit to Registrar". No change request is auto-created;
+  // the user clicks Request Change when ready to send for approval.
+  dup.isNewSection = true;
   state.offerings.push(dup);
-  // Touch the new offering immediately so any realtime echo or in-flight
-  // flush that doesn't yet know about dup can't cause the appear/disappear
-  // flicker. (flushToSupabase bulk-touches at flush-start, but if a flush
-  // was already in-flight when + was clicked, dup wasn't in its snapshot.)
+  // Touch immediately so any in-flight flush echo can't flicker the new row.
   markLocallyTouched(dup.id);
-  const req = createAddCourseRequestForNewSection(dup);
   setDirty(true);
   renderTerms();
-  if (typeof renderRequests === "function") renderRequests();
-  if (typeof renderChangelog === "function") renderChangelog();
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   const c = state.courses.find(x => x.id === dup.courseId);
-  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — Add Section & Split Enrollment request queued`);
+  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — assign an instructor and click Request Change to send for approval`);
 }
 
 /* Remove an added section. Refuses if the section has been submitted to the
@@ -6417,19 +6419,12 @@ function saveSectionFromModal() {
     instructor:     document.getElementById("sfld_instructor").value.trim(),
     notes:          document.getElementById("sfld_notes").value.trim(),
   });
-  // If the user already filled in an instructor at creation time, lock the
-  // row immediately (per spec: "IF an instructor has been assigned, lock the
-  // line"). If the field is blank, leave it editable so the user can fill it
-  // in later and click "Submit to Registrar" at that point.
-  if (o.instructor && o.instructor.trim()) {
-    o.submitted   = true;
-    o.submittedAt = new Date().toISOString();
-    o.submittedBy = state.userName || "(unknown)";
-  }
+  // Added sections always start unsubmitted — instructor can be filled in
+  // now or later. The user clicks "Request Change" to send for approval
+  // rather than routing straight to the Registrar.
+  o.isNewSection = true;
   state.offerings.push(o);
   markLocallyTouched(o.id);   // suppress echo before the flush catches up
-  // Auto-push an "Add Course" Change Request for the registrar.
-  const req = createAddCourseRequestForNewSection(o);
   setDirty(true);
   // Jump the Term Assignments view to the subterm/year where the section was added
   state.termFilter.semester = o.semester;
@@ -6588,20 +6583,39 @@ function bindTermEvents() {
       const label = c ? c.code : "this course";
       if (!confirm(`Add another section of ${label}?`)) return;
       duplicateSection(oid);
+    } else if (act === "requestnewsection") {
+      // Open the Change Requests dialog pre-filled with this added section's
+      // details. The request goes through normal approval → registrar flow.
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      const o = state.offerings.find(x => x.id === oid);
+      if (!o) return;
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      const parts = (c.code || "").split(/\s+/);
+      const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+      const changeType = isOnline ? "Add Section & Split Enrollment" : "Add Section";
+      const instr = (o.instructor || "").trim();
+      state.requestModalContext = "terms";
+      openNewRequest({
+        prefix:        parts[0] || "",
+        number:        parts[1] || "",
+        section:       c.section === "graduate" ? "Grad" : "Undergrad",
+        modality:      isOnline ? "Online" : "On-Ground",
+        term:          o.semester,
+        subterm:       o.subterm,
+        year:          o.year,
+        sectionNumber: sectionNumberFor(o),
+        courseId:      c.id,
+        changeType,
+        changes:       [{ type: changeType, fields: instr ? { instructor: instr } : {} }],
+      });
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       const c = o && state.courses.find(x => x.id === o.courseId);
       const label = c ? c.code : "this section";
-      if (!confirm(`Remove the added section of ${label}? This will also remove any associated change request.`)) return;
-      // Cancel the linked Add Section change request if it's still pending.
-      if (o && o.addRequestId) {
-        const req = state.requests.find(r => r.id === o.addRequestId);
-        if (req && req.status !== "Finalized" && req.status !== "Sent to Registrar") {
-          state.requests = state.requests.filter(r => r.id !== o.addRequestId);
-        }
-      }
+      if (!confirm(`Remove this added section of ${label}?`)) return;
       removeSectionOffering(oid);
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
