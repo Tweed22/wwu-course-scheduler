@@ -7059,8 +7059,8 @@ function changeSummary(ch) {
   if (ch.type === "Add Course") return f.instructor ? `Add course — instructor: ${f.instructor}` : "Add course";
   if (ch.type === "Add Section") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section";
   if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section & split enrollment";
-  if (ch.type === "Assign Instructor")  return f.instructor || "Assign instructor";
-  if (ch.type === "Change Instructor")  return f.instructor || "Change instructor";
+  if (ch.type === "Assign Instructor")  return f.instructor ? `Assign ${f.instructor}` : "Assign instructor";
+  if (ch.type === "Change Instructor")  return f.instructor ? `Change to ${f.instructor}` : "Change instructor";
   if (ch.type === "Modify Time/Day") {
     const parts = [f.days, f.time].filter(Boolean).join(" ");
     return parts ? `Change to ${parts}` : "Modify time/day";
