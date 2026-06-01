@@ -3796,7 +3796,18 @@ function handleRealtimeTermDate(payload) {
 }
 // Coalesce multiple realtime events into one re-render per frame. Without
 // this, a burst of upserts from another browser triggers N full re-renders.
-let _reRenderTimer = null;
+let _reRenderTimer  = null;
+let _pendingTermRender = false;  // deferred when user has focus in term table
+
+/* When the user has a cursor inside the term table, rebuilding ttbody
+   destroys focus for one paint frame — visible as the cursor blinking out
+   ~1 s after clicking in.  We track focusin/out on ttbody and defer
+   renderTerms() until the user leaves the field. */
+function _ttbodyHasFocus() {
+  const tb = typeof document !== "undefined" && document.getElementById("ttbody");
+  return !!(tb && tb.contains(document.activeElement));
+}
+
 function scheduleReRender() {
   if (_reRenderTimer) return;
   _reRenderTimer = setTimeout(() => {
@@ -3807,7 +3818,16 @@ function scheduleReRender() {
 function reRenderAll() {
   try { if (typeof render === "function")         render(); }         catch (e) {}
   try { if (typeof renderRequests === "function") renderRequests(); } catch (e) {}
-  try { if (typeof renderTerms === "function")    renderTerms(); }    catch (e) {}
+  try {
+    if (typeof renderTerms === "function") {
+      if (_ttbodyHasFocus()) {
+        // User is actively editing — defer term table rebuild until they leave.
+        _pendingTermRender = true;
+      } else {
+        renderTerms();
+      }
+    }
+  } catch (e) {}
   try { if (typeof renderRegistrar === "function") renderRegistrar(); } catch (e) {}
   try { if (typeof renderChangelog === "function") renderChangelog(); } catch (e) {}
 }
@@ -6441,6 +6461,18 @@ function saveSectionFromModal() {
 }
 
 function bindTermEvents() {
+  // When focus leaves the term table, fire any deferred renderTerms().
+  document.getElementById("ttbody").addEventListener("focusout", () => {
+    // Use a short timeout so the new activeElement is settled first — the
+    // focusout fires before focusin on the next element.
+    setTimeout(() => {
+      if (!_ttbodyHasFocus() && _pendingTermRender) {
+        _pendingTermRender = false;
+        if (typeof renderTerms === "function") renderTerms();
+      }
+    }, 0);
+  });
+
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
@@ -6464,8 +6496,10 @@ function bindTermEvents() {
     });
   });
 
-  // Enter on the instructor input triggers Submit to Registrar, then moves
-  // focus to the next editable instructor field in the table.
+  // Enter on the instructor input:
+  //  • Regular sections (section 01): Submit to Registrar + advance cursor.
+  //  • New sections (isNewSection): just advance cursor — they never go
+  //    straight to the Registrar; the user clicks "→ Submit Change" instead.
   document.getElementById("ttbody").addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const inp = e.target.closest('input[data-field="instructor"]');
@@ -6474,17 +6508,30 @@ function bindTermEvents() {
     if (!row) return;
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o || o.submitted || o.canceled) return;
-    // Commit the latest typed value before submitting.
+    e.preventDefault();
+    const currentOid = row.dataset.oid;
+
+    if (o.isNewSection) {
+      // Just move to the next editable instructor field — no submit.
+      const tb2 = document.getElementById("ttbody");
+      const allRows2 = [...tb2.querySelectorAll("tr[data-oid]")];
+      const idx2 = allRows2.findIndex(r => r.dataset.oid === currentOid);
+      if (idx2 >= 0) {
+        for (let i = idx2 + 1; i < allRows2.length; i++) {
+          const next = allRows2[i].querySelector('input[data-field="instructor"]:not([readonly])');
+          if (next) { next.focus(); break; }
+        }
+      }
+      return;
+    }
+
+    // Regular section: commit instructor, submit, then advance.
     o.instructor = inp.value;
     if (!o.instructor || !o.instructor.trim()) return;
-    e.preventDefault();
-    // Save the current row's id — submitSectionToRegistrar calls renderTerms()
-    // which replaces all DOM nodes, so we can't hold a reference to `row`.
-    const currentOid = row.dataset.oid;
     inp.blur();
     submitSectionToRegistrar(o.id);
-    // After the re-render, find the next row after the just-submitted one
-    // that has an unlocked instructor input and focus it.
+    // submitSectionToRegistrar calls renderTerms() synchronously so DOM is
+    // already rebuilt by the time we search for the next row.
     const tb = document.getElementById("ttbody");
     const allRows = [...tb.querySelectorAll("tr[data-oid]")];
     const curIdx  = allRows.findIndex(r => r.dataset.oid === currentOid);
