@@ -3336,6 +3336,13 @@ function setDirty(v=true) {
     el.classList.toggle("dirty", v);
   }
   if (v) {
+    // Pre-touch ALL local ids the moment any write is registered so that
+    // realtime echoes from any currently in-flight flush are suppressed
+    // for the next 2.5 s — before the new flush even starts.  This is the
+    // single choke-point that covers every button, modal, inline edit, and
+    // any future write path without per-handler patching.
+    (state.offerings || []).forEach(o => { if (o.id) markLocallyTouched(o.id); });
+    (state.requests  || []).forEach(r => { if (r.id) markLocallyTouched(r.id); });
     scheduleLocalDraftSave();   // debounced local cache (offline fallback)
     scheduleSupabaseFlush();    // debounced shared state via Supabase
   }
@@ -3609,13 +3616,10 @@ async function flushToSupabase() {
   if (!window.AUTH || !window.AUTH.user) return;
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
   _flushInFlight = true;
-  // Mark every local id as touched before writing to DB. flushToSupabase
-  // upserts ALL rows (not just changed ones), so Supabase fires a realtime
-  // UPDATE for every offering and request. Without this, those echoes all
-  // hit handleRealtime* as unrecognised updates and call scheduleReRender(),
-  // causing the flicker the user sees on every save/reject/delete action.
-  (state.offerings || []).forEach(o => { if (o.id) markLocallyTouched(o.id); });
-  (state.requests  || []).forEach(r => { if (r.id) markLocallyTouched(r.id); });
+  // Note: ids are already touched by setDirty(true) which fires before every
+  // flush. The bulk-touch here acts as a second-pass safety net for the small
+  // window between setDirty and flush-start (e.g. new rows pushed after dirty
+  // was last set will be caught here).
   try {
     // localOIds tracks EVERY local offering id (including ones with missing
     // course_code that we'll skip on upsert). That's important because the
@@ -5556,16 +5560,7 @@ function renderRegistrar() {
   renderRegTable(list);
   updateRegistrarBadge();
 }
-/* Pre-touch all local ids so that any realtime echo — for the specific item
-   being acted on OR for any other row caught in the same in-flight flush —
-   is suppressed for the next 2.5 s and cannot cause a flicker re-render. */
-function touchAllForRegistrarAction() {
-  (state.offerings || []).forEach(o => { if (o.id) markLocallyTouched(o.id); });
-  (state.requests  || []).forEach(r => { if (r.id) markLocallyTouched(r.id); });
-}
-
 function markRegistrarItemComplete(regId) {
-  touchAllForRegistrarAction();
   const [kind, id] = regId.split(":");
   if (kind === "sec") {
     const o = state.offerings.find(x => x.id === id);
@@ -5633,7 +5628,6 @@ function markRegistrarItemComplete(regId) {
    • Requests → revert from "Sent to Registrar" back to "Approved" so the item
      returns to the Change Requests page for further review. */
 function undoRegistrarItem(regId) {
-  touchAllForRegistrarAction();
   const [kind, id] = regId.split(":");
   if (kind === "sec") {
     const o = state.offerings.find(x => x.id === id);
@@ -6638,10 +6632,6 @@ function bindTermEvents() {
   document.getElementById("ttbody").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-tact]");
     if (!btn) return;
-    // Pre-touch all ids so in-flight flush echoes can't flicker the row
-    // that was just acted on before the next flush picks up the new state.
-    (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
-    (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
     const act = btn.dataset.tact;
     if (act === "request") {
       const cid = btn.dataset.cid;
@@ -6670,9 +6660,6 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
-      // Pre-touch everything to suppress in-flight echo flicker.
-      (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
-      (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
       const instr2 = (o.instructor || "").trim();
       createAddCourseRequestForNewSection(o);
       // Mark the offering as submitted so it shows the SENT badge in Term
@@ -7670,10 +7657,6 @@ function bindRequestEvents() {
     if (!row) return;
     const id = row.dataset.rid;
     const act = btn.dataset.ract;
-    // Pre-touch all ids so any in-flight flush echo can't re-show a row
-    // that was just deleted/archived before the next flush picks up the change.
-    (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
-    (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
     if (act === "edit") openEditRequest(id);
     else transitionRequest(id, act);
   });
