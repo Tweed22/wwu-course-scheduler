@@ -5181,6 +5181,30 @@ function cancelCourseOffering(offeringId) {
   toast(`${code} canceled — request added to Change Requests`);
 }
 
+/* Submit a new (isNewSection) offering through the Change Requests flow.
+   Creates the Add Section ± Assign Instructor change request, marks the
+   offering as submitted (SENT badge), and re-renders.  Returns true if
+   the submission happened so callers can decide whether to advance focus. */
+function submitNewSectionChange(o) {
+  if (!o || !o.isNewSection || o.submitted || o.canceled) return false;
+  const c = state.courses.find(x => x.id === o.courseId);
+  const instr = (o.instructor || "").trim();
+  createAddCourseRequestForNewSection(o);
+  o.submitted   = true;
+  o.submittedAt = new Date().toISOString();
+  o.submittedBy = state.userName || "(unknown)";
+  markLocallyTouched(o.id);
+  setDirty(true);
+  renderTerms();
+  if (typeof renderRequests === "function") renderRequests();
+  if (typeof renderChangelog === "function") renderChangelog();
+  const sec = sectionNumberFor(o);
+  toast(instr
+    ? `${c ? c.code : "Section"} §${sec} — Add Section + Assign Instructor (${instr}) sent for approval`
+    : `${c ? c.code : "Section"} §${sec} — Add Section sent for approval (no instructor yet)`);
+  return true;
+}
+
 /* Lock a section and mark it as submitted to the Registrar. */
 function submitSectionToRegistrar(offeringId) {
   const o = state.offerings.find(x => x.id === offeringId);
@@ -6518,10 +6542,10 @@ function bindTermEvents() {
     });
   });
 
-  // Enter on the instructor input:
-  //  • Regular sections (section 01): Submit to Registrar + advance cursor.
-  //  • New sections (isNewSection): just advance cursor — they never go
-  //    straight to the Registrar; the user clicks "→ Submit Change" instead.
+  // Enter on any instructor field: submit (if applicable) then advance focus.
+  //  • New sections  → submitNewSectionChange() + advance
+  //  • Regular rows  → submitSectionToRegistrar() if instructor set + advance
+  //  • Always advances to the next editable instructor field either way.
   document.getElementById("ttbody").addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const inp = e.target.closest('input[data-field="instructor"]');
@@ -6531,29 +6555,21 @@ function bindTermEvents() {
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o || o.submitted || o.canceled) return;
     e.preventDefault();
+    // Commit whatever is currently typed before any submit logic runs.
+    o.instructor = inp.value;
     const currentOid = row.dataset.oid;
 
     if (o.isNewSection) {
-      // Just move to the next editable instructor field — no submit.
-      const tb2 = document.getElementById("ttbody");
-      const allRows2 = [...tb2.querySelectorAll("tr[data-oid]")];
-      const idx2 = allRows2.findIndex(r => r.dataset.oid === currentOid);
-      if (idx2 >= 0) {
-        for (let i = idx2 + 1; i < allRows2.length; i++) {
-          const next = allRows2[i].querySelector('input[data-field="instructor"]:not([readonly])');
-          if (next) { next.focus(); break; }
-        }
-      }
-      return;
+      // Submit change (creates request + SENT state), then advance.
+      submitNewSectionChange(o);  // calls renderTerms() internally
+    } else if (o.instructor && o.instructor.trim()) {
+      // Regular section with instructor: submit to Registrar, then advance.
+      inp.blur();
+      submitSectionToRegistrar(o.id);  // calls renderTerms() internally
     }
-
-    // Regular section: commit instructor, submit, then advance.
-    o.instructor = inp.value;
-    if (!o.instructor || !o.instructor.trim()) return;
-    inp.blur();
-    submitSectionToRegistrar(o.id);
-    // submitSectionToRegistrar calls renderTerms() synchronously so DOM is
-    // already rebuilt by the time we search for the next row.
+    // Always advance to the next unlocked instructor field.
+    // submitSectionToRegistrar / submitNewSectionChange rebuilt the DOM
+    // synchronously, so we query fresh rows here.
     const tb = document.getElementById("ttbody");
     const allRows = [...tb.querySelectorAll("tr[data-oid]")];
     const curIdx  = allRows.findIndex(r => r.dataset.oid === currentOid);
@@ -6660,26 +6676,7 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
-      const instr2 = (o.instructor || "").trim();
-      createAddCourseRequestForNewSection(o);
-      // Mark the offering as submitted so it shows the SENT badge in Term
-      // Assignments. It won't appear in the Registrar's section queue
-      // (buildRegistrarQueue skips isNewSection rows); it becomes DONE
-      // when the change request is Finalized by the Registrar.
-      o.submitted   = true;
-      o.submittedAt = new Date().toISOString();
-      o.submittedBy = state.userName || "(unknown)";
-      markLocallyTouched(o.id);
-      setDirty(true);
-      renderTerms();
-      if (typeof renderRequests === "function") renderRequests();
-      if (typeof renderChangelog === "function") renderChangelog();
-      const c2 = state.courses.find(x => x.id === o.courseId);
-      const sec2 = sectionNumberFor(o);
-      const toastMsg = instr2
-        ? `${c2 ? c2.code : "Section"} §${sec2} — Add Section + Assign Instructor (${instr2}) sent to Change Requests for approval`
-        : `${c2 ? c2.code : "Section"} §${sec2} — Add Section sent to Change Requests for approval (no instructor yet)`;
-      toast(toastMsg);
+      submitNewSectionChange(o);
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
