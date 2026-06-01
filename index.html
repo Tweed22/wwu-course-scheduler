@@ -374,6 +374,17 @@
     border-color: #5cdaef;
     box-shadow: 0 0 16px rgba(92, 218, 239, 0.45);
   }
+  html.dark .term-semester-chip {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  html.dark .term-semester-chip:hover { border-color: #5cdaef; color: #5cdaef; background: var(--surface-2); }
+  html.dark .term-semester-chip.active {
+    background: linear-gradient(135deg, #1a6b5e, #2dd4bf);
+    color: #e7f4ff;
+    border-color: #2dd4bf;
+  }
   /* Status / badge pills. */
   html.dark .submitted-badge {
     background: rgba(45, 212, 191, 0.18);
@@ -1167,6 +1178,35 @@
   .term-subchip.active .chip-count { background: rgba(255,255,255,0.25); }
   .term-subchip.has-overdue { border-color: #b03a2e; box-shadow: inset 0 0 0 1px #b03a2e; }
 
+  /* Two-row chip layout: semester buttons span 3 columns each above
+     their corresponding A/B/C subterm buttons. */
+  .term-chip-grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 6px;
+    padding: 4px 4px 14px;
+  }
+  .term-semester-chip {
+    grid-column: span 3;
+    padding: 7px 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+  .term-semester-chip:hover { background: #eef1f0; }
+  .term-semester-chip.active {
+    background: var(--wwu-green-dark);
+    border-color: var(--wwu-green-dark);
+    color: white;
+  }
+  .term-chip-grid .term-subchip { border-radius: 6px; justify-content: center; }
+
   /* -------- Request table tweaks -------- */
   .req-table td { font-size: 12.5px; }
   .req-explanation { color: var(--text); max-width: 320px; white-space: normal; }
@@ -1775,7 +1815,7 @@
     </div>
   </div>
 
-  <div id="termSubtermChips" style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 4px 14px;"></div>
+  <div id="termSubtermChips" class="term-chip-grid"></div>
 
   <div class="stats" id="termStats"></div>
 
@@ -4645,10 +4685,25 @@ function rollOverCompletedAssignments(now) {
 }
 
 function activeSubtermDef() {
+  if (state.termFilter.subterm === "ALL") {
+    return SUBTERMS.find(s => s.semester === state.termFilter.semester) || SUBTERMS[0];
+  }
   return SUBTERMS.find(s => s.semester === state.termFilter.semester && s.subterm === state.termFilter.subterm) || SUBTERMS[0];
 }
 
 function offeringsForSubterm(semester, subterm) {
+  if (subterm === "ALL") {
+    const seen = new Set();
+    return state.offerings.filter(o => {
+      if (o.semester !== semester) return false;
+      if (o.year !== state.termFilter.year) return false;
+      if (seen.has(o.id)) return false;
+      const c = state.courses.find(x => x.id === o.courseId);
+      if (isNurCode((c && c.code) || o.courseCode || "")) return false;
+      seen.add(o.id);
+      return true;
+    });
+  }
   const def = SUBTERMS.find(s => s.semester === semester && s.subterm === subterm);
   if (!def) return [];
   return state.offerings.filter(o => {
@@ -4750,7 +4805,12 @@ function applyTermSort(list) {
 function renderTermSubtermChips() {
   const wrap = document.getElementById("termSubtermChips");
   const year = state.termFilter.year;
-  wrap.innerHTML = SUBTERMS.map(st => {
+  const semesters = ["Fall", "Spring", "Summer"];
+  const semRow = semesters.map(sem => {
+    const active = (state.termFilter.semester === sem && state.termFilter.subterm === "ALL") ? " active" : "";
+    return `<button type="button" class="term-semester-chip${active}" data-semester="${sem}" data-subterm="ALL">${sem}</button>`;
+  }).join("");
+  const subRow = SUBTERMS.map(st => {
     const active = (state.termFilter.semester === st.semester && state.termFilter.subterm === st.subterm) ? " active" : "";
     const calYear = calendarYearFor(st.semester, year);
     const startISO = termStartDate(st.semester, st.subterm, year);
@@ -4760,14 +4820,16 @@ function renderTermSubtermChips() {
       : `${st.label} ${calYear}`;
     return `<button type="button" class="term-subchip${active}" data-semester="${st.semester}" data-subterm="${st.subterm}" title="${escapeHtml(tooltip)}">${st.label} ${calYear}</button>`;
   }).join("");
+  wrap.innerHTML = semRow + subRow;
 }
 
 function renderTermStats(list) {
+  const allMode = state.termFilter.subterm === "ALL";
   const def = activeSubtermDef();
   const year = state.termFilter.year;
   const calYear = calendarYearFor(def.semester, year);
-  const startISO = termStartDate(def.semester, def.subterm, year);
-  const deadlineISO = termAssignmentDeadline(def.semester, def.subterm, year);
+  const startISO = allMode ? null : termStartDate(def.semester, def.subterm, year);
+  const deadlineISO = allMode ? null : termAssignmentDeadline(def.semester, def.subterm, year);
   // Toggle button: "Show All Courses" ↔ "Hide Others". Always visible so the
   // user can flip the filter in either direction without hunting for a control.
   const filterOn = state.termFilter.myCoursesOnly;
@@ -4777,6 +4839,7 @@ function renderTermStats(list) {
                title="${filterOn ? "Remove the dean/PM filter and show every course" : "Re-apply the dean/PM filter to show only your courses"}"
        >${filterOn ? "Show All Courses" : "Hide Others"}</button>
      </div>`;
+  const labelText = allMode ? def.semester : def.label;
   // Admin-only "Clear Term" button — placed just left of the assignment
   // deadline tile, per Tony's spec (May 2026). Confirms then wipes every
   // instructor assignment in (semester, year).
@@ -4784,24 +4847,28 @@ function renderTermStats(list) {
     ? `<div class="item term-clear-tile" style="background:transparent;border:none;box-shadow:none;padding:0;display:flex;align-items:center;justify-content:center;">
          <button type="button" id="btnClearTerm"
                  style="white-space:nowrap;font-size:12px;padding:8px 12px;background:var(--danger);color:white;border:1px solid var(--danger);border-radius:6px;cursor:pointer;font-weight:600;"
-                 title="Clear every instructor assignment in ${def.label} ${calYear}">Clear ${escapeHtml(def.label)} ${calYear}</button>
+                 title="Clear every instructor assignment in ${labelText} ${calYear}">Clear ${escapeHtml(labelText)} ${calYear}</button>
        </div>`
     : "";
-  document.getElementById("termStats").innerHTML = `
-    <div class="item term-label-tile">
-      <strong style="font-size:18px;">${def.label}</strong>
-      <span class="label">${calYear}</span>
-    </div>
+  const startTile = startISO ? `
     <div class="item term-start-tile" title="Subterm start date">
       <strong style="font-size:18px;">${escapeHtml(fmtDateShort(startISO))}</strong>
       <span class="label">term start</span>
-    </div>
-    ${showAllBtn}
-    ${clearBtn}
+    </div>` : "";
+  const deadlineTile = deadlineISO ? `
     <div class="item term-deadline-tile" title="Auto-derived: 6 weeks before term start">
       <strong>${escapeHtml(fmtDateShort(deadlineISO))}</strong>
       <span class="label">assignment deadline</span>
+    </div>` : "";
+  document.getElementById("termStats").innerHTML = `
+    <div class="item term-label-tile">
+      <strong style="font-size:18px;">${labelText}</strong>
+      <span class="label">${calYear}</span>
     </div>
+    ${startTile}
+    ${showAllBtn}
+    ${clearBtn}
+    ${deadlineTile}
   `;
   // Wire up the Show All Courses / Hide Others toggle.
   const sab = document.getElementById("btnShowAllCourses");
@@ -6567,7 +6634,7 @@ function bindTermEvents() {
 
   // Subterm chips
   document.getElementById("termSubtermChips").addEventListener("click", (e) => {
-    const chip = e.target.closest(".term-subchip");
+    const chip = e.target.closest(".term-subchip, .term-semester-chip");
     if (!chip) return;
     state.termFilter.semester = chip.dataset.semester;
     state.termFilter.subterm = chip.dataset.subterm;
