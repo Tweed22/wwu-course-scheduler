@@ -5000,21 +5000,46 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   return draft;
 }
 
-/* Duplicate an offering as a new section in the same subterm/year. The new
-   section is treated like any other course row (no "-" button to delete it
-   inline) and an "Add Course" Change Request is auto-pushed so the Registrar
-   has a record. The duplicate starts with a blank instructor field — the user
-   can fill it in and click "Submit to Registrar" to lock the row. */
+/* Return the primary single-letter rotation slot for a given subterm label.
+   Used when duplicating a section into the currently-viewed tab so the new
+   offering's slot is consistent with that subterm. */
+function primarySlotForSubterm(subterm) {
+  if (subterm === "2B") return "B";
+  if (subterm === "3C") return "C";
+  return "A";  // 1A (and any unrecognised subterm)
+}
+
+/* Duplicate an offering as a new section.  The new section lands in the
+   CURRENTLY VIEWED subterm — not necessarily the source's subterm — so
+   that clicking + in Fall 2B on an F-slot course (stored as 1A) creates a
+   2B section numbered 01 rather than a second 1A section numbered 02.
+
+   If the source's rotationSlot is already native to the current subterm
+   we reuse it (preserving the 5W/10W/15W/16W length); otherwise we fall
+   back to the primary slot for that subterm. */
 function duplicateSection(offeringId) {
   const src = state.offerings.find(x => x.id === offeringId);
   if (!src) return;
+
+  // Determine the target subterm: always the one the user is looking at.
+  const targetSemester = state.termFilter.semester || src.semester;
+  const targetSubterm  = state.termFilter.subterm  || src.subterm;
+  const viewDef = SUBTERMS.find(s => s.semester === targetSemester && s.subterm === targetSubterm);
+  // If the source slot belongs to the current tab, reuse it (keeps length).
+  // Otherwise pick the primary A/B/C slot for the target subterm.
+  const targetSlot = (viewDef && viewDef.includes.includes(src.rotationSlot))
+    ? src.rotationSlot
+    : primarySlotForSubterm(targetSubterm);
+  const targetLength = SLOT_LENGTH[targetSlot] || src.length || "5 Weeks";
+
   const dup = newOffering({
     courseId:       src.courseId,
-    semester:       src.semester,
-    subterm:        src.subterm,
+    courseCode:     src.courseCode,
+    semester:       targetSemester,
+    subterm:        targetSubterm,
     year:           src.year,
-    length:         src.length,
-    rotationSlot:   src.rotationSlot,
+    length:         targetLength,
+    rotationSlot:   targetSlot,
     dean:           src.dean,
     programManager: src.programManager,
     deadline:       src.deadline,
