@@ -4877,9 +4877,10 @@ function renderTermTable(list) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
       actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>`;
     } else if (o.isNewSection) {
-      // Added sections never go straight to the Registrar — they need a
-      // Change Request so a dean can approve first.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="requestnewsection" data-oid="${escapeHtml(o.id)}" title="Send this new section to the Change Requests queue for approval">Request Change</button>`;
+      // Added sections route through Change Requests for dean approval, not
+      // directly to the Registrar. One click — no dialog — mirrors the feel
+      // of "Submit to Registrar" but lands in the Change Requests queue.
+      actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
       actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
     } else {
@@ -6583,32 +6584,22 @@ function bindTermEvents() {
       const label = c ? c.code : "this course";
       if (!confirm(`Add another section of ${label}?`)) return;
       duplicateSection(oid);
-    } else if (act === "requestnewsection") {
-      // Open the Change Requests dialog pre-filled with this added section's
-      // details. The request goes through normal approval → registrar flow.
+    } else if (act === "submitchangerequest") {
+      // One-click submit: create a Change Request for the new section and
+      // land in the Change Requests queue — no dialog, mirrors the feel of
+      // "Submit to Registrar".
       const oid = btn.dataset.oid;
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
-      const c = state.courses.find(x => x.id === o.courseId) || {};
-      const parts = (c.code || "").split(/\s+/);
-      const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
-      const changeType = isOnline ? "Add Section & Split Enrollment" : "Add Section";
-      const instr = (o.instructor || "").trim();
-      state.requestModalContext = "terms";
-      openNewRequest({
-        prefix:        parts[0] || "",
-        number:        parts[1] || "",
-        section:       c.section === "graduate" ? "Grad" : "Undergrad",
-        modality:      isOnline ? "Online" : "On-Ground",
-        term:          o.semester,
-        subterm:       o.subterm,
-        year:          o.year,
-        sectionNumber: sectionNumberFor(o),
-        courseId:      c.id,
-        changeType,
-        changes:       [{ type: changeType, fields: instr ? { instructor: instr } : {} }],
-      });
+      createAddCourseRequestForNewSection(o);
+      markLocallyTouched(o.id);
+      setDirty(true);
+      renderTerms();
+      if (typeof renderRequests === "function") renderRequests();
+      if (typeof renderChangelog === "function") renderChangelog();
+      const c2 = state.courses.find(x => x.id === o.courseId);
+      toast(`${c2 ? c2.code : "Section"} ${sectionNumberFor(o)} — Add Section request submitted for approval`);
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
