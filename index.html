@@ -145,7 +145,7 @@
   }
   html.dark .modal header { border-bottom-color: var(--border); }
   /* Generic buttons — keep them readable on dark. */
-  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.add-section-btn):not(.term-subchip):not(.qf-chip):not(.view-tabs button) {
+  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.add-section-btn):not(.term-subchip):not(.term-semester-chip):not(.qf-chip):not(.view-tabs button) {
     background: var(--surface-2);
     color: var(--text);
     border-color: var(--border);
@@ -381,9 +381,10 @@
   }
   html.dark .term-semester-chip:hover { border-color: #5cdaef; color: #5cdaef; background: var(--surface-2); }
   html.dark .term-semester-chip.active {
-    background: linear-gradient(135deg, #1a6b5e, #2dd4bf);
-    color: #e7f4ff;
-    border-color: #2dd4bf;
+    background: linear-gradient(135deg, #2dd4bf, #5cdaef);
+    color: #0a0f24;
+    border-color: #5cdaef;
+    box-shadow: 0 0 16px rgba(92, 218, 239, 0.45);
   }
   /* Status / badge pills. */
   html.dark .submitted-badge {
