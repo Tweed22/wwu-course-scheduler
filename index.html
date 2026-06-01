@@ -5290,8 +5290,11 @@ function regSubtermMatches(item, semester, subterm) {
 function buildRegistrarQueue() {
   const items = [];
   // Section submissions awaiting registrar action.
+  // isNewSection offerings are tracked via their Change Request, not as
+  // direct section submissions, so they're excluded from this queue.
   for (const o of state.offerings) {
     if (!o.submitted || o.registrarCompleted) continue;
+    if (o.isNewSection) continue;
     items.push({ kind: "section", id: "sec:" + o.id, offering: o });
   }
   // Change requests sent to the registrar (not yet finalized).
@@ -5598,6 +5601,17 @@ function markRegistrarItemComplete(regId) {
         const reinstated = applyReinstateToOffering(r, ch);
         if (reinstated) {
           logRequestEvent(r, `Re-instated ${reinstated.code} ${reinstated.term} ${reinstated.subterm} ${reinstated.year} (section ${reinstated.section})`);
+        }
+      } else if (ch.type === "Add Section" || ch.type === "Add Section & Split Enrollment") {
+        // Mark the linked offering as registrar-completed so it transitions
+        // from SENT → DONE in Term Assignments.
+        const linked = state.offerings.find(o => o.addRequestId === r.id);
+        if (linked) {
+          linked.registrarCompleted   = true;
+          linked.registrarCompletedAt = new Date().toISOString();
+          linked.registrarCompletedBy = state.userName || "(unknown)";
+          markLocallyTouched(linked.id);
+          logRequestEvent(r, `Section marked DONE in Term Assignments`);
         }
       }
     }
@@ -6624,6 +6638,10 @@ function bindTermEvents() {
   document.getElementById("ttbody").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-tact]");
     if (!btn) return;
+    // Pre-touch all ids so in-flight flush echoes can't flicker the row
+    // that was just acted on before the next flush picks up the new state.
+    (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
+    (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
     const act = btn.dataset.tact;
     if (act === "request") {
       const cid = btn.dataset.cid;
@@ -6646,15 +6664,24 @@ function bindTermEvents() {
       if (!confirm(`Add another section of ${label}?`)) return;
       duplicateSection(oid);
     } else if (act === "submitchangerequest") {
-      // One-click submit: create a Change Request for the new section and
-      // land in the Change Requests queue — no dialog, mirrors the feel of
-      // "Submit to Registrar".
+      // One-click submit: create a Change Request, lock the row to SENT,
+      // and transition to DONE when the request is Finalized by Registrar.
       const oid = btn.dataset.oid;
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      // Pre-touch everything to suppress in-flight echo flicker.
+      (state.offerings || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
+      (state.requests  || []).forEach(x => { if (x.id) markLocallyTouched(x.id); });
       const instr2 = (o.instructor || "").trim();
       createAddCourseRequestForNewSection(o);
+      // Mark the offering as submitted so it shows the SENT badge in Term
+      // Assignments. It won't appear in the Registrar's section queue
+      // (buildRegistrarQueue skips isNewSection rows); it becomes DONE
+      // when the change request is Finalized by the Registrar.
+      o.submitted   = true;
+      o.submittedAt = new Date().toISOString();
+      o.submittedBy = state.userName || "(unknown)";
       markLocallyTouched(o.id);
       setDirty(true);
       renderTerms();
