@@ -5612,9 +5612,20 @@ function markRegistrarItemComplete(regId) {
     for (const ch of requestChanges(r)) {
       if (ch.type === "Assign Instructor") {
         const name = (ch.fields && ch.fields.instructor) || "";
-        const propagated = applyAssignInstructorToOffering(r, name);
-        if (propagated) {
-          logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm} ${propagated.year}`);
+        // If this request was generated for a specific added section (the
+        // offering has addRequestId pointing back to this request), update
+        // only that offering — not every section of the same course.
+        const linkedOffering = state.offerings.find(o => o.addRequestId === r.id);
+        if (linkedOffering && name) {
+          linkedOffering.instructor    = name;
+          linkedOffering.lastModified  = new Date().toISOString();
+          markLocallyTouched(linkedOffering.id);
+          logRequestEvent(r, `Instructor "${name}" written to section ${sectionNumberFor(linkedOffering)} only`);
+        } else {
+          const propagated = applyAssignInstructorToOffering(r, name);
+          if (propagated) {
+            logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm} ${propagated.year}`);
+          }
         }
       } else if (ch.type === "Re-instate Course") {
         const reinstated = applyReinstateToOffering(r, ch);
