@@ -5647,6 +5647,18 @@ function markRegistrarItemComplete(regId) {
         }
       }
     }
+    // After all change blocks are applied, if the request was tied to a
+    // specific section (offeringId), set that section to DONE so the badge
+    // transitions from SENT → DONE in Term Assignments.
+    if (r.offeringId) {
+      const targetO = state.offerings.find(o => o.id === r.offeringId);
+      if (targetO && targetO.submitted) {
+        targetO.registrarCompleted   = true;
+        targetO.registrarCompletedAt = new Date().toISOString();
+        targetO.registrarCompletedBy = state.userName || "(unknown)";
+        markLocallyTouched(targetO.id);
+      }
+    }
     if (typeof logRequestEvent === "function") {
       logRequestEvent(r, `Marked Finalized by ${state.userName || "Registrar"} (from Registrar queue)`);
     }
