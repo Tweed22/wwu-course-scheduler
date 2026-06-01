@@ -5496,6 +5496,7 @@ function markRegistrarItemComplete(regId) {
     markLocallyTouched(o.id);
     setDirty(true);
     renderRegistrar();
+    if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
     toast(`${c.code || "Section"} ${sectionNumberFor(o)} marked completed by Registrar`);
   } else if (kind === "req") {
@@ -5607,6 +5608,10 @@ function applyAssignInstructorToOffering(r, explicitName) {
     if (o.canceled) continue;          // don't overwrite a canceled section
     o.instructor = name;
     o.lastModified = new Date().toISOString();
+    // Touch the offering immediately so any in-flight flush echo ("Tony") is
+    // suppressed — without this the echo overwrites our "Bob" update before
+    // the rescheduled flush with the new name reaches Supabase.
+    markLocallyTouched(o.id);
     touched++;
   }
   if (!touched) return null;
