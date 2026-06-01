@@ -7276,15 +7276,13 @@ function renderRequestHeader(editable) {
 
   const sectionNumberVal = document.getElementById("rfld_sectionNumber").value || "";
   if (editable) {
+    const existingCode = [document.getElementById("rfld_prefix").value || "", document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ");
     wrap.innerHTML = `
       <div class="rs-edit-row">
-        <div class="rs-edit-field" style="flex:0 0 80px;">
-          <label class="rs-label">Prefix</label>
-          <input type="text" id="rs_prefix_in" class="rs-input" placeholder="ITP" value="${escapeHtml(document.getElementById("rfld_prefix").value || "")}" style="text-transform:uppercase;">
-        </div>
-        <div class="rs-edit-field" style="flex:0 0 80px;">
-          <label class="rs-label">Number</label>
-          <input type="text" id="rs_number_in" class="rs-input" placeholder="211" maxlength="7" value="${escapeHtml(document.getElementById("rfld_number").value || "")}">
+        <div class="rs-edit-field" style="flex:1 1 200px; min-width:0;">
+          <label class="rs-label">Course</label>
+          <input type="text" id="rs_course_in" class="rs-input" list="rs_courseList" placeholder="FLM 212 — start typing…" autocomplete="off" value="${escapeHtml(existingCode)}">
+          <datalist id="rs_courseList"></datalist>
         </div>
         <div class="rs-edit-field" style="flex:0 0 80px;">
           <label class="rs-label">Section #</label>
@@ -7329,12 +7327,29 @@ function renderRequestHeader(editable) {
         <span class="rs-date">Submitted ${escapeHtml(fmtDateShort(dateVal))}</span>
       </div>
     `;
+    // Populate course datalist from all rotation courses, sorted by code.
+    const dl = document.getElementById("rs_courseList");
+    if (dl) {
+      dl.innerHTML = state.courses
+        .slice()
+        .sort((a, b) => (a.code || "").localeCompare(b.code || ""))
+        .map(c => `<option value="${escapeHtml(c.code + (c.title ? " — " + c.title : ""))}">`)
+        .join("");
+    }
     const sync = () => {
-      document.getElementById("rfld_prefix").value = (document.getElementById("rs_prefix_in").value || "").trim().toUpperCase();
-      document.getElementById("rs_prefix_in").value = document.getElementById("rfld_prefix").value;
-      document.getElementById("rfld_number").value = (document.getElementById("rs_number_in").value || "").trim();
+      const rawVal = (document.getElementById("rs_course_in").value || "").trim();
+      const matched = findCourseByInput(rawVal);
+      if (matched) {
+        const parts = (matched.code || "").split(/\s+/);
+        document.getElementById("rfld_prefix").value = parts[0] || "";
+        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+      } else {
+        const parts = rawVal.split(/\s+/);
+        document.getElementById("rfld_prefix").value = (parts[0] || "").toUpperCase();
+        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+      }
       // Normalize section number to zero-padded 2-digit form (e.g. "1" → "01"
-       // ) to match the Term Assignments display ("ACC 240 01"). Allow blank.
+      // ) to match the Term Assignments display ("ACC 240 01"). Allow blank.
       const rawSec = (document.getElementById("rs_secnum_in").value || "").trim();
       const normSec = /^\d{1,2}$/.test(rawSec) ? rawSec.padStart(2, "0") : rawSec;
       document.getElementById("rfld_sectionNumber").value = normSec;
@@ -7357,7 +7372,7 @@ function renderRequestHeader(editable) {
         document.getElementById("rfld_section").value = cc.section === "graduate" ? "Grad" : "Undergrad";
       }
     };
-    ["rs_prefix_in","rs_number_in","rs_secnum_in"].forEach(id => {
+    ["rs_course_in","rs_secnum_in"].forEach(id => {
       document.getElementById(id).addEventListener("input", sync);
     });
     ["rs_modality_sel","rs_term_sel","rs_year_in","rs_subterm_sel"].forEach(id => {
