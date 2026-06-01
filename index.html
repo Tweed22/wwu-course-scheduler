@@ -4896,7 +4896,7 @@ function renderTermTable(list) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" title="Open a Change Request for this completed section">Request Change</button>`;
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
       actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>`;
@@ -5717,9 +5717,25 @@ function applyAssignInstructorToOffering(r, explicitName) {
     name = m ? m[1].trim() : (r.explanation || "").trim();
   }
   if (!name) return null;
-  // Find the matching offering. We require courseId + semester + year. Subterm
-  // is matched when the request specifies one (Cancel/Modify requests carry
-  // it); otherwise we update every offering for that course in that term.
+
+  // If the request was opened from a specific section (offeringId is stored
+  // on the request), apply the instructor ONLY to that offering so other
+  // sections of the same course are not affected.
+  if (r.offeringId) {
+    const specific = state.offerings.find(o => o.id === r.offeringId);
+    if (specific && !specific.canceled) {
+      specific.instructor   = name;
+      specific.lastModified = new Date().toISOString();
+      markLocallyTouched(specific.id);
+      const sec = sectionNumberFor(specific);
+      return { name, code, term: r.term, subterm: specific.subterm, year: r.year, section: sec };
+    }
+    return null;
+  }
+
+  // Fallback: course-wide update (for requests not tied to a specific section).
+  // We require course + semester + year. Subterm is matched when the request
+  // carries one; otherwise every section of that course in that term is updated.
   const wantSubterm = (r.subterm && r.subterm !== "Semester") ? r.subterm : null;
   let touched = 0;
   for (const o of state.offerings) {
@@ -5727,12 +5743,9 @@ function applyAssignInstructorToOffering(r, explicitName) {
     if (o.semester !== r.term) continue;
     if (Number(o.year) !== Number(r.year)) continue;
     if (wantSubterm && o.subterm !== wantSubterm) continue;
-    if (o.canceled) continue;          // don't overwrite a canceled section
-    o.instructor = name;
+    if (o.canceled) continue;
+    o.instructor   = name;
     o.lastModified = new Date().toISOString();
-    // Touch the offering immediately so any in-flight flush echo ("Tony") is
-    // suppressed — without this the echo overwrites our "Bob" update before
-    // the rescheduled flush with the new name reaches Supabase.
     markLocallyTouched(o.id);
     touched++;
   }
@@ -6665,7 +6678,7 @@ function bindTermEvents() {
     const act = btn.dataset.tact;
     if (act === "request") {
       const cid = btn.dataset.cid;
-      if (cid) openRequestForCourse(cid);
+      if (cid) openRequestForCourse(cid, btn.dataset.oid || null);
     } else if (act === "reinstate") {
       const oid = btn.dataset.oid;
       if (oid) openReinstateRequest(oid);
@@ -7369,19 +7382,27 @@ function openReinstateRequest(offeringId) {
   openRequestModal(r);
 }
 
-function openRequestForCourse(courseId) {
+function openRequestForCourse(courseId, offeringId) {
   const c = state.courses.find(x => x.id === courseId);
   if (!c) return;
   const parts = (c.code || "").split(/\s+/);
+  // If an offeringId is supplied, resolve the section number and term info
+  // so the request is scoped to that specific section.
+  const o = offeringId ? state.offerings.find(x => x.id === offeringId) : null;
   // Mark the context so renderChangeBlock restricts the type dropdown to the
   // subset that makes sense when editing from the Term Assignments page.
   state.requestModalContext = "terms";
   openNewRequest({
-    prefix: parts[0] || "",
-    number: parts[1] || "",
-    section: c.section === "graduate" ? "Grad" : "Undergrad",
-    modality: (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
-    courseId: courseId,
+    prefix:        parts[0] || "",
+    number:        parts[1] || "",
+    section:       c.section === "graduate" ? "Grad" : "Undergrad",
+    modality:      (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
+    courseId,
+    offeringId:    offeringId || "",   // scopes instructor changes to this section
+    sectionNumber: o ? sectionNumberFor(o) : "",
+    term:          o ? o.semester : "",
+    subterm:       o ? o.subterm  : "",
+    year:          o ? o.year     : "",
   });
 }
 
