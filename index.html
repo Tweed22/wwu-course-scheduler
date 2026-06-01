@@ -6425,8 +6425,8 @@ function bindTermEvents() {
     });
   });
 
-  // Enter on the instructor input triggers Submit to Registrar. Done with
-  // keydown so we can preventDefault before the browser handles the key.
+  // Enter on the instructor input triggers Submit to Registrar, then moves
+  // focus to the next editable instructor field in the table.
   document.getElementById("ttbody").addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const inp = e.target.closest('input[data-field="instructor"]');
@@ -6435,12 +6435,26 @@ function bindTermEvents() {
     if (!row) return;
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o || o.submitted || o.canceled) return;
-    // Make sure the latest typed value is committed before submitting.
+    // Commit the latest typed value before submitting.
     o.instructor = inp.value;
     if (!o.instructor || !o.instructor.trim()) return;
     e.preventDefault();
+    // Save the current row's id — submitSectionToRegistrar calls renderTerms()
+    // which replaces all DOM nodes, so we can't hold a reference to `row`.
+    const currentOid = row.dataset.oid;
     inp.blur();
     submitSectionToRegistrar(o.id);
+    // After the re-render, find the next row after the just-submitted one
+    // that has an unlocked instructor input and focus it.
+    const tb = document.getElementById("ttbody");
+    const allRows = [...tb.querySelectorAll("tr[data-oid]")];
+    const curIdx  = allRows.findIndex(r => r.dataset.oid === currentOid);
+    if (curIdx >= 0) {
+      for (let i = curIdx + 1; i < allRows.length; i++) {
+        const next = allRows[i].querySelector('input[data-field="instructor"]:not([readonly])');
+        if (next) { next.focus(); break; }
+      }
+    }
   });
 
   // Inline edits
