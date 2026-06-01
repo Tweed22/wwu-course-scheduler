@@ -5720,39 +5720,42 @@ function applyAssignInstructorToOffering(r, explicitName) {
   }
   if (!name) return null;
 
-  // If the request was opened from a specific section (offeringId is stored
-  // on the request), apply the instructor ONLY to that offering so other
-  // sections of the same course are not affected.
+  // ALWAYS scope to a single offering — never update multiple sections.
+  // Priority: 1) direct offeringId  2) sectionNumber match  3) null (no-op).
+  // The course-wide fallback has been removed to guarantee section isolation.
+
   if (r.offeringId) {
     const specific = state.offerings.find(o => o.id === r.offeringId);
     if (specific && !specific.canceled) {
       specific.instructor   = name;
       specific.lastModified = new Date().toISOString();
       markLocallyTouched(specific.id);
-      const sec = sectionNumberFor(specific);
-      return { name, code, term: r.term, subterm: specific.subterm, year: r.year, section: sec };
+      return { name, code, term: r.term, subterm: specific.subterm, year: r.year, section: sectionNumberFor(specific) };
     }
     return null;
   }
 
-  // Fallback: course-wide update (for requests not tied to a specific section).
-  // We require course + semester + year. Subterm is matched when the request
-  // carries one; otherwise every section of that course in that term is updated.
-  const wantSubterm = (r.subterm && r.subterm !== "Semester") ? r.subterm : null;
-  let touched = 0;
-  for (const o of state.offerings) {
-    if (o.courseId !== c.id) continue;
-    if (o.semester !== r.term) continue;
-    if (Number(o.year) !== Number(r.year)) continue;
-    if (wantSubterm && o.subterm !== wantSubterm) continue;
-    if (o.canceled) continue;
-    o.instructor   = name;
-    o.lastModified = new Date().toISOString();
-    markLocallyTouched(o.id);
-    touched++;
+  // Secondary: match by section number within the course + term (covers
+  // requests saved before offeringId was introduced).
+  if (r.sectionNumber) {
+    const wantSubterm = (r.subterm && r.subterm !== "Semester") ? r.subterm : null;
+    for (const o of state.offerings) {
+      if (o.courseId !== c.id) continue;
+      if (o.semester !== r.term) continue;
+      if (Number(o.year) !== Number(r.year)) continue;
+      if (wantSubterm && o.subterm !== wantSubterm) continue;
+      if (o.canceled) continue;
+      if (sectionNumberFor(o) === r.sectionNumber) {
+        o.instructor   = name;
+        o.lastModified = new Date().toISOString();
+        markLocallyTouched(o.id);
+        return { name, code, term: r.term, subterm: o.subterm, year: r.year, section: r.sectionNumber };
+      }
+    }
   }
-  if (!touched) return null;
-  return { name, code, term: r.term, subterm: wantSubterm || "all subterms", year: r.year };
+
+  // No scoping info available — do nothing rather than risk a mass update.
+  return null;
 }
 
 /* When the registrar finalizes a "Re-instate Course" request, un-cancel the
