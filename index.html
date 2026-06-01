@@ -7056,24 +7056,30 @@ function requestChanges(r) {
 function changeSummary(ch) {
   if (!ch) return "";
   const f = ch.fields || {};
-  if (ch.type === "Add Course") return f.instructor ? `Add (instructor: ${f.instructor})` : "Add course";
-  if (ch.type === "Add Section") return f.instructor ? `Add section (instructor: ${f.instructor})` : "Add section";
-  if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section (instructor: ${f.instructor})` : "Add section & split enrollment";
-  if (ch.type === "Assign Instructor") return f.instructor ? `Assign to ${f.instructor}` : "Assign instructor";
+  if (ch.type === "Add Course") return f.instructor ? `Add course — instructor: ${f.instructor}` : "Add course";
+  if (ch.type === "Add Section") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section";
+  if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section & split enrollment";
+  if (ch.type === "Assign Instructor")  return f.instructor || "Assign instructor";
+  if (ch.type === "Change Instructor")  return f.instructor || "Change instructor";
   if (ch.type === "Modify Time/Day") {
     const parts = [f.days, f.time].filter(Boolean).join(" ");
     return parts ? `Change to ${parts}` : "Modify time/day";
   }
-  if (ch.type === "Modify Location") return f.location ? `Move to ${f.location}` : "Modify location";
-  if (ch.type === "Change Course Cap") return f.cap ? `Set cap to ${f.cap}` : "Change course cap";
-  if (ch.type === "Other") return f.detail || "Other change";
-  // Cancel/Re-instate — type itself is descriptive enough.
+  if (ch.type === "Modify Location")   return f.location ? `Move to ${f.location}` : "Modify location";
+  if (ch.type === "Change Course Cap") return f.cap      ? `Set cap to ${f.cap}`   : "Change course cap";
+  if (ch.type === "Other")             return f.detail   || "Other change";
+  if (ch.type === "Cancel Course")     return "Cancel course";
+  if (ch.type === "Re-instate Course") return "Re-instate course";
   return ch.type;
 }
 
-/* Compose all changes into a single human-readable explanation. */
+/* Compose all changes into a single human-readable explanation.
+   The Type column already shows the change type, so the explanation only
+   carries the detail value — no "Type: detail" repetition. */
 function composeExplanation(changes) {
-  return changes.map((c, i) => `${i+1}. ${c.type}: ${changeSummary(c)}`).join(" • ");
+  if (!changes || !changes.length) return "";
+  if (changes.length === 1) return changeSummary(changes[0]);
+  return changes.map((c, i) => `${i + 1}. ${changeSummary(c)}`).join(" • ");
 }
 
 /* Render a single change block into the dialog list. */
