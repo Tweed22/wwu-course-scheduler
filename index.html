@@ -5516,7 +5516,16 @@ function renderRegistrar() {
   renderRegTable(list);
   updateRegistrarBadge();
 }
+/* Pre-touch all local ids so that any realtime echo — for the specific item
+   being acted on OR for any other row caught in the same in-flight flush —
+   is suppressed for the next 2.5 s and cannot cause a flicker re-render. */
+function touchAllForRegistrarAction() {
+  (state.offerings || []).forEach(o => { if (o.id) markLocallyTouched(o.id); });
+  (state.requests  || []).forEach(r => { if (r.id) markLocallyTouched(r.id); });
+}
+
 function markRegistrarItemComplete(regId) {
+  touchAllForRegistrarAction();
   const [kind, id] = regId.split(":");
   if (kind === "sec") {
     const o = state.offerings.find(x => x.id === id);
@@ -5573,6 +5582,7 @@ function markRegistrarItemComplete(regId) {
    • Requests → revert from "Sent to Registrar" back to "Approved" so the item
      returns to the Change Requests page for further review. */
 function undoRegistrarItem(regId) {
+  touchAllForRegistrarAction();
   const [kind, id] = regId.split(":");
   if (kind === "sec") {
     const o = state.offerings.find(x => x.id === id);
