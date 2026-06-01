@@ -5541,7 +5541,7 @@ function renderRegTable(list) {
       `;
     }
     const r = item.request;
-    const code = `${r.prefix||""} ${r.number||""}`.trim() || "(no course)";
+    const code = requestCourseCode(r) || "(no course)";
     const received = r.sentDate ? escapeHtml(fmtDateShort(r.sentDate)) : (r.date ? escapeHtml(fmtDateShort(r.date)) : "—");
     const approver = r.approvedBy || "—";
     const actionCell = canComplete
