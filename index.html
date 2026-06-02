@@ -7280,18 +7280,21 @@ const CHANGE_TYPE_OPTIONS = Object.keys(CHANGE_TYPE_DEFS);
    dialog. "course" always shown. "sectionNum" = show section # field.
    "modality" = show modality selector (On-Ground reveals days/time/location).
    "term" = show semester / subterm / year selectors. */
+// termFirst:true → show Semester+Subterm before the course picker, and use a
+// filtered offering <select> instead of free-text autofill (section numbers
+// are embedded in the picker rather than a separate sectionNum input).
 const CONTEXT_FIELD_CONFIG = {
-  "Add Course":                     { sectionNum: true,  modality: true,  term: true },
-  "Add Section":                    { sectionNum: false, modality: true,  term: true },
-  "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true },
-  "Cancel Course":                  { sectionNum: true,  modality: false, term: true },
-  "Re-instate Course":              { sectionNum: true,  modality: false, term: true },
-  "Assign Instructor":              { sectionNum: true,  modality: false, term: true },
-  "Change Instructor":              { sectionNum: true,  modality: false, term: true },
-  "Modify Time/Day":                { sectionNum: true,  modality: false, term: true },
-  "Modify Location":                { sectionNum: true,  modality: false, term: true },
-  "Change Course Cap":              { sectionNum: true,  modality: false, term: true },
-  "Other":                          { sectionNum: true,  modality: false, term: true },
+  "Add Course":                     { sectionNum: true,  modality: true,  term: true,  termFirst: false },
+  "Add Section":                    { sectionNum: false, modality: true,  term: true,  termFirst: true  },
+  "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Cancel Course":                  { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Re-instate Course":              { sectionNum: true,  modality: false, term: true,  termFirst: false },
+  "Assign Instructor":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Change Instructor":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Modify Time/Day":                { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Modify Location":                { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Change Course Cap":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Other":                          { sectionNum: true,  modality: false, term: true,  termFirst: false },
 };
 
 /* Display-form for the section value. Stored as "Undergrad" / "Grad" for
@@ -7388,11 +7391,110 @@ function renderChangeBlock(idx, ch) {
       : (curCourse ? "Course not in rotation" : "Start typing to find a course…");
     const titleClass = exactMatch ? "has-match" : (curCourse ? "no-match" : "");
 
+    // Shared helper to render type-specific detail fields (instructor, days…).
+    const renderDetailFields = () => {
+      if (!def) return "";
+      let html = "";
+      const visibleFields = def.fields.filter(f => isOnGround || !onGroundOnlyKeys.has(f.key));
+      visibleFields.forEach(f => {
+        const v = (ch.fields && ch.fields[f.key]) || "";
+        const cls = f.full ? "full" : "";
+        const listAttr = f.key === "instructor" ? ' list="instrList"' : "";
+        if (f.type === "textarea") {
+          html += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><textarea data-cb-key="${escapeHtml(f.key)}" rows="${f.rows||2}" placeholder="${escapeHtml(f.placeholder||"")}">${escapeHtml(v)}</textarea></div>`;
+        } else if (f.type === "number") {
+          html += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="number" min="1" step="1" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
+        } else {
+          html += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text"${listAttr} data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
+        }
+      });
+      return html;
+    };
+
+    const termSelectors = `
+      <div>
+        <label>Semester</label>
+        <select data-rf="term">
+          ${["Fall","Spring","Summer"].map(t => `<option${t === curTerm ? " selected" : ""}>${t}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <label>Subterm</label>
+        <select data-rf="subterm">
+          ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"]
+            .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
+        </select>
+      </div>`;
+
     // Context section: course + contextual fields + type-specific fields.
     let contextHtml = "";
     if (ch.type) {
-      // Course autofill (always shown).
-      contextHtml += `
+      if (cfg.termFirst) {
+        // ── Term-first flow: Semester → Subterm → filtered offering picker ──────
+        // Modality first if applicable (Add Section).
+        if (cfg.modality) {
+          contextHtml += `
+          <div class="full">
+            <label>Modality</label>
+            <select data-rf="modality">
+              <option${curModality === "On-Ground" ? " selected" : ""}>On-Ground</option>
+              <option${curModality === "Online"    ? " selected" : ""}>Online</option>
+            </select>
+          </div>`;
+        }
+        contextHtml += termSelectors;
+
+        // Build a filtered offering list for the currently-chosen semester+subterm.
+        const { subterm: targetSubterm } = reqSubtermToSlot(curSubterm);
+        const acadYear = Number(document.getElementById("rfld_year").value) || state.termFilter.year || 2026;
+        const curOfferingId = document.getElementById("rfld_offeringId").value || "";
+        const filteredOff = (state.offerings || [])
+          .filter(o => o.semester === curTerm && o.subterm === targetSubterm && o.year === acadYear && !o.canceled)
+          .sort((a, b) => {
+            const ca = state.courses.find(x => x.id === a.courseId);
+            const cb = state.courses.find(x => x.id === b.courseId);
+            return ((ca && ca.code) || "").localeCompare((cb && cb.code) || "");
+          });
+
+        const offeringOpts = filteredOff.map(o => {
+          const c = state.courses.find(x => x.id === o.courseId);
+          const code  = (c && c.code)  || o.courseCode || "—";
+          const title = (c && c.title) || "";
+          // Section number within this subterm group.
+          const siblings = filteredOff.filter(x => x.courseId === o.courseId);
+          const sec = String(siblings.findIndex(x => x.id === o.id) + 1).padStart(2, "0");
+          const label = siblings.length > 1 ? `${code} §${sec} — ${title}` : `${code} — ${title}`;
+          return `<option value="${escapeHtml(o.id)}"${o.id === curOfferingId ? " selected" : ""}>${escapeHtml(label)}</option>`;
+        }).join("");
+
+        const noCoursesMsg = filteredOff.length === 0
+          ? `<option disabled>No courses found in ${escapeHtml(curTerm)} ${escapeHtml(curSubterm)}</option>`
+          : "";
+
+        // Resolve title from the currently-selected offering.
+        const selOff = curOfferingId ? filteredOff.find(o => o.id === curOfferingId) : null;
+        const selCourse = selOff ? state.courses.find(c => c.id === selOff.courseId) : null;
+        const offeringTitle = selCourse ? (selCourse.title || "Untitled course")
+          : (curOfferingId ? "Course not found" : "Select a semester and subterm, then pick a course");
+        const offeringTitleCls = selCourse ? "has-match" : (curOfferingId ? "no-match" : "");
+
+        contextHtml += `
+        <div class="full">
+          <label>Course &amp; Section</label>
+          <select data-rf="offering-select" style="width:100%;">
+            <option value="">— Select a course —</option>
+            ${noCoursesMsg}${offeringOpts}
+          </select>
+        </div>
+        <div class="full">
+          <div class="cb-ctx-title ${offeringTitleCls}" id="cb${idx}_title">${escapeHtml(offeringTitle)}</div>
+        </div>`;
+
+        contextHtml += renderDetailFields();
+
+      } else {
+        // ── Course-first flow (Add Course, Re-instate Course, Other) ─────────────
+        contextHtml += `
         <div class="full">
           <label>Course</label>
           <input type="text" id="cb${idx}_course" class="" list="cb_courseList"
@@ -7404,61 +7506,26 @@ function renderChangeBlock(idx, ch) {
           <div class="cb-ctx-title ${titleClass}" id="cb${idx}_title">${escapeHtml(titleText)}</div>
         </div>`;
 
-      // Section #.
-      if (cfg.sectionNum) {
-        contextHtml += `
-        <div>
-          <label>Section #</label>
-          <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
-                 value="${escapeHtml(curSec)}">
-        </div>`;
-      }
-
-      // Modality selector (and days/time/location when On-Ground).
-      if (cfg.modality) {
-        contextHtml += `
-        <div>
-          <label>Modality</label>
-          <select data-rf="modality">
-            <option${curModality === "On-Ground" ? " selected" : ""}>On-Ground</option>
-            <option${curModality === "Online"    ? " selected" : ""}>Online</option>
-          </select>
-        </div>`;
-      }
-
-      // Term: Semester + Subterm (Year is auto-derived and stored silently).
-      if (cfg.term) {
-        contextHtml += `
-        <div>
-          <label>Semester</label>
-          <select data-rf="term">
-            ${["Fall","Spring","Summer"].map(t => `<option${t === curTerm ? " selected" : ""}>${t}</option>`).join("")}
-          </select>
-        </div>
-        <div>
-          <label>Subterm</label>
-          <select data-rf="subterm">
-            ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"]
-              .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
-          </select>
-        </div>`;
-      }
-
-      // Type-specific detail fields (instructor, days, time, etc.).
-      if (def) {
-        const visibleFields = def.fields.filter(f => isOnGround || !onGroundOnlyKeys.has(f.key));
-        visibleFields.forEach(f => {
-          const v = (ch.fields && ch.fields[f.key]) || "";
-          const cls = f.full ? "full" : "";
-          const listAttr = f.key === "instructor" ? ' list="instrList"' : "";
-          if (f.type === "textarea") {
-            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><textarea data-cb-key="${escapeHtml(f.key)}" rows="${f.rows||2}" placeholder="${escapeHtml(f.placeholder||"")}">${escapeHtml(v)}</textarea></div>`;
-          } else if (f.type === "number") {
-            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="number" min="1" step="1" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
-          } else {
-            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text"${listAttr} data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
-          }
-        });
+        if (cfg.sectionNum) {
+          contextHtml += `
+          <div>
+            <label>Section #</label>
+            <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
+                   value="${escapeHtml(curSec)}">
+          </div>`;
+        }
+        if (cfg.modality) {
+          contextHtml += `
+          <div>
+            <label>Modality</label>
+            <select data-rf="modality">
+              <option${curModality === "On-Ground" ? " selected" : ""}>On-Ground</option>
+              <option${curModality === "Online"    ? " selected" : ""}>Online</option>
+            </select>
+          </div>`;
+        }
+        if (cfg.term) { contextHtml += termSelectors; }
+        contextHtml += renderDetailFields();
       }
     }
 
@@ -7576,6 +7643,33 @@ function syncContextFieldToHidden(el) {
     document.getElementById("rfld_sectionNumber").value = /^\d{1,2}$/.test(rawSec) ? rawSec.padStart(2, "0") : rawSec;
   } else if (key === "modality") {
     document.getElementById("rfld_modality").value = el.value;
+  } else if (key === "offering-select") {
+    const oid = el.value;
+    const rfOid = document.getElementById("rfld_offeringId");
+    if (rfOid) rfOid.value = oid;
+    if (oid) {
+      const o = state.offerings.find(x => x.id === oid);
+      if (o) {
+        const c = state.courses.find(x => x.id === o.courseId);
+        const code = (c && c.code) || o.courseCode || "";
+        const parts = code.split(/\s+/);
+        document.getElementById("rfld_prefix").value = parts[0] || "";
+        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+        const siblings = state.offerings.filter(x =>
+          x.courseId === o.courseId && x.semester === o.semester && x.subterm === o.subterm && x.year === o.year
+        );
+        const sec = String(siblings.findIndex(x => x.id === o.id) + 1).padStart(2, "0");
+        document.getElementById("rfld_sectionNumber").value = sec;
+        if (c && c.section) {
+          document.getElementById("rfld_section").value = c.section === "graduate" ? "Grad" : "Undergrad";
+        }
+      }
+    } else {
+      document.getElementById("rfld_prefix").value = "";
+      document.getElementById("rfld_number").value = "";
+      document.getElementById("rfld_sectionNumber").value = "";
+      if (rfOid) rfOid.value = "";
+    }
   } else if (key === "term") {
     document.getElementById("rfld_term").value = el.value;
     // Year is hidden but must stay in sync — always the current academic year.
@@ -8162,13 +8256,48 @@ function bindRequestEvents() {
       }
       return;
     }
-    // Context field (modality, term, subterm, year, sectionNumber) changed.
+    // Context field (modality, term, subterm, offering-select, etc.) changed.
     if (e.target.matches("[data-rf]")) {
       syncContextFieldToHidden(e.target);
-      // Modality change requires a full re-render to show/hide days/time/location.
-      if (e.target.dataset.rf === "modality") {
+      const rf = e.target.dataset.rf;
+      // Re-render to update filtered picker or show/hide fields.
+      if (rf === "modality" || rf === "term" || rf === "subterm") {
+        // Clear the offering selection when semester/subterm changes so a
+        // stale course from the previous term doesn't carry over.
+        if ((rf === "term" || rf === "subterm") && state.requestHeaderEditable) {
+          const cfg = CONTEXT_FIELD_CONFIG[(state.editingChanges && state.editingChanges[0] && state.editingChanges[0].type) || ""] || {};
+          if (cfg.termFirst) {
+            document.getElementById("rfld_offeringId").value = "";
+            document.getElementById("rfld_prefix").value = "";
+            document.getElementById("rfld_number").value = "";
+            document.getElementById("rfld_sectionNumber").value = "";
+          }
+        }
         syncChangeListFromDom();
         renderChangeList();
+      }
+      // Offering select: update the title display without a full re-render.
+      if (rf === "offering-select") {
+        const block = e.target.closest(".change-block");
+        if (block) {
+          const idx = parseInt(block.dataset.cbIdx, 10);
+          const titleEl = document.getElementById(`cb${idx}_title`);
+          if (titleEl) {
+            const oid = e.target.value;
+            const o = oid ? state.offerings.find(x => x.id === oid) : null;
+            const c = o ? state.courses.find(x => x.id === o.courseId) : null;
+            if (c) {
+              titleEl.textContent = c.title || "Untitled course";
+              titleEl.className = "cb-ctx-title has-match";
+            } else if (oid) {
+              titleEl.textContent = "Course not found";
+              titleEl.className = "cb-ctx-title no-match";
+            } else {
+              titleEl.textContent = "Select a semester and subterm, then pick a course";
+              titleEl.className = "cb-ctx-title";
+            }
+          }
+        }
       }
     }
   });
