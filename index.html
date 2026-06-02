@@ -7515,7 +7515,8 @@ function renderChangeBlock(idx, ch) {
         const curOfferingId = document.getElementById("rfld_offeringId").value || "";
         const filteredOff = (state.offerings || [])
           .filter(o => o.semester === curTerm && o.subterm === targetSubterm && o.year === acadYear && !o.canceled)
-          .filter(o => ch.type !== "Assign Instructor" || !o.instructor)
+          .filter(o => ch.type !== "Assign Instructor"  || !o.instructor)
+          .filter(o => ch.type !== "Change Instructor"  ||  !!o.instructor)
           .sort((a, b) => {
             const ca = state.courses.find(x => x.id === a.courseId);
             const cb = state.courses.find(x => x.id === b.courseId);
@@ -7523,8 +7524,8 @@ function renderChangeBlock(idx, ch) {
           });
 
         // Build datalist labels — section number uses a plain space, no § symbol.
-        // For Assign Instructor, always show the section number so each slot is unambiguous.
-        const alwaysShowSec = ch.type === "Assign Instructor";
+        // For instructor change types, always show the section number so each slot is unambiguous.
+        const alwaysShowSec = ch.type === "Assign Instructor" || ch.type === "Change Instructor";
         const offeringLabels = filteredOff.map(o => {
           const c = state.courses.find(x => x.id === o.courseId);
           const code  = (c && c.code)  || o.courseCode || "—";
