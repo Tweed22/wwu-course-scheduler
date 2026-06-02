@@ -5760,14 +5760,19 @@ function markRegistrarItemComplete(regId) {
         if (reinstated) {
           logRequestEvent(r, `Re-instated ${reinstated.code} ${reinstated.term} ${reinstated.subterm} ${reinstated.year} (section ${reinstated.section})`);
         }
-      } else if (ch.type === "Add Section" || ch.type === "Add Section & Split Enrollment") {
-        // Mark the linked offering as registrar-completed so it transitions
-        // from SENT → DONE in Term Assignments.
+      } else if (ch.type === "Add Course" || ch.type === "Add Section" || ch.type === "Add Section & Split Enrollment") {
+        // Mark the linked provisional offering as registrar-completed so it
+        // transitions from SENT → DONE in Term Assignments.
         const linked = state.offerings.find(o => o.addRequestId === r.id);
         if (linked) {
           linked.registrarCompleted   = true;
           linked.registrarCompletedAt = new Date().toISOString();
           linked.registrarCompletedBy = state.userName || "(unknown)";
+          // Also write back any instructor assigned in the request.
+          const instrCh = requestChanges(r).find(c => c.fields && c.fields.instructor);
+          if (instrCh && instrCh.fields.instructor && !linked.instructor) {
+            linked.instructor = instrCh.fields.instructor;
+          }
           markLocallyTouched(linked.id);
           logRequestEvent(r, `Section marked DONE in Term Assignments`);
         }
@@ -7331,15 +7336,15 @@ function renderChangeBlock(idx, ch) {
           </select>
         </div>
         <div>
-          <label>Year</label>
-          <input type="number" data-rf="year" min="2024" max="2035" value="${escapeHtml(String(curYear))}">
-        </div>
-        <div class="full">
           <label>Subterm</label>
           <select data-rf="subterm">
-            ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","15-week","16-week"]
+            ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"]
               .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
           </select>
+        </div>
+        <div>
+          <label>Year</label>
+          <input type="number" data-rf="year" min="2024" max="2035" value="${escapeHtml(String(curYear))}">
         </div>`;
       }
 
@@ -7660,6 +7665,64 @@ function openRequestForCourse(courseId, offeringId) {
   });
 }
 
+/* Map the human-readable subterm string used in the change-request form
+   to the internal rotationSlot letter and SUBTERMS subterm code. */
+function reqSubtermToSlot(s) {
+  if (!s || s === "Semester")           return { slot: "16W", subterm: "1A" };
+  if (s === "A (5-week)")               return { slot: "A",   subterm: "1A" };
+  if (s === "B (5-week)")               return { slot: "B",   subterm: "2B" };
+  if (s === "C (5-week)")               return { slot: "C",   subterm: "3C" };
+  if (s === "F (10-week First)")        return { slot: "F",   subterm: "1A" };
+  if (s === "L (10-week Last)")         return { slot: "L",   subterm: "2B" };
+  if (s === "16-week")                  return { slot: "16W", subterm: "1A" };
+  return { slot: "A", subterm: "1A" };
+}
+
+/* Create a provisional offering for an Add Course / Add Section change request
+   so it appears immediately in Term Assignments with SENT→DONE tracking. */
+function createProvisionalOffering(draft) {
+  const ADD_TYPES = new Set(["Add Course","Add Section","Add Section & Split Enrollment"]);
+  const changes = requestChanges(draft);
+  if (!changes.some(ch => ADD_TYPES.has(ch.type))) return;
+  // Only create once — guard against double-creation on re-save.
+  if (state.offerings.find(o => o.addRequestId === draft.id)) return;
+
+  const code = `${draft.prefix || ""} ${draft.number || ""}`.trim();
+  const course = code ? state.courses.find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase()) : null;
+  if (!course) return; // Can't create without a known course
+
+  const { slot, subterm: subtermCode } = reqSubtermToSlot(draft.subterm);
+  const instrChange = changes.find(ch => ch.type === "Assign Instructor" || (ch.fields && ch.fields.instructor));
+  const instructor  = (instrChange && instrChange.fields && instrChange.fields.instructor) ||
+                      (changes[0] && changes[0].fields && changes[0].fields.instructor) || "";
+
+  const o = Object.assign({}, {
+    id:           uuid(),
+    courseId:     course.id,
+    semester:     draft.term     || "Fall",
+    subterm:      subtermCode,
+    year:         Number(draft.year) || 2026,
+    rotationSlot: slot,
+    length:       SLOT_LENGTH[slot] || "5 Weeks",
+    instructor:   instructor.trim(),
+    notes:        "",
+    submitted:    false,
+    submittedAt:  "",
+    submittedBy:  "",
+    registrarCompleted:   false,
+    registrarCompletedAt: "",
+    registrarCompletedBy: "",
+    canceled:     false,
+    canceledAt:   "",
+    canceledBy:   "",
+    isNewSection: true,
+    addRequestId: draft.id,
+    lastModified: new Date().toISOString(),
+  });
+  state.offerings.push(o);
+  markLocallyTouched(o.id);
+}
+
 function saveRequestFromModal() {
   const existing = state.requests.find(x => x.id === state.editingRequestId);
   const draft = newRequest(existing || {});
@@ -7713,6 +7776,10 @@ function saveRequestFromModal() {
         markLocallyTouched(linkedO.id);
       }
     }
+    // Add Course / Add Section → create a provisional offering so the
+    // section appears in Term Assignments immediately and can track
+    // SENT → DONE as the request moves through the lifecycle.
+    createProvisionalOffering(draft);
     toast("Request created");
   }
   setDirty(true);
@@ -7734,11 +7801,21 @@ function transitionRequest(id, action) {
     r.approvedBy = who;
     r.approvedDate = now;
     r.sentDate = now;
+    // Mark any provisional offering as SENT so it shows the SENT badge
+    // in Term Assignments while waiting for the Registrar to finalize.
+    const provisionalO = state.offerings.find(o => o.addRequestId === r.id);
+    if (provisionalO && !provisionalO.submitted) {
+      provisionalO.submitted   = true;
+      provisionalO.submittedAt = now;
+      provisionalO.submittedBy = who;
+      markLocallyTouched(provisionalO.id);
+    }
     logRequestEvent(r, `Approved & sent to Registrar by ${who} (${code})`);
     markLocallyTouched(r.id);
     setDirty(true);
     renderRequests();
     if (typeof renderRegistrar === "function") renderRegistrar();
+    if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
     toast(`${code} sent to Registrar`);
     return;
