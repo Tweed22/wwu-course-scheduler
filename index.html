@@ -5172,7 +5172,9 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   markLocallyTouched(draft.id);
   state.requests.push(draft);
   o.isNewSection = true;
-  o.addRequestId = draft.id;
+  // Only stamp addRequestId when the offering doesn't already have a linked
+  // request — prevents overwriting the Add Course link with a new Add Section.
+  if (!o.addRequestId) o.addRequestId = draft.id;
   return draft;
 }
 
@@ -5320,12 +5322,52 @@ function cancelCourseOffering(offeringId) {
    the submission happened so callers can decide whether to advance focus. */
 function submitNewSectionChange(o) {
   if (!o || !o.isNewSection || o.submitted || o.canceled) return false;
-  const c = state.courses.find(x => x.id === o.courseId);
+  const c    = state.courses.find(x => x.id === o.courseId);
   const instr = (o.instructor || "").trim();
+  const who  = state.userName || "(unknown)";
+
+  // If this offering was created from a Change Request (Add Course / Add Section),
+  // do NOT create a duplicate Add Section request.  Instead update the existing
+  // request with the instructor assignment and flip the offering to SENT.
+  if (o.addRequestId) {
+    const linked = state.requests.find(r => r.id === o.addRequestId);
+    if (linked && linked.status !== "Finalized" && linked.status !== "Rejected") {
+      if (instr) {
+        // Add or replace the Assign Instructor block on the existing request.
+        const changes = Array.isArray(linked.changes) ? linked.changes : requestChanges(linked);
+        const existingInstr = changes.findIndex(ch => ch.type === "Assign Instructor" || ch.type === "Change Instructor");
+        if (existingInstr >= 0) {
+          changes[existingInstr].fields = { instructor: instr };
+        } else {
+          changes.push({ type: "Assign Instructor", fields: { instructor: instr } });
+        }
+        linked.changes     = changes;
+        linked.changeType  = changes[0].type;
+        linked.explanation = composeExplanation(changes);
+        markLocallyTouched(linked.id);
+        logRequestEvent(linked, `Instructor "${instr}" added to request by ${who}`);
+      }
+      o.submitted   = true;
+      o.submittedAt = new Date().toISOString();
+      o.submittedBy = who;
+      markLocallyTouched(o.id);
+      setDirty(true);
+      renderTerms();
+      if (typeof renderRequests === "function") renderRequests();
+      if (typeof renderChangelog === "function") renderChangelog();
+      const sec = sectionNumberFor(o);
+      toast(instr
+        ? `${c ? c.code : "Section"} §${sec} — instructor "${instr}" added to existing request`
+        : `${c ? c.code : "Section"} §${sec} — submitted (instructor pending)`);
+      return true;
+    }
+  }
+
+  // Standard path: no prior linked request — create a new Add Section request.
   createAddCourseRequestForNewSection(o);
   o.submitted   = true;
   o.submittedAt = new Date().toISOString();
-  o.submittedBy = state.userName || "(unknown)";
+  o.submittedBy = who;
   markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
