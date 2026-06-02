@@ -7617,8 +7617,9 @@ function renderChangeList() {
   }
   wrap.innerHTML = buf.map((ch, i) => renderChangeBlock(i, ch)).join("");
   // In editable mode, populate the course datalist(s) after rendering.
+  // Use id$='courseList' to avoid clobbering the term-filtered offering datalists.
   if (state.requestHeaderEditable) {
-    document.querySelectorAll("#rfld_changeList datalist[id^='cb']").forEach(dl => {
+    document.querySelectorAll("#rfld_changeList datalist[id$='courseList']").forEach(dl => {
       dl.innerHTML = state.courses
         .slice()
         .sort((a, b) => (a.code || "").localeCompare(b.code || ""))
