@@ -1525,6 +1525,63 @@
     font-style: italic;
   }
 
+  /* New-request dynamic layout — type-first, context expands below */
+  .cb-type-prompt {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .cb-type-large {
+    width: 100%;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 10px 12px;
+    border: 2px solid var(--wwu-green);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .cb-type-large:focus { outline: 2px solid var(--wwu-green); outline-offset: 1px; }
+  html.dark .cb-type-large { border-color: #2dd4bf; }
+  .cb-context {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .cb-context .full { grid-column: 1 / -1; }
+  .cb-context .third { grid-column: span 1; }
+  .cb-context label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .cb-context input, .cb-context select, .cb-context textarea { width: 100%; }
+  .cb-ctx-title {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-style: italic;
+    min-height: 18px;
+  }
+  .cb-ctx-title.has-match  { color: var(--ok); background: var(--ok-bg, #eef6ee); border-color: var(--ok); font-style: normal; font-weight: 600; }
+  .cb-ctx-title.no-match   { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); font-style: normal; }
+  html.dark .cb-ctx-title.has-match { background: rgba(0,128,80,0.12); }
+  html.dark .cb-ctx-title.no-match  { background: rgba(176,58,46,0.12); }
+
   /* ── Auth overlays (Phase 2) ─────────────────────────────────────────── */
   .auth-overlay {
     position: fixed; inset: 0; z-index: 9999;
@@ -2300,6 +2357,7 @@
         <input id="rfld_number" type="hidden">
         <input id="rfld_sectionNumber" type="hidden">
         <input id="rfld_offeringId"    type="hidden">
+        <input id="rfld_submitter"     type="hidden">
 
         <!-- Multi-change list. Each block carries its own type + type-specific
              fields. Use the + button to add additional changes for the same
@@ -7113,6 +7171,24 @@ const CHANGE_TYPE_DEFS = {
 };
 const CHANGE_TYPE_OPTIONS = Object.keys(CHANGE_TYPE_DEFS);
 
+/* Which context fields appear for each change type in the editable (new-request)
+   dialog. "course" always shown. "sectionNum" = show section # field.
+   "modality" = show modality selector (On-Ground reveals days/time/location).
+   "term" = show semester / subterm / year selectors. */
+const CONTEXT_FIELD_CONFIG = {
+  "Add Course":                     { sectionNum: true,  modality: true,  term: true  },
+  "Add Section":                    { sectionNum: false, modality: true,  term: true  },
+  "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true  },
+  "Cancel Course":                  { sectionNum: true,  modality: false, term: true  },
+  "Re-instate Course":              { sectionNum: true,  modality: false, term: true  },
+  "Assign Instructor":              { sectionNum: true,  modality: false, term: false },
+  "Change Instructor":              { sectionNum: true,  modality: false, term: false },
+  "Modify Time/Day":                { sectionNum: true,  modality: false, term: false },
+  "Modify Location":                { sectionNum: true,  modality: false, term: false },
+  "Change Course Cap":              { sectionNum: true,  modality: false, term: false },
+  "Other":                          { sectionNum: true,  modality: false, term: false },
+};
+
 /* Display-form for the section value. Stored as "Undergrad" / "Grad" for
    backward compatibility with older saved data; rendered as the long form. */
 function sectionLongForm(s) {
@@ -7164,51 +7240,163 @@ function composeExplanation(changes) {
 
 /* Render a single change block into the dialog list. */
 function renderChangeBlock(idx, ch) {
-  const def = CHANGE_TYPE_DEFS[ch.type] || CHANGE_TYPE_DEFS["Other"];
-  // Filter change-type options by modality: on-ground uses "Add Section";
-  // online/other uses "Add Section & Split Enrollment".
   const modality = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
   const isOnGround = modality === "On-Ground";
-  // When the dialog is opened from Term Assignments ("Request Change" button),
-  // only a curated subset of types is relevant.
-  const TERM_ASSIGNMENT_TYPES = new Set([
-    "Assign Instructor",
-    "Change Instructor",               // replaces Assign Instructor when section already has one
-    "Cancel Course",
-    "Change Course Cap",
-    "Add Section",                     // on-ground variant
-    "Add Section & Split Enrollment",  // online variant
-    "Other",
-  ]);
   const isTermContext = state.requestModalContext === "terms";
+  const TERM_ASSIGNMENT_TYPES = new Set([
+    "Assign Instructor","Change Instructor","Cancel Course",
+    "Change Course Cap","Add Section","Add Section & Split Enrollment","Other",
+  ]);
   const opts = CHANGE_TYPE_OPTIONS
     .filter(t => {
       if (isTermContext && !TERM_ASSIGNMENT_TYPES.has(t)) return false;
       if (t === "Add Section" && !isOnGround) return false;
       if (t === "Add Section & Split Enrollment" && isOnGround) return false;
-      // Online sections don't have a physical time/day or location.
       if (!isOnGround && (t === "Modify Time/Day" || t === "Modify Location")) return false;
       return true;
     })
     .map(t => `<option value="${escapeHtml(t)}"${t === ch.type ? " selected" : ""}>${escapeHtml(t)}</option>`)
     .join("");
-  // For Add Course / Add Section, hide the physical-presence fields (days,
-  // time, location) when the section is online — they don't apply.
+
+  // ── Editable (New Request) mode ───────────────────────────────────────────
+  if (state.requestHeaderEditable) {
+    const cfg = CONTEXT_FIELD_CONFIG[ch.type] || {};
+    const def = ch.type ? (CHANGE_TYPE_DEFS[ch.type] || CHANGE_TYPE_DEFS["Other"]) : null;
+    const onGroundOnlyKeys = new Set(["days", "time", "location"]);
+
+    // Read current shared context values from hidden fields so selections persist
+    // across re-renders triggered by type/modality changes.
+    const curCourse   = [document.getElementById("rfld_prefix").value || "", document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ");
+    const curSec      = document.getElementById("rfld_sectionNumber").value || "";
+    const curModality = document.getElementById("rfld_modality").value || "On-Ground";
+    const curTerm     = document.getElementById("rfld_term").value || "Fall";
+    const curSubterm  = document.getElementById("rfld_subterm").value || "Semester";
+    const curYear     = document.getElementById("rfld_year").value || 2026;
+
+    // Build the matched-course title for the title bar.
+    const matchedCourse = curCourse ? findCourseByInput(curCourse) : null;
+    const exactMatch = curCourse
+      ? state.courses.find(c => (c.code || "").trim().toUpperCase() === curCourse.toUpperCase())
+      : null;
+    const titleText = exactMatch
+      ? exactMatch.title || "Untitled course"
+      : (curCourse ? "Course not in rotation" : "Start typing to find a course…");
+    const titleClass = exactMatch ? "has-match" : (curCourse ? "no-match" : "");
+
+    // Context section: course + contextual fields + type-specific fields.
+    let contextHtml = "";
+    if (ch.type) {
+      // Course autofill (always shown).
+      contextHtml += `
+        <div class="full">
+          <label>Course</label>
+          <input type="text" id="cb${idx}_course" class="" list="cb_courseList"
+                 placeholder="FLM 212 — start typing…" autocomplete="off"
+                 data-rf="course" value="${escapeHtml(curCourse)}">
+          <datalist id="cb_courseList"></datalist>
+        </div>
+        <div class="full">
+          <div class="cb-ctx-title ${titleClass}" id="cb${idx}_title">${escapeHtml(titleText)}</div>
+        </div>`;
+
+      // Section #.
+      if (cfg.sectionNum) {
+        contextHtml += `
+        <div>
+          <label>Section #</label>
+          <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
+                 value="${escapeHtml(curSec)}">
+        </div>`;
+      }
+
+      // Modality selector (and days/time/location when On-Ground).
+      if (cfg.modality) {
+        contextHtml += `
+        <div>
+          <label>Modality</label>
+          <select data-rf="modality">
+            <option${curModality === "On-Ground" ? " selected" : ""}>On-Ground</option>
+            <option${curModality === "Online"    ? " selected" : ""}>Online</option>
+          </select>
+        </div>`;
+      }
+
+      // Term: Semester, Subterm, Year.
+      if (cfg.term) {
+        contextHtml += `
+        <div>
+          <label>Semester</label>
+          <select data-rf="term">
+            ${["Fall","Spring","Summer"].map(t => `<option${t === curTerm ? " selected" : ""}>${t}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label>Year</label>
+          <input type="number" data-rf="year" min="2024" max="2035" value="${escapeHtml(String(curYear))}">
+        </div>
+        <div class="full">
+          <label>Subterm</label>
+          <select data-rf="subterm">
+            ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","15-week","16-week"]
+              .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
+          </select>
+        </div>`;
+      }
+
+      // Type-specific detail fields (instructor, days, time, etc.).
+      if (def) {
+        const visibleFields = def.fields.filter(f => isOnGround || !onGroundOnlyKeys.has(f.key));
+        visibleFields.forEach(f => {
+          const v = (ch.fields && ch.fields[f.key]) || "";
+          const cls = f.full ? "full" : "";
+          const listAttr = f.key === "instructor" ? ' list="instrList"' : "";
+          if (f.type === "textarea") {
+            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><textarea data-cb-key="${escapeHtml(f.key)}" rows="${f.rows||2}" placeholder="${escapeHtml(f.placeholder||"")}">${escapeHtml(v)}</textarea></div>`;
+          } else if (f.type === "number") {
+            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="number" min="1" step="1" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
+          } else {
+            contextHtml += `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text"${listAttr} data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
+          }
+        });
+      }
+    }
+
+    const removeBtnHtml = (state.editingChanges || []).length > 1
+      ? `<button type="button" class="cb-remove" data-cb-remove title="Remove this change">×</button>`
+      : "";
+
+    return `
+      <div class="change-block" data-cb-idx="${idx}" style="border:none;padding:0;gap:12px;">
+        <div>
+          <div class="cb-type-prompt">What would you like to request?</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select data-cb-type class="cb-type-large">
+              <option value="">— Select a change type —</option>
+              ${opts}
+            </select>
+            ${removeBtnHtml}
+          </div>
+        </div>
+        ${ch.type ? `<div class="cb-context">${contextHtml}</div>` : ""}
+      </div>`;
+  }
+
+  // ── Locked / row-context mode ─────────────────────────────────────────────
+  const def = CHANGE_TYPE_DEFS[ch.type] || CHANGE_TYPE_DEFS["Other"];
   const onGroundOnlyKeys = new Set(["days", "time", "location"]);
-  const visibleFields = def.fields.filter(f =>
-    isOnGround || !onGroundOnlyKeys.has(f.key)
-  );
+  const visibleFields = def.fields.filter(f => isOnGround || !onGroundOnlyKeys.has(f.key));
   const fieldsHtml = visibleFields.length
     ? visibleFields.map(f => {
         const v = (ch.fields && ch.fields[f.key]) || "";
         const cls = f.full ? "full" : "";
+        const listAttr = f.key === "instructor" ? ' list="instrList"' : "";
         if (f.type === "textarea") {
           return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><textarea data-cb-key="${escapeHtml(f.key)}" rows="${f.rows||2}" placeholder="${escapeHtml(f.placeholder||"")}">${escapeHtml(v)}</textarea></div>`;
         }
         if (f.type === "number") {
           return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="number" min="1" step="1" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
         }
-        return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text" data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
+        return `<div class="${cls}"><label>${escapeHtml(f.label)}</label><input type="text"${listAttr} data-cb-key="${escapeHtml(f.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(f.placeholder||"")}"></div>`;
       }).join("")
     : `<div class="full cb-empty">No additional fields for this change type.</div>`;
   return `
@@ -7232,6 +7420,16 @@ function renderChangeList() {
     return;
   }
   wrap.innerHTML = buf.map((ch, i) => renderChangeBlock(i, ch)).join("");
+  // In editable mode, populate the course datalist(s) after rendering.
+  if (state.requestHeaderEditable) {
+    document.querySelectorAll("#rfld_changeList datalist[id^='cb']").forEach(dl => {
+      dl.innerHTML = state.courses
+        .slice()
+        .sort((a, b) => (a.code || "").localeCompare(b.code || ""))
+        .map(c => `<option value="${escapeHtml(c.code + (c.title ? " — " + c.title : ""))}">`)
+        .join("");
+    });
+  }
 }
 
 /* Pull current values from the rendered DOM back into state.editingChanges
@@ -7244,10 +7442,46 @@ function syncChangeListFromDom() {
     const idx = parseInt(block.dataset.cbIdx, 10);
     if (isNaN(idx) || !buf[idx]) return;
     buf[idx].fields = buf[idx].fields || {};
+    // Type-specific fields.
     block.querySelectorAll("[data-cb-key]").forEach(el => {
       buf[idx].fields[el.dataset.cbKey] = el.value;
     });
+    // Context fields (editable mode) — sync to the shared rfld_* hidden inputs.
+    block.querySelectorAll("[data-rf]").forEach(el => {
+      syncContextFieldToHidden(el);
+    });
   });
+}
+
+/* Write a single context field element's value to the corresponding rfld_* hidden input. */
+function syncContextFieldToHidden(el) {
+  const key = el.dataset.rf;
+  if (key === "course") {
+    const matched = findCourseByInput(el.value || "");
+    if (matched) {
+      const parts = (matched.code || "").split(/\s+/);
+      document.getElementById("rfld_prefix").value = parts[0] || "";
+      document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+      if (matched.section) {
+        document.getElementById("rfld_section").value = matched.section === "graduate" ? "Grad" : "Undergrad";
+      }
+    } else {
+      const parts = (el.value || "").trim().split(/\s+/);
+      document.getElementById("rfld_prefix").value = (parts[0] || "").toUpperCase();
+      document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+    }
+  } else if (key === "sectionNumber") {
+    const rawSec = (el.value || "").trim();
+    document.getElementById("rfld_sectionNumber").value = /^\d{1,2}$/.test(rawSec) ? rawSec.padStart(2, "0") : rawSec;
+  } else if (key === "modality") {
+    document.getElementById("rfld_modality").value = el.value;
+  } else if (key === "term") {
+    document.getElementById("rfld_term").value = el.value;
+  } else if (key === "subterm") {
+    document.getElementById("rfld_subterm").value = el.value;
+  } else if (key === "year") {
+    document.getElementById("rfld_year").value = el.value;
+  }
 }
 
 /* Render the request dialog header. Two variants:
@@ -7260,6 +7494,15 @@ function syncChangeListFromDom() {
 function renderRequestHeader(editable) {
   const wrap = document.getElementById("reqSummary");
   if (!wrap) return;
+  if (editable) {
+    // Editable (New Request) mode: hide the summary area entirely.
+    // All course/term fields live inside the change block itself.
+    // Auto-populate the hidden submitter field from the logged-in user.
+    wrap.innerHTML = "";
+    const subEl = document.getElementById("rfld_submitter");
+    if (subEl) subEl.value = state.userName || "";
+    return;
+  }
   const codeStr = `${ document.getElementById("rfld_prefix").value || "" } ${ document.getElementById("rfld_number").value || "" }`.trim();
   const course = codeStr ? state.courses.find(c => (c.code || "").trim().toUpperCase() === codeStr.toUpperCase()) : null;
   const title = course ? (course.title || "Untitled course") : (codeStr ? "Course not in current rotation" : "No course selected");
@@ -7269,123 +7512,10 @@ function renderRequestHeader(editable) {
   const subtermVal = document.getElementById("rfld_subterm").value || "Semester";
   const yearVal = document.getElementById("rfld_year").value || 2026;
   const dateVal = document.getElementById("rfld_date").value || new Date().toISOString().slice(0,10);
-  // Submitter input lives inside the header — preserve current value across
-  // re-renders (we re-render on prefix/number changes).
   const prevSubEl = document.getElementById("rfld_submitter");
   const submitterVal = prevSubEl ? prevSubEl.value : (state.userName || "");
 
   const sectionNumberVal = document.getElementById("rfld_sectionNumber").value || "";
-  if (editable) {
-    const existingCode = [document.getElementById("rfld_prefix").value || "", document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ");
-    wrap.innerHTML = `
-      <div class="rs-edit-row">
-        <div class="rs-edit-field" style="flex:1 1 200px; min-width:0;">
-          <label class="rs-label">Course</label>
-          <input type="text" id="rs_course_in" class="rs-input" list="rs_courseList" placeholder="FLM 212 — start typing…" autocomplete="off" value="${escapeHtml(existingCode)}">
-          <datalist id="rs_courseList"></datalist>
-        </div>
-        <div class="rs-edit-field" style="flex:0 0 80px;">
-          <label class="rs-label">Section #</label>
-          <input type="text" id="rs_secnum_in" class="rs-input" placeholder="01" maxlength="3" value="${escapeHtml(sectionNumberVal)}">
-        </div>
-      </div>
-      <div class="rs-edit-row" style="margin-top:-4px;">
-        <div class="rs-edit-field" style="flex:1 1 100%; min-width:0;">
-          <label class="rs-label">Course title</label>
-          <div class="rs-title-display${!course && codeStr ? ' rs-title-unknown' : ''}${!codeStr ? ' rs-title-empty' : ''}" id="rs_title_display">${escapeHtml(title)}</div>
-        </div>
-      </div>
-      <div class="rs-edit-row">
-        <div class="rs-edit-field" style="flex:1 1 110px; min-width:0;">
-          <label class="rs-label" for="rs_modality_sel">Modality</label>
-          <select id="rs_modality_sel" class="rs-input">
-            <option${modalityVal === "On-Ground" ? " selected" : ""}>On-Ground</option>
-            <option${modalityVal === "Online" ? " selected" : ""}>Online</option>
-          </select>
-        </div>
-        <div class="rs-edit-field" style="flex:1 1 110px; min-width:0;">
-          <label class="rs-label" for="rs_term_sel">Semester</label>
-          <select id="rs_term_sel" class="rs-input">
-            ${["Fall","Spring","Summer"].map(t => `<option${t === termVal ? " selected" : ""}>${t}</option>`).join("")}
-          </select>
-        </div>
-        <div class="rs-edit-field" style="flex:2 1 160px; min-width:0;">
-          <label class="rs-label" for="rs_subterm_sel">Subterm</label>
-          <select id="rs_subterm_sel" class="rs-input">
-            ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","15-week","16-week"]
-              .map(s => `<option${s === subtermVal ? " selected" : ""}>${s}</option>`).join("")}
-          </select>
-        </div>
-        <div class="rs-edit-field" style="flex:0 0 80px;">
-          <label class="rs-label" for="rs_year_in">Year</label>
-          <input type="number" id="rs_year_in" class="rs-input" min="2024" max="2035" value="${escapeHtml(String(yearVal))}">
-        </div>
-      </div>
-      <div class="rs-meta-row rs-submitter">
-        <label for="rfld_submitter" class="rs-label">Submitter</label>
-        <input id="rfld_submitter" type="text" list="submitterList" required placeholder="Your name" class="rs-input" value="${escapeHtml(submitterVal)}">
-        <span class="rs-date">Submitted ${escapeHtml(fmtDateShort(dateVal))}</span>
-      </div>
-    `;
-    // Populate course datalist from all rotation courses, sorted by code.
-    const dl = document.getElementById("rs_courseList");
-    if (dl) {
-      dl.innerHTML = state.courses
-        .slice()
-        .sort((a, b) => (a.code || "").localeCompare(b.code || ""))
-        .map(c => `<option value="${escapeHtml(c.code + (c.title ? " — " + c.title : ""))}">`)
-        .join("");
-    }
-    const sync = () => {
-      const rawVal = (document.getElementById("rs_course_in").value || "").trim();
-      const matched = findCourseByInput(rawVal);
-      if (matched) {
-        const parts = (matched.code || "").split(/\s+/);
-        document.getElementById("rfld_prefix").value = parts[0] || "";
-        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
-      } else {
-        const parts = rawVal.split(/\s+/);
-        document.getElementById("rfld_prefix").value = (parts[0] || "").toUpperCase();
-        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
-      }
-      // Normalize section number to zero-padded 2-digit form (e.g. "1" → "01"
-      // ) to match the Term Assignments display ("ACC 240 01"). Allow blank.
-      const rawSec = (document.getElementById("rs_secnum_in").value || "").trim();
-      const normSec = /^\d{1,2}$/.test(rawSec) ? rawSec.padStart(2, "0") : rawSec;
-      document.getElementById("rfld_sectionNumber").value = normSec;
-      document.getElementById("rfld_modality").value = document.getElementById("rs_modality_sel").value;
-      document.getElementById("rfld_term").value = document.getElementById("rs_term_sel").value;
-      document.getElementById("rfld_year").value = document.getElementById("rs_year_in").value;
-      document.getElementById("rfld_subterm").value = document.getElementById("rs_subterm_sel").value;
-      const cs = `${document.getElementById("rfld_prefix").value} ${document.getElementById("rfld_number").value}`.trim();
-      const cc = cs ? state.courses.find(c => (c.code || "").trim().toUpperCase() === cs.toUpperCase()) : null;
-      const td = document.getElementById("rs_title_display");
-      if (td) {
-        td.textContent = cc ? (cc.title || "Untitled course") : (cs ? "Course not in current rotation" : "No course selected");
-        td.classList.toggle("rs-title-unknown", !cc && !!cs);
-        td.classList.toggle("rs-title-empty", !cs);
-      }
-      // Auto-derive level (Undergrad/Grad) from the matched rotation row so we
-      // don't need to surface a separate Level field — rotation is the source
-      // of truth.
-      if (cc && cc.section) {
-        document.getElementById("rfld_section").value = cc.section === "graduate" ? "Grad" : "Undergrad";
-      }
-    };
-    ["rs_course_in","rs_secnum_in"].forEach(id => {
-      document.getElementById(id).addEventListener("input", sync);
-    });
-    ["rs_modality_sel","rs_term_sel","rs_year_in","rs_subterm_sel"].forEach(id => {
-      document.getElementById(id).addEventListener("change", sync);
-    });
-    // When modality changes, re-render change blocks so the type dropdown and
-    // field visibility update immediately (Online hides time/day/location).
-    document.getElementById("rs_modality_sel").addEventListener("change", () => {
-      syncChangeListFromDom();
-      renderChangeList();
-    });
-    return;
-  }
 
   // Locked variant — read-only pills.
   wrap.innerHTML = `
@@ -7401,9 +7531,9 @@ function renderRequestHeader(editable) {
         <span class="rs-pill">${escapeHtml(subtermVal)}</span>
       </div>
       <div class="rs-meta-row rs-submitter">
-        <label for="rfld_submitter" class="rs-label">Submitter</label>
-        <input id="rfld_submitter" type="text" list="submitterList" required placeholder="Your name" class="rs-input" value="${escapeHtml(submitterVal)}">
-        <span class="rs-date">Submitted ${escapeHtml(fmtDateShort(dateVal))}</span>
+        <span class="rs-label" style="color:var(--text-muted);">Submitted by</span>
+        <span style="font-weight:600;">${escapeHtml(submitterVal || state.userName || "—")}</span>
+        <span class="rs-date">on ${escapeHtml(fmtDateShort(dateVal))}</span>
       </div>
     </div>
   `;
@@ -7435,7 +7565,7 @@ function openRequestModal(r) {
   const editable = !r.prefix && !r.number && !r.courseId;
   state.requestHeaderEditable = editable;
   renderRequestHeader(editable);
-  // Submitter input is rendered by renderRequestHeader — populate it now.
+  // Submitter is auto-locked to the logged-in user; stored in a hidden field.
   const subEl = document.getElementById("rfld_submitter");
   if (subEl) subEl.value = r.submitter || state.userName || "";
 
@@ -7462,6 +7592,12 @@ function closeRequestModal() {
 function openNewRequest(prefill = {}) {
   const r = newRequest(prefill);
   openRequestModal(r);
+  // For a blank new request, start with an empty type so the dynamic
+  // form shows just the "What would you like to request?" selector.
+  if (!prefill.prefix && !prefill.number && !prefill.courseId) {
+    state.editingChanges = [{ type: "", fields: {} }];
+    renderChangeList();
+  }
 }
 function openEditRequest(id) {
   const r = state.requests.find(x => x.id === id);
@@ -7769,18 +7905,55 @@ function bindRequestEvents() {
   document.getElementById("btnReqAddChange").addEventListener("click", () => {
     syncChangeListFromDom();
     state.editingChanges = state.editingChanges || [];
-    state.editingChanges.push({ type: "Add Course", fields: {} });
+    // In editable mode start with blank type so the dynamic selector appears.
+    state.editingChanges.push({ type: state.requestHeaderEditable ? "" : "Add Course", fields: {} });
     renderChangeList();
   });
   document.getElementById("rfld_changeList").addEventListener("change", (e) => {
-    if (!e.target.matches("[data-cb-type]")) return;
-    syncChangeListFromDom();
+    // Type-selector changed → reset fields, re-render the block.
+    if (e.target.matches("[data-cb-type]")) {
+      syncChangeListFromDom();
+      const block = e.target.closest(".change-block");
+      const idx = parseInt(block.dataset.cbIdx, 10);
+      if (state.editingChanges && state.editingChanges[idx]) {
+        state.editingChanges[idx] = { type: e.target.value, fields: {} };
+        renderChangeList();
+      }
+      return;
+    }
+    // Context field (modality, term, subterm, year, sectionNumber) changed.
+    if (e.target.matches("[data-rf]")) {
+      syncContextFieldToHidden(e.target);
+      // Modality change requires a full re-render to show/hide days/time/location.
+      if (e.target.dataset.rf === "modality") {
+        syncChangeListFromDom();
+        renderChangeList();
+      }
+    }
+  });
+  // Live course title update as the user types in the course autofill box.
+  document.getElementById("rfld_changeList").addEventListener("input", (e) => {
+    if (!e.target.matches("[data-rf='course']")) return;
+    syncContextFieldToHidden(e.target);
     const block = e.target.closest(".change-block");
+    if (!block) return;
     const idx = parseInt(block.dataset.cbIdx, 10);
-    if (state.editingChanges && state.editingChanges[idx]) {
-      // Type changed → reset fields so the new schema doesn't carry stale keys.
-      state.editingChanges[idx] = { type: e.target.value, fields: {} };
-      renderChangeList();
+    const titleEl = document.getElementById(`cb${idx}_title`);
+    if (!titleEl) return;
+    const prefix = document.getElementById("rfld_prefix").value || "";
+    const number = document.getElementById("rfld_number").value || "";
+    const code   = [prefix, number].filter(Boolean).join(" ");
+    const match  = code ? state.courses.find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase()) : null;
+    const raw    = (e.target.value || "").trim();
+    if (match) {
+      titleEl.textContent = match.title || "Untitled course";
+      titleEl.className = "cb-ctx-title has-match";
+    } else if (raw) {
+      titleEl.textContent = "Course not in rotation";
+      titleEl.className = "cb-ctx-title no-match";
+    } else {
+      titleEl.textContent = "Start typing to find a course…";
+      titleEl.className = "cb-ctx-title";
     }
   });
   document.getElementById("rfld_changeList").addEventListener("click", (e) => {
