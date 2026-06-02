@@ -5841,6 +5841,11 @@ function markRegistrarItemComplete(regId) {
             logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm || ""}${propagated.section ? " §"+propagated.section : ""} ${propagated.year}`);
           }
         }
+      } else if (ch.type === "Cancel Course") {
+        const canceled = applyCancelCourseToOffering(r);
+        if (canceled) {
+          logRequestEvent(r, `Canceled ${canceled.code} ${canceled.term} ${canceled.subterm} ${canceled.year} (section ${canceled.section})`);
+        }
       } else if (ch.type === "Re-instate Course") {
         const reinstated = applyReinstateToOffering(r, ch);
         if (reinstated) {
@@ -6005,6 +6010,42 @@ function applyAssignInstructorToOffering(r, explicitName) {
    matching offering. Uses the offeringId stashed on the change block when the
    re-instate flow was kicked off from the term-assignments page; falls back
    to course+term+subterm+year matching if not present. */
+/* When the registrar finalizes a "Cancel Course" request, mark the
+   matching offering as canceled. Handles both the form-based path
+   (offeringId set by the offering picker) and the older sectionNumber path. */
+function applyCancelCourseToOffering(r) {
+  const now = new Date().toISOString();
+  const who = state.userName || "(unknown)";
+  if (r.offeringId) {
+    const o = state.offerings.find(x => x.id === r.offeringId);
+    if (o && !o.canceled) {
+      o.canceled    = true;
+      o.canceledAt  = now;
+      o.canceledBy  = who;
+      o.lastModified = now;
+      markLocallyTouched(o.id);
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
+    }
+    return null;
+  }
+  const code = `${r.prefix||""} ${r.number||""}`.trim();
+  const c = state.courses.find(x => (x.code||"").trim().toUpperCase() === code.toUpperCase());
+  if (!c) return null;
+  const o = state.offerings.find(x =>
+    x.courseId === c.id && x.semester === r.term &&
+    Number(x.year) === Number(r.year) && !x.canceled &&
+    (!r.sectionNumber || sectionNumberFor(x) === r.sectionNumber)
+  );
+  if (!o) return null;
+  o.canceled    = true;
+  o.canceledAt  = now;
+  o.canceledBy  = who;
+  o.lastModified = now;
+  markLocallyTouched(o.id);
+  return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
+}
+
 function applyReinstateToOffering(r, ch) {
   if (!r) return null;
   let o = null;
