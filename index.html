@@ -7907,10 +7907,19 @@ function transitionRequest(id, action) {
     r.archivedAt = now;
     r.archivedBy = who;
     r.archivedReason = "Deleted";
+    // Remove any provisional offering that was created for this request so it
+    // disappears from Term Assignments immediately, as if it never existed.
+    const linkedOIdx = state.offerings.findIndex(o => o.addRequestId === r.id);
+    if (linkedOIdx >= 0) {
+      const linkedO = state.offerings[linkedOIdx];
+      markLocallyTouched(linkedO.id);
+      state.offerings.splice(linkedOIdx, 1);
+    }
     logRequestEvent(r, `Deleted from queue by ${who} (${code})`);
     markLocallyTouched(r.id);
     setDirty(true);
     renderRequests();
+    if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
     toast(`${code} deleted from queue`);
     return;
