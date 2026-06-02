@@ -7243,17 +7243,17 @@ const CHANGE_TYPE_OPTIONS = Object.keys(CHANGE_TYPE_DEFS);
    "modality" = show modality selector (On-Ground reveals days/time/location).
    "term" = show semester / subterm / year selectors. */
 const CONTEXT_FIELD_CONFIG = {
-  "Add Course":                     { sectionNum: true,  modality: true,  term: true  },
-  "Add Section":                    { sectionNum: false, modality: true,  term: true  },
-  "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true  },
-  "Cancel Course":                  { sectionNum: true,  modality: false, term: true  },
-  "Re-instate Course":              { sectionNum: true,  modality: false, term: true  },
-  "Assign Instructor":              { sectionNum: true,  modality: false, term: false },
-  "Change Instructor":              { sectionNum: true,  modality: false, term: false },
-  "Modify Time/Day":                { sectionNum: true,  modality: false, term: false },
-  "Modify Location":                { sectionNum: true,  modality: false, term: false },
-  "Change Course Cap":              { sectionNum: true,  modality: false, term: false },
-  "Other":                          { sectionNum: true,  modality: false, term: false },
+  "Add Course":                     { sectionNum: true,  modality: true,  term: true },
+  "Add Section":                    { sectionNum: false, modality: true,  term: true },
+  "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true },
+  "Cancel Course":                  { sectionNum: true,  modality: false, term: true },
+  "Re-instate Course":              { sectionNum: true,  modality: false, term: true },
+  "Assign Instructor":              { sectionNum: true,  modality: false, term: true },
+  "Change Instructor":              { sectionNum: true,  modality: false, term: true },
+  "Modify Time/Day":                { sectionNum: true,  modality: false, term: true },
+  "Modify Location":                { sectionNum: true,  modality: false, term: true },
+  "Change Course Cap":              { sectionNum: true,  modality: false, term: true },
+  "Other":                          { sectionNum: true,  modality: false, term: true },
 };
 
 /* Display-form for the section value. Stored as "Undergrad" / "Grad" for
@@ -7388,7 +7388,7 @@ function renderChangeBlock(idx, ch) {
         </div>`;
       }
 
-      // Term: Semester, Subterm, Year.
+      // Term: Semester + Subterm (Year is auto-derived and stored silently).
       if (cfg.term) {
         contextHtml += `
         <div>
@@ -7403,10 +7403,6 @@ function renderChangeBlock(idx, ch) {
             ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"]
               .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
           </select>
-        </div>
-        <div>
-          <label>Year</label>
-          <input type="number" data-rf="year" min="2024" max="2035" value="${escapeHtml(String(curYear))}">
         </div>`;
       }
 
@@ -7544,6 +7540,8 @@ function syncContextFieldToHidden(el) {
     document.getElementById("rfld_modality").value = el.value;
   } else if (key === "term") {
     document.getElementById("rfld_term").value = el.value;
+    // Year is hidden but must stay in sync — always the current academic year.
+    document.getElementById("rfld_year").value = String(state.termFilter.year || 2026);
   } else if (key === "subterm") {
     document.getElementById("rfld_subterm").value = el.value;
   } else if (key === "year") {
@@ -7635,6 +7633,10 @@ function openRequestModal(r) {
   // Submitter is auto-locked to the logged-in user; stored in a hidden field.
   const subEl = document.getElementById("rfld_submitter");
   if (subEl) subEl.value = r.submitter || state.userName || "";
+  // Year is no longer shown in the form — auto-seed from the current academic
+  // year filter so saveRequestFromModal() always reads a valid value.
+  const yearEl = document.getElementById("rfld_year");
+  if (yearEl && editable) yearEl.value = String(state.termFilter.year || 2026);
 
   // Seed the editing buffer from the request's existing changes (or legacy
   // single-change shape). Deep-copy so cancel doesn't mutate the saved state.
