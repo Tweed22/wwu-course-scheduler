@@ -6692,6 +6692,30 @@ function refreshSectionCourseList() {
   dl.innerHTML = rows.join("");
 }
 
+/* Find an offering from the term-filtered datalist by the text the user
+   typed/selected.  Labels are in the form "FLM 201 01 — Film I" (multi-section)
+   or "FLM 201 — Film I" (single section).  Returns the offering object or null. */
+function findFilteredOfferingByLabel(val, filteredOfferings) {
+  if (!val || !filteredOfferings || !filteredOfferings.length) return null;
+  const v = val.trim();
+  // Split on " — " to isolate the code+section prefix.
+  const codeAndSec = v.split(" — ")[0].trim();
+  const tokens = codeAndSec.split(/\s+/);
+  const lastTok = tokens[tokens.length - 1];
+  // If the last token is 1-2 digits it's a section number, not part of the code.
+  const isSecNum = /^\d{1,2}$/.test(lastTok) && tokens.length > 2;
+  const courseCode = (isSecNum ? tokens.slice(0, -1).join(" ") : codeAndSec).toUpperCase();
+  const sectionNum = isSecNum ? lastTok.padStart(2, "0") : null;
+  const course = state.courses.find(c => (c.code || "").trim().toUpperCase() === courseCode);
+  if (!course) return null;
+  const courseOff = filteredOfferings.filter(o => o.courseId === course.id);
+  if (!courseOff.length) return null;
+  if (sectionNum) {
+    return courseOff.find((o, i) => String(i + 1).padStart(2, "0") === sectionNum) || null;
+  }
+  return courseOff[0];
+}
+
 function findCourseByInput(val) {
   if (!val) return null;
   const v = val.trim();
@@ -7456,35 +7480,39 @@ function renderChangeBlock(idx, ch) {
             return ((ca && ca.code) || "").localeCompare((cb && cb.code) || "");
           });
 
-        const offeringOpts = filteredOff.map(o => {
+        // Build datalist labels — section number uses a plain space, no § symbol.
+        const offeringLabels = filteredOff.map(o => {
           const c = state.courses.find(x => x.id === o.courseId);
           const code  = (c && c.code)  || o.courseCode || "—";
           const title = (c && c.title) || "";
-          // Section number within this subterm group.
           const siblings = filteredOff.filter(x => x.courseId === o.courseId);
           const sec = String(siblings.findIndex(x => x.id === o.id) + 1).padStart(2, "0");
-          const label = siblings.length > 1 ? `${code} §${sec} — ${title}` : `${code} — ${title}`;
-          return `<option value="${escapeHtml(o.id)}"${o.id === curOfferingId ? " selected" : ""}>${escapeHtml(label)}</option>`;
-        }).join("");
+          return siblings.length > 1 ? `${code} ${sec} — ${title}` : `${code} — ${title}`;
+        });
+        const offeringOpts = offeringLabels
+          .map(label => `<option value="${escapeHtml(label)}">`)
+          .join("");
 
-        const noCoursesMsg = filteredOff.length === 0
-          ? `<option disabled>No courses found in ${escapeHtml(curTerm)} ${escapeHtml(curSubterm)}</option>`
-          : "";
-
-        // Resolve title from the currently-selected offering.
+        // Pre-populate the input from the currently-selected offering (if any).
         const selOff = curOfferingId ? filteredOff.find(o => o.id === curOfferingId) : null;
         const selCourse = selOff ? state.courses.find(c => c.id === selOff.courseId) : null;
+        const curInputVal = selOff ? (offeringLabels[filteredOff.indexOf(selOff)] || "") : "";
         const offeringTitle = selCourse ? (selCourse.title || "Untitled course")
-          : (curOfferingId ? "Course not found" : "Select a semester and subterm, then pick a course");
+          : (curOfferingId ? "Course not found" : "Select a semester and subterm, then start typing…");
         const offeringTitleCls = selCourse ? "has-match" : (curOfferingId ? "no-match" : "");
+
+        const emptyHint = filteredOff.length === 0
+          ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">No courses found in ${escapeHtml(curTerm)} ${escapeHtml(curSubterm)} — try a different semester or subterm.</div>`
+          : "";
 
         contextHtml += `
         <div class="full">
           <label>Course &amp; Section</label>
-          <select data-rf="offering-select" style="width:100%;">
-            <option value="">— Select a course —</option>
-            ${noCoursesMsg}${offeringOpts}
-          </select>
+          <input type="text" id="cb${idx}_offering" data-rf="offering-select"
+                 list="cb${idx}_offeringList" placeholder="Start typing a course…"
+                 autocomplete="off" value="${escapeHtml(curInputVal)}">
+          <datalist id="cb${idx}_offeringList">${offeringOpts}</datalist>
+          ${emptyHint}
         </div>
         <div class="full">
           <div class="cb-ctx-title ${offeringTitleCls}" id="cb${idx}_title">${escapeHtml(offeringTitle)}</div>
@@ -7644,31 +7672,34 @@ function syncContextFieldToHidden(el) {
   } else if (key === "modality") {
     document.getElementById("rfld_modality").value = el.value;
   } else if (key === "offering-select") {
-    const oid = el.value;
-    const rfOid = document.getElementById("rfld_offeringId");
-    if (rfOid) rfOid.value = oid;
-    if (oid) {
-      const o = state.offerings.find(x => x.id === oid);
-      if (o) {
-        const c = state.courses.find(x => x.id === o.courseId);
-        const code = (c && c.code) || o.courseCode || "";
-        const parts = code.split(/\s+/);
-        document.getElementById("rfld_prefix").value = parts[0] || "";
-        document.getElementById("rfld_number").value = parts.slice(1).join(" ");
-        const siblings = state.offerings.filter(x =>
-          x.courseId === o.courseId && x.semester === o.semester && x.subterm === o.subterm && x.year === o.year
-        );
-        const sec = String(siblings.findIndex(x => x.id === o.id) + 1).padStart(2, "0");
-        document.getElementById("rfld_sectionNumber").value = sec;
-        if (c && c.section) {
-          document.getElementById("rfld_section").value = c.section === "graduate" ? "Grad" : "Undergrad";
-        }
+    // Text input: reconstruct the filtered offering list and parse the typed label.
+    const val = (el.value || "").trim();
+    const semester    = document.getElementById("rfld_term").value    || "Fall";
+    const subtermLbl  = document.getElementById("rfld_subterm").value || "Semester";
+    const { subterm: subtermCode } = reqSubtermToSlot(subtermLbl);
+    const acadYear    = Number(document.getElementById("rfld_year").value) || state.termFilter.year || 2026;
+    const filteredOff = (state.offerings || []).filter(o =>
+      o.semester === semester && o.subterm === subtermCode && o.year === acadYear && !o.canceled
+    );
+    const matched = findFilteredOfferingByLabel(val, filteredOff);
+    if (matched) {
+      const c = state.courses.find(x => x.id === matched.courseId);
+      const code = (c && c.code) || matched.courseCode || "";
+      const parts = code.split(/\s+/);
+      document.getElementById("rfld_prefix").value = parts[0] || "";
+      document.getElementById("rfld_number").value = parts.slice(1).join(" ");
+      const siblings = filteredOff.filter(x => x.courseId === matched.courseId);
+      const sec = String(siblings.findIndex(x => x.id === matched.id) + 1).padStart(2, "0");
+      document.getElementById("rfld_sectionNumber").value = sec;
+      document.getElementById("rfld_offeringId").value = matched.id;
+      if (c && c.section) {
+        document.getElementById("rfld_section").value = c.section === "graduate" ? "Grad" : "Undergrad";
       }
     } else {
       document.getElementById("rfld_prefix").value = "";
       document.getElementById("rfld_number").value = "";
       document.getElementById("rfld_sectionNumber").value = "";
-      if (rfOid) rfOid.value = "";
+      document.getElementById("rfld_offeringId").value = "";
     }
   } else if (key === "term") {
     document.getElementById("rfld_term").value = el.value;
@@ -8276,24 +8307,25 @@ function bindRequestEvents() {
         syncChangeListFromDom();
         renderChangeList();
       }
-      // Offering select: update the title display without a full re-render.
+      // Offering input: update the title display without a full re-render.
       if (rf === "offering-select") {
         const block = e.target.closest(".change-block");
         if (block) {
           const idx = parseInt(block.dataset.cbIdx, 10);
           const titleEl = document.getElementById(`cb${idx}_title`);
           if (titleEl) {
-            const oid = e.target.value;
+            const oid = document.getElementById("rfld_offeringId").value;
             const o = oid ? state.offerings.find(x => x.id === oid) : null;
             const c = o ? state.courses.find(x => x.id === o.courseId) : null;
+            const raw = (e.target.value || "").trim();
             if (c) {
               titleEl.textContent = c.title || "Untitled course";
               titleEl.className = "cb-ctx-title has-match";
-            } else if (oid) {
-              titleEl.textContent = "Course not found";
+            } else if (raw) {
+              titleEl.textContent = "No match in this term";
               titleEl.className = "cb-ctx-title no-match";
             } else {
-              titleEl.textContent = "Select a semester and subterm, then pick a course";
+              titleEl.textContent = "Select a semester and subterm, then start typing…";
               titleEl.className = "cb-ctx-title";
             }
           }
@@ -8301,29 +8333,49 @@ function bindRequestEvents() {
       }
     }
   });
-  // Live course title update as the user types in the course autofill box.
+  // Live update as the user types in course autofill OR the filtered offering input.
   document.getElementById("rfld_changeList").addEventListener("input", (e) => {
-    if (!e.target.matches("[data-rf='course']")) return;
+    const isCourse   = e.target.matches("[data-rf='course']");
+    const isOffering = e.target.matches("[data-rf='offering-select']");
+    if (!isCourse && !isOffering) return;
     syncContextFieldToHidden(e.target);
     const block = e.target.closest(".change-block");
     if (!block) return;
     const idx = parseInt(block.dataset.cbIdx, 10);
     const titleEl = document.getElementById(`cb${idx}_title`);
     if (!titleEl) return;
-    const prefix = document.getElementById("rfld_prefix").value || "";
-    const number = document.getElementById("rfld_number").value || "";
-    const code   = [prefix, number].filter(Boolean).join(" ");
-    const match  = code ? state.courses.find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase()) : null;
-    const raw    = (e.target.value || "").trim();
-    if (match) {
-      titleEl.textContent = match.title || "Untitled course";
-      titleEl.className = "cb-ctx-title has-match";
-    } else if (raw) {
-      titleEl.textContent = "Course not in rotation";
-      titleEl.className = "cb-ctx-title no-match";
+    if (isCourse) {
+      const prefix = document.getElementById("rfld_prefix").value || "";
+      const number = document.getElementById("rfld_number").value || "";
+      const code   = [prefix, number].filter(Boolean).join(" ");
+      const match  = code ? state.courses.find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase()) : null;
+      const raw    = (e.target.value || "").trim();
+      if (match) {
+        titleEl.textContent = match.title || "Untitled course";
+        titleEl.className = "cb-ctx-title has-match";
+      } else if (raw) {
+        titleEl.textContent = "Course not in rotation";
+        titleEl.className = "cb-ctx-title no-match";
+      } else {
+        titleEl.textContent = "Start typing to find a course…";
+        titleEl.className = "cb-ctx-title";
+      }
     } else {
-      titleEl.textContent = "Start typing to find a course…";
-      titleEl.className = "cb-ctx-title";
+      // Offering input: show title from the matched offering.
+      const oid = document.getElementById("rfld_offeringId").value;
+      const o   = oid ? state.offerings.find(x => x.id === oid) : null;
+      const c   = o   ? state.courses.find(x => x.id === o.courseId) : null;
+      const raw = (e.target.value || "").trim();
+      if (c) {
+        titleEl.textContent = c.title || "Untitled course";
+        titleEl.className = "cb-ctx-title has-match";
+      } else if (raw) {
+        titleEl.textContent = "No match in this term";
+        titleEl.className = "cb-ctx-title no-match";
+      } else {
+        titleEl.textContent = "Select a semester and subterm, then start typing…";
+        titleEl.className = "cb-ctx-title";
+      }
     }
   });
   document.getElementById("rfld_changeList").addEventListener("click", (e) => {
