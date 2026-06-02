@@ -4575,7 +4575,7 @@ function offeringKey(courseId, semester, slot, year) {
 // huge duplicate piles in the DB, and other browsers seeing "new rows" rather
 // than updates because the IDs didn't line up. The fix is to dedupe by stable
 // course CODE — that string survives any local id reshuffling.
-function syncOfferingsFromRotation(defaultYear) {
+function syncOfferingsFromRotation(defaultYear, semesterFilter) {
   const year = defaultYear || state.termFilter.year || 2026;
   // Pass 1: re-resolve courseId for any offering whose courseId no longer
   // points at a real course. This relies on courseCode having been stamped
@@ -4635,6 +4635,7 @@ function syncOfferingsFromRotation(defaultYear) {
       ["Summer", courseChunksToSlots(c.onlineSummer)],
     ];
     for (const [semester, slots] of pairs) {
+      if (semesterFilter && semester !== semesterFilter) continue;
       for (const slot of slots) {
         if (slot === "AN") continue; // As Needed: don't auto-schedule
         const k = `${c.code}|${semester}|${slot}|${year}`;
@@ -4965,10 +4966,9 @@ function clearTermAssignments(semester, year) {
   // debounced flush will propagate the deletes to Supabase (the diff query
   // sees these ids in DB but not locally, so it issues DELETE for them).
   state.offerings = state.offerings.filter(o => !(o.semester === semester && o.year === year));
-  // Rebuild from the rotation sheet defaults. syncOfferingsFromRotation
-  // operates on state.courses (already loaded) and adds back exactly the
-  // (course, slot) combos that the sheet says belong in this term.
-  try { syncOfferingsFromRotation(year); } catch (e) { _err("Rebuild after Clear Term failed", e); }
+  // Rebuild from the rotation sheet defaults — pass the semester so only
+  // the cleared semester is rebuilt, not all three.
+  try { syncOfferingsFromRotation(year, semester); } catch (e) { _err("Rebuild after Clear Term failed", e); }
   setDirty(true);
   reRenderAll();
   toast(`Reset ${semester} ${year} — removed ${removedCount} section${removedCount === 1 ? "" : "s"} and rebuilt from rotation.`);
@@ -5063,11 +5063,17 @@ function renderTermTable(list) {
       // Added sections that haven't been sent to the Registrar can still be removed.
       sectionActionBtn = `<button type="button" class="add-section-btn remove-section-btn" data-tact="removesection" data-oid="${escapeHtml(o.id)}" title="Remove this added section">−</button>`;
     }
+    // In ALL-semester mode, show a small subterm chip next to the course code
+    // so multi-subterm courses (e.g., A + B) are clearly distinguishable.
+    const allMode = state.termFilter.subterm === "ALL";
+    const subtermLabel = allMode
+      ? ` <span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);vertical-align:middle;margin-left:3px;">${escapeHtml(o.subterm)}</span>`
+      : "";
     return `
       <tr data-oid="${escapeHtml(o.id)}"${clsAttr}>
         <td class="code">
           ${sectionActionBtn}
-          ${orphanBadge}${escapeHtml(c.code)} <span class="section-num">${sectionNum}</span>${submittedBadge}${canceledBadge}
+          ${orphanBadge}${escapeHtml(c.code)} <span class="section-num">${sectionNum}</span>${subtermLabel}${submittedBadge}${canceledBadge}
         </td>
         <td>${escapeHtml(c.title || "")}</td>
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
