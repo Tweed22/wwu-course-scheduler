@@ -7806,6 +7806,8 @@ function createProvisionalOffering(draft) {
   const instructor  = (instrChange && instrChange.fields && instrChange.fields.instructor) ||
                       (changes[0] && changes[0].fields && changes[0].fields.instructor) || "";
 
+  const now = new Date().toISOString();
+  const hasInstructor = !!instructor.trim();
   const o = Object.assign({}, {
     id:           uuid(),
     courseId:     course.id,
@@ -7816,9 +7818,11 @@ function createProvisionalOffering(draft) {
     length:       SLOT_LENGTH[slot] || "5 Weeks",
     instructor:   instructor.trim(),
     notes:        "",
-    submitted:    false,
-    submittedAt:  "",
-    submittedBy:  "",
+    // If the request already includes an instructor, show SENT immediately
+    // so the row reflects the in-flight status as soon as it appears.
+    submitted:    hasInstructor,
+    submittedAt:  hasInstructor ? now : "",
+    submittedBy:  hasInstructor ? (draft.submitter || state.userName || "") : "",
     registrarCompleted:   false,
     registrarCompletedAt: "",
     registrarCompletedBy: "",
@@ -7827,7 +7831,7 @@ function createProvisionalOffering(draft) {
     canceledBy:   "",
     isNewSection: true,
     addRequestId: draft.id,
-    lastModified: new Date().toISOString(),
+    lastModified: now,
   });
   state.offerings.push(o);
   markLocallyTouched(o.id);
