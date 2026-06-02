@@ -5876,18 +5876,32 @@ function undoRegistrarItem(regId) {
     const r = state.requests.find(x => x.id === id);
     if (!r) return;
     const code = `${r.prefix || ""} ${r.number || ""}`.trim() || "request";
-    if (!confirm(`Undo — return the "${r.changeType || "change"}" request for ${code} to the Change Requests page (status: Approved)?`)) return;
-    r.status = "Approved";
-    r.sentDate = "";
+    if (!confirm(`Undo — return the "${r.changeType || "change"}" request for ${code} to the Change Requests queue (status: Pending Approval)?`)) return;
+    // Fully undo the approval: drop back to Pending Approval so a dean/AP
+    // can re-review rather than landing in a limbo "Approved" state.
+    r.status      = "Pending Approval";
+    r.approvedBy  = "";
+    r.approvedDate = "";
+    r.sentDate    = "";
+    // Also un-SENT any provisional offering linked to this request so the
+    // Term Assignments badge reverts from SENT → pending.
+    const linkedO = state.offerings.find(o => o.addRequestId === r.id);
+    if (linkedO && linkedO.submitted) {
+      linkedO.submitted   = false;
+      linkedO.submittedAt = "";
+      linkedO.submittedBy = "";
+      markLocallyTouched(linkedO.id);
+    }
     if (typeof logRequestEvent === "function") {
-      logRequestEvent(r, `Returned to Approved (undone from Registrar queue) by ${state.userName || "(unknown)"}`);
+      logRequestEvent(r, `Returned to Pending Approval (undone from Registrar queue) by ${state.userName || "(unknown)"}`);
     }
     markLocallyTouched(r.id);
     setDirty(true);
     renderRegistrar();
     if (typeof renderRequests === "function") renderRequests();
+    if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
-    toast(`Request for ${code} returned to Change Requests (Approved)`);
+    toast(`Request for ${code} returned to Change Requests (Pending Approval)`);
   }
 }
 
@@ -7802,6 +7816,47 @@ function saveRequestFromModal() {
   // (Approve & Send / Reject / Delete) happen via row buttons, not this modal.
   if (!existing) draft.status = "Pending Approval";
   if (!draft.submitter) { toast("Submitter is required"); return; }
+
+  // Guard: "Add Course" is only valid when the course doesn't already have an
+  // active offering in that semester + year.  If one already exists, prompt the
+  // user to switch to "Add Section & Split Enrollment" instead — preserving all
+  // the data they've entered so they don't have to re-type anything.
+  if (draft.changeType === "Add Course" && draft.prefix) {
+    const code = `${draft.prefix} ${draft.number}`.trim().toUpperCase();
+    const course = state.courses.find(c => (c.code || "").trim().toUpperCase() === code);
+    if (course) {
+      const alreadyInTerm = state.offerings.some(o =>
+        o.courseId === course.id &&
+        o.semester === draft.term &&
+        o.year     === draft.year &&
+        !o.canceled
+      );
+      if (alreadyInTerm) {
+        const switchType = draft.modality === "On-Ground" ? "Add Section" : "Add Section & Split Enrollment";
+        const ok = window.confirm(
+          `${code} already has a section in ${draft.term} ${draft.year}.\n\n` +
+          `Would you like to submit an "${switchType}" request instead?\n\n` +
+          `Your course details will be preserved — only the request type changes.`
+        );
+        if (!ok) return; // User cancelled — keep the form open as-is
+        // Switch the change type in the editing buffer without clearing any fields.
+        if (state.editingChanges && state.editingChanges[0]) {
+          state.editingChanges[0].type = switchType;
+          // Sync type-specific fields back so they survive the re-render.
+          syncChangeListFromDom();
+          state.editingChanges[0].type = switchType;
+          renderChangeList();
+        }
+        // Re-derive draft values with the new type so the save proceeds correctly.
+        draft.changeType  = switchType;
+        draft.changes     = state.editingChanges.filter(ch => ch && ch.type)
+                              .map(ch => ({ type: ch.type, fields: Object.assign({}, ch.fields || {}) }));
+        draft.explanation = composeExplanation(draft.changes);
+        document.getElementById("rfld_changeType").value = draft.changeType;
+        document.getElementById("rfld_explanation").value = draft.explanation;
+      }
+    }
+  }
 
   if (existing) {
     Object.assign(existing, draft);
