@@ -7619,9 +7619,15 @@ function renderChangeList() {
   // In editable mode, populate the course datalist(s) after rendering.
   // Use id$='courseList' to avoid clobbering the term-filtered offering datalists.
   if (state.requestHeaderEditable) {
+    const semester = document.getElementById("rfld_term").value || "Fall";
     document.querySelectorAll("#rfld_changeList datalist[id$='courseList']").forEach(dl => {
       dl.innerHTML = state.courses
-        .slice()
+        .filter(c => {
+          if (semester === "Fall")   return !!(c.ogFall || (c.onlineFall   || []).length);
+          if (semester === "Spring") return !!(c.ogSpring || (c.onlineSpring || []).length);
+          if (semester === "Summer") return !!(c.onlineSummer || []).length;
+          return true;
+        })
         .sort((a, b) => (a.code || "").localeCompare(b.code || ""))
         .map(c => `<option value="${escapeHtml(c.code + (c.title ? " — " + c.title : ""))}">`)
         .join("");
