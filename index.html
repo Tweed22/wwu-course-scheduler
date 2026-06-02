@@ -7665,9 +7665,13 @@ function renderChangeList() {
   // Use id$='courseList' to avoid clobbering the term-filtered offering datalists.
   if (state.requestHeaderEditable) {
     const semester = document.getElementById("rfld_term").value || "Fall";
+    // Add Course may be requested off-rotation or out of sequence, so always
+    // show the full catalog for that change type.
+    const addCourseActive = (state.editingChanges || []).some(ch => ch.type === "Add Course");
     document.querySelectorAll("#rfld_changeList datalist[id$='courseList']").forEach(dl => {
       dl.innerHTML = state.courses
         .filter(c => {
+          if (addCourseActive) return true;
           if (semester === "Fall")   return !!(c.ogFall || (c.onlineFall   || []).length);
           if (semester === "Spring") return !!(c.ogSpring || (c.onlineSpring || []).length);
           if (semester === "Summer") return !!(c.onlineSummer || []).length;
