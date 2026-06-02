@@ -2364,7 +2364,6 @@
              course in one submission. -->
         <div class="row full">
           <div>
-            <label><span>Changes</span></label>
             <div id="rfld_changeList" style="display:flex;flex-direction:column;gap:10px;"></div>
             <div style="margin-top:10px;display:flex;justify-content:flex-start;">
               <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;">+ Add change</button>
@@ -7560,14 +7559,19 @@ function renderRequestHeader(editable) {
   const wrap = document.getElementById("reqSummary");
   if (!wrap) return;
   if (editable) {
-    // Editable (New Request) mode: hide the summary area entirely.
-    // All course/term fields live inside the change block itself.
-    // Auto-populate the hidden submitter field from the logged-in user.
-    wrap.innerHTML = "";
+    // Editable (New Request) mode: show the dialog title in the summary bar,
+    // and hide the modal <header> h2 so the title only appears once.
+    const titleText = (document.getElementById("reqModalTitle") || {}).textContent || "New Change Request";
+    wrap.innerHTML = `<div style="font-size:17px;font-weight:700;color:var(--text);padding:2px 0 6px;">${escapeHtml(titleText)}</div>`;
+    const h2 = document.getElementById("reqModalTitle");
+    if (h2) h2.style.display = "none";
     const subEl = document.getElementById("rfld_submitter");
     if (subEl) subEl.value = state.userName || "";
     return;
   }
+  // Locked mode: restore the h2 visibility.
+  const h2 = document.getElementById("reqModalTitle");
+  if (h2) h2.style.display = "";
   const codeStr = `${ document.getElementById("rfld_prefix").value || "" } ${ document.getElementById("rfld_number").value || "" }`.trim();
   const course = codeStr ? state.courses.find(c => (c.code || "").trim().toUpperCase() === codeStr.toUpperCase()) : null;
   const title = course ? (course.title || "Untitled course") : (codeStr ? "Course not in current rotation" : "No course selected");
@@ -7655,7 +7659,10 @@ function openRequestModal(r) {
 function closeRequestModal() {
   document.getElementById("reqModal").classList.remove("open");
   state.editingRequestId = null;
-  state.requestModalContext = null;   // clear source context
+  state.requestModalContext = null;
+  // Restore h2 visibility in case it was hidden by the editable header path.
+  const h2 = document.getElementById("reqModalTitle");
+  if (h2) h2.style.display = "";
 }
 
 function openNewRequest(prefill = {}) {
