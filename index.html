@@ -4750,6 +4750,45 @@ function activeSubtermDef() {
   return SUBTERMS.find(s => s.semester === state.termFilter.semester && s.subterm === state.termFilter.subterm) || SUBTERMS[0];
 }
 
+/* Find the subterm whose assignment deadline is the closest future date (or
+   passed by at most one week).  Called once on app load so Term Assignments
+   opens on the most actionable subterm rather than the hardcoded "Fall 1A". */
+function bestDefaultSubterm() {
+  const today  = new Date();
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - 7); // allow up to 1 week past deadline
+
+  // Collect every academic year that has date data (from TERM_DATES + overrides).
+  const academicYears = new Set();
+  for (const k of Object.keys(TERM_DATES)) {
+    const [sem, , calYr] = k.split("|");
+    const ay = (sem === "Spring" || sem === "Summer") ? Number(calYr) - 1 : Number(calYr);
+    if (!isNaN(ay)) academicYears.add(ay);
+  }
+  if (state && state.termDateOverrides) {
+    for (const k of Object.keys(state.termDateOverrides)) {
+      const [sem, , calYr] = k.split("|");
+      const ay = (sem === "Spring" || sem === "Summer") ? Number(calYr) - 1 : Number(calYr);
+      if (!isNaN(ay)) academicYears.add(ay);
+    }
+  }
+
+  const candidates = [];
+  for (const year of academicYears) {
+    for (const st of SUBTERMS) {
+      const deadline = termAssignmentDeadline(st.semester, st.subterm, year);
+      if (!deadline) continue;
+      const deadlineDate = new Date(deadline + "T23:59:59");
+      if (isNaN(deadlineDate.getTime())) continue;
+      if (deadlineDate < cutoff) continue; // more than 1 week in the past
+      candidates.push({ semester: st.semester, subterm: st.subterm, year, deadlineDate });
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.deadlineDate - b.deadlineDate);
+  return candidates[0];
+}
+
 function offeringsForSubterm(semester, subterm) {
   if (subterm === "ALL") {
     const seen = new Set();
@@ -8445,6 +8484,17 @@ async function init() {
   // Roll over assignments whose terms ended 10+ weeks ago.
   const rolled = rollOverCompletedAssignments();
   if (rolled) toast(`${rolled} assignment${rolled===1?"":"s"} rolled forward to the next academic year`);
+  // Set Term Assignments to the subterm with the nearest upcoming deadline
+  // (or the most recently passed one within one week) so it opens on the
+  // most actionable view rather than the hardcoded "Fall 1A" default.
+  const _bestSub = bestDefaultSubterm();
+  if (_bestSub) {
+    state.termFilter.semester = _bestSub.semester;
+    state.termFilter.subterm  = _bestSub.subterm;
+    state.termFilter.year     = _bestSub.year;
+    const _yrEl = document.getElementById("tfYear");
+    if (_yrEl) _yrEl.value = String(_bestSub.year);
+  }
   render();
   renderRequests();
   renderTerms();
