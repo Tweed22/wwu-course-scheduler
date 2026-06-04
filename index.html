@@ -5918,6 +5918,9 @@ async function generateOnlineContractPDF(offeringId) {
     cp.drawLine({ start: { x: TXg + TWg,  y: cy }, end: { x: TXg + TWg,  y: tyg }, thickness: 0.5, color: GREY });
     cy = tyg - 10;
   }
+  cy -= 4;
+  para("Students who receive an \"F\" grade must have last date of attendance/participation noted in the associated grade book column in the LMS.",
+    fI, 9.5, CW, 13, 0);
 
   /* ================================================================
      ACROFORM FIELDS — Faculty Signature + Date (on Page 1)
