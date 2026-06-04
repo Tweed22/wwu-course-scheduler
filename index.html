@@ -5633,7 +5633,7 @@ async function generateOnlineContractPDF(offeringId) {
   });
   cy -= (_logoDisplayH + 10);
   cp.drawLine({ start: { x: ML, y: cy }, end: { x: PW - MR, y: cy }, thickness: 0.75, color: GREY });
-  cy -= 20;
+  cy -= 10;
 
   /* --- Greeting --- */
   cp.drawText(`Dear ${instructor}:`, { x: ML, y: cy, size: 11, font: fR, color: K });
@@ -5795,7 +5795,7 @@ async function generateOnlineContractPDF(offeringId) {
     tyt -= RHt; dtLine(tyt);
     cp.drawLine({ start: { x: TXt,        y: cy  }, end: { x: TXt,        y: tyt }, thickness: 0.5, color: GREY });
     cp.drawLine({ start: { x: TXt + TWt,  y: cy  }, end: { x: TXt + TWt,  y: tyt }, thickness: 0.5, color: GREY });
-    cy = tyt - 14;
+    cy = tyt - 28;
   }
 
   /* --- FULL-TIME FACULTY LOAD --- */
