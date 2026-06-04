@@ -5922,8 +5922,11 @@ async function generateOnlineContractPDF(offeringId) {
     y: sigY + 2,         // field sits in the 50pt gap ABOVE the signature line
     width: SCW,
     height: 44,
+    font: fR,
+    fontSize: 11,
+    borderColor: rgb(0.7, 0.7, 0.7),
     borderWidth: 0,
-    backgroundColor: rgb(1, 1, 1),
+    backgroundColor: rgb(0.97, 0.97, 1),
     textColor: K,
   });
 
@@ -5934,24 +5937,12 @@ async function generateOnlineContractPDF(offeringId) {
     y: dateY + 2,        // field sits in the 32pt gap ABOVE the date line
     width: SCW,
     height: 28,
+    font: fR,
+    fontSize: 11,
+    borderColor: rgb(0.7, 0.7, 0.7),
     borderWidth: 0,
-    backgroundColor: rgb(1, 1, 1),
+    backgroundColor: rgb(0.97, 0.97, 1),
     textColor: K,
-  });
-
-  /* Restrict the PDF: allow form filling only, no content editing. */
-  await pdfDoc.encrypt({
-    userPassword: "",
-    ownerPassword: `wwu-contract-${Date.now()}`,
-    permissions: {
-      printing:              "highResolution",
-      modifying:             false,
-      copying:               false,
-      annotating:            false,
-      fillingForms:          true,
-      contentAccessibility:  true,
-      documentAssembly:      false,
-    },
   });
 
   /* --- Save & download --- */
