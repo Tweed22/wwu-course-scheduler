@@ -5429,6 +5429,542 @@ function submitNewSectionChange(o) {
   return true;
 }
 
+/* =====================================================================
+   Online Course Contract — fillable PDF generation
+   Triggered automatically when an online-modality section is submitted
+   to the Registrar.  Produces a 2–3 page PDF that:
+     • Pre-fills course code, title, credits, start/end dates, instructor
+     • Leaves only Faculty Member Signature and Date as editable fields
+     • Locks all other content (drawn as static text, not form fields)
+   ===================================================================== */
+async function generateOnlineContractPDF(offeringId) {
+  const o = state.offerings.find(x => x.id === offeringId);
+  if (!o) return;
+  const c = state.courses.find(x => x.id === o.courseId);
+  if (!c) return;
+
+  /* --- Lazy-load pdf-lib from CDN --- */
+  if (!window.PDFLib) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js";
+      s.onload = res;
+      s.onerror = () => rej(new Error("pdf-lib failed to load"));
+      document.head.appendChild(s);
+    });
+  }
+
+  const { PDFDocument, StandardFonts, rgb } = PDFLib;
+
+  /* --- Data values --- */
+  const instructor    = (o.instructor || "").trim();
+  const secNum        = sectionNumberFor(o);
+  const courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
+  const courseTitle   = (c.title || "").trim();
+  const credits       = c.credits ?? 3;
+  const creditStr     = `${credits} Credit${credits !== 1 ? "s" : ""}`;
+  function isoSlash(iso) {
+    if (!iso) return "TBD";
+    const [y, m, d] = iso.split("-");
+    return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+  }
+  const startDate = isoSlash(termStartDate(o.semester, o.subterm, o.year));
+  const endDate   = isoSlash(termEndDate(o.semester, o.subterm, o.year));
+
+  /* --- Create document & fonts --- */
+  const pdfDoc = await PDFDocument.create();
+  const fR = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fB = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const fI = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+  const K  = rgb(0, 0, 0);
+  const NAVY = rgb(0.11, 0.22, 0.45);
+  const GREY = rgb(0.45, 0.45, 0.45);
+
+  /* --- Page constants --- */
+  const PW = 612, PH = 792;
+  const ML = 72, MR = 72, MT = 62, MB = 54;
+  const CW = PW - ML - MR;  // 468 pt
+
+  /* --- Text helpers --- */
+  function wrapLines(txt, fnt, fs, maxW) {
+    const words = txt.split(" ");
+    const lines = [];
+    let line = "";
+    for (const w of words) {
+      const cand = line ? `${line} ${w}` : w;
+      if (fnt.widthOfTextAtSize(cand, fs) <= maxW) { line = cand; }
+      else { if (line) lines.push(line); line = w; }
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [""];
+  }
+
+  function trunc(txt, fnt, fs, maxW) {
+    if (fnt.widthOfTextAtSize(txt, fs) <= maxW) return txt;
+    let t = txt;
+    while (t.length > 1 && fnt.widthOfTextAtSize(t + "…", fs) > maxW) t = t.slice(0, -1);
+    return t + "…";
+  }
+
+  /* --- Page / flow manager --- */
+  let cp;           // current page
+  let cy;           // current y (from bottom of page)
+  let page1;        // kept for form-field placement
+  let sigY, dateY;  // y positions for signature / date form fields
+
+  function newPage() {
+    cp = pdfDoc.addPage([PW, PH]);
+    cy = PH - MT;
+    /* running footer on every page */
+    cp.drawLine({ start: { x: ML, y: MB - 4 }, end: { x: PW - MR, y: MB - 4 },
+      thickness: 0.5, color: GREY });
+    cp.drawText("One University Avenue, Fulton, Missouri 65251    1.573.592.4347    williamwoods.edu",
+      { x: ML, y: MB - 16, size: 7.5, font: fR, color: GREY });
+    return cp;
+  }
+
+  function need(space) {
+    if (cy - space < MB + 20) newPage();
+  }
+
+  function para(txt, fnt, fs, maxW, lh, indent) {
+    const ix = indent || 0;
+    const lines = wrapLines(txt, fnt, fs, maxW - ix);
+    need(lines.length * lh + 4);
+    for (const ln of lines) {
+      cp.drawText(ln, { x: ML + ix, y: cy, size: fs, font: fnt, color: K });
+      cy -= lh;
+    }
+    return lines.length * lh;
+  }
+
+  function heading(txt, fs, gap) {
+    need(fs + gap + 4);
+    cp.drawText(txt, { x: ML, y: cy, size: fs, font: fB, color: K });
+    cy -= (fs + gap);
+  }
+
+  function bullet(txt, fnt, fs, maxW, lh, bx, tx) {
+    const lines = wrapLines(txt, fnt, fs, maxW - (tx - ML));
+    need(lines.length * lh + 2);
+    cp.drawText("•", { x: bx, y: cy, size: fs, font: fnt, color: K });
+    for (let i = 0; i < lines.length; i++) {
+      cp.drawText(lines[i], { x: tx, y: cy, size: fs, font: fnt, color: K });
+      cy -= lh;
+    }
+  }
+
+  /* --- Minimal 2-col table helper (for pay-schedule tables) --- */
+  function payTable(title, subhead, headers, rows, noteRow) {
+    const ROW_H = 18, COL1 = 234, COL2 = 234, TW = COL1 + COL2;
+    const TX = ML + (CW - TW) / 2;
+    const totalRows = 2 + (subhead ? 1 : 0) + rows.length + (noteRow ? 1 : 0);
+    need(totalRows * ROW_H + 16);
+    let ty = cy;
+
+    function drawCell(x, w, text, fnt, fs, ctr) {
+      const tx2 = ctr ? x + w / 2 - fnt.widthOfTextAtSize(text, fs) / 2 : x + 4;
+      cp.drawText(text, { x: tx2, y: ty - ROW_H + 5, size: fs, font: fnt, color: K });
+    }
+    function rowBorder() {
+      cp.drawLine({ start: { x: TX, y: ty }, end: { x: TX + TW, y: ty }, thickness: 0.5, color: GREY });
+    }
+    function colBorder(bx) {
+      cp.drawLine({ start: { x: bx, y: ty }, end: { x: bx, y: ty - ROW_H }, thickness: 0.5, color: GREY });
+    }
+
+    /* Title row (spans 2) */
+    rowBorder();
+    cp.drawRectangle({ x: TX, y: ty - ROW_H, width: TW, height: ROW_H, color: rgb(0.93, 0.93, 0.93) });
+    drawCell(TX, TW, title, fB, 10, true);
+    ty -= ROW_H; rowBorder();
+
+    /* Optional subhead */
+    if (subhead) {
+      drawCell(TX, TW, subhead, fI, 9, true);
+      ty -= ROW_H; rowBorder();
+    }
+
+    /* Headers row */
+    drawCell(TX,        COL1, headers[0], fB, 9, false);
+    drawCell(TX + COL1, COL2, headers[1], fB, 9, false);
+    colBorder(TX + COL1);
+    ty -= ROW_H; rowBorder();
+
+    /* Data rows */
+    for (const [v1, v2] of rows) {
+      drawCell(TX,        COL1, v1, fR, 10, false);
+      drawCell(TX + COL1, COL2, v2, fR, 10, false);
+      colBorder(TX + COL1);
+      ty -= ROW_H; rowBorder();
+    }
+
+    /* Optional italic note row */
+    if (noteRow) {
+      drawCell(TX, TW, noteRow, fI, 8.5, false);
+      ty -= ROW_H; rowBorder();
+    }
+
+    /* Outer vertical borders */
+    cp.drawLine({ start: { x: TX,      y: cy }, end: { x: TX,      y: ty }, thickness: 0.5, color: GREY });
+    cp.drawLine({ start: { x: TX + TW, y: cy }, end: { x: TX + TW, y: ty }, thickness: 0.5, color: GREY });
+
+    cy = ty - 10;
+  }
+
+  /* ================================================================
+     PAGE 1 — CONTRACT LETTER
+     ================================================================ */
+  page1 = newPage();
+
+  /* --- Header --- */
+  cp.drawText("WILLIAM WOODS UNIVERSITY",
+    { x: ML, y: cy, size: 15, font: fB, color: NAVY });
+  cy -= 18;
+  cp.drawLine({ start: { x: ML, y: cy }, end: { x: PW - MR, y: cy }, thickness: 1.5, color: NAVY });
+  cy -= 22;
+
+  /* --- Greeting --- */
+  cp.drawText(`Dear ${instructor}:`, { x: ML, y: cy, size: 11, font: fR, color: K });
+  cy -= 22;
+
+  /* --- Opening paragraph --- */
+  para("I am pleased to offer you an appointment as a William Woods University online adjunct faculty member. Your appointment involves teaching the following course:",
+    fR, 11, CW, 16, 0);
+  cy -= 12;
+
+  /* --- Course table --- */
+  // Row heights and column widths (proportional to docx dxa)
+  const RH = 22;
+  const TC1 = 74, TC2 = 320, TC3 = 74;  // Code | Title | Credits
+  const TX = ML;
+  need(4 * RH + 16);
+
+  function tblLine(y) {
+    cp.drawLine({ start: { x: TX, y }, end: { x: TX + CW, y }, thickness: 0.5, color: GREY });
+  }
+  function tblCell(x, y, txt, fnt, fs, center) {
+    const tw2 = center ? fnt.widthOfTextAtSize(txt, fs) : 0;
+    const xp = center ? x + (TC3 - tw2) / 2 : x + 3;
+    cp.drawText(txt, { x: xp, y: y + 5, size: fs, font: fnt, color: K });
+  }
+
+  let ty = cy;
+  /* header row */
+  cp.drawRectangle({ x: TX, y: ty - RH, width: CW, height: RH, color: rgb(0.93, 0.93, 0.93) });
+  tblLine(ty);
+  tblCell(TX,           ty - RH, "Course Code",  fB, 10, false);
+  tblCell(TX + TC1,     ty - RH, "Course Title", fB, 10, false);
+  tblCell(TX + TC1 + TC2, ty - RH, "Credit Hours", fB, 10, false);
+  ty -= RH; tblLine(ty);
+  /* data row */
+  tblCell(TX,           ty - RH, trunc(courseCodeFull, fR, 10, TC1 - 4), fR, 10, false);
+  tblCell(TX + TC1,     ty - RH, trunc(courseTitle,    fR, 10, TC2 - 4), fR, 10, false);
+  tblCell(TX + TC1 + TC2, ty - RH, trunc(creditStr,   fR, 10, TC3 - 4), fR, 10, false);
+  ty -= RH; tblLine(ty);
+  /* empty spacer row */
+  ty -= RH; tblLine(ty);
+  /* dates row */
+  const DC1 = 63, DC2 = 153, DC3 = 59, DC4 = CW - DC1 - DC2 - DC3;
+  tblLine(ty);
+  tblCell(TX,                 ty - RH, "Start Date:",  fB, 10, false);
+  tblCell(TX + DC1,           ty - RH, startDate,      fB, 10, false);
+  tblCell(TX + DC1 + DC2,     ty - RH, "End Date:",    fB, 10, false);
+  tblCell(TX + DC1 + DC2 + DC3, ty - RH, endDate,      fB, 10, false);
+  ty -= RH; tblLine(ty);
+  cy = ty - 16;
+
+  /* --- Body paragraphs --- */
+  para("Please note that for online non-cohort courses, payment is based on final course enrollment after the add/drop period. The WWU Global Pay Schedule dictates the final pay for a course. Courses with an enrollment of eight or more students after the add/drop period are paid at the full rate, while those with fewer than eight students are paid at the tutorial rate. The WWU Global Pay Schedule, on page two of this document, provides further details on these rates and includes special conditions for full-time faculty.",
+    fR, 11, CW, 15, 0);
+  cy -= 12;
+  para("If the terms and conditions outlined herein, the WWU Global Pay Schedule, and the supplemental terms and conditions contained at the end of this letter are acceptable, please sign and return this contract upon receipt. (Keep a copy for your records.)",
+    fR, 11, CW, 15, 0);
+  cy -= 12;
+  para("Return signed contract(s) within seven business days via email to your program manager/chair or dean (issuer of this contract). Please keep the copy for your files. If you have questions regarding your contract, please contact your program manager/chair or dean.",
+    fR, 11, CW, 15, 0);
+  cy -= 18;
+
+  /* --- Signature block --- */
+  const SCW = CW / 2 - 16;   // each column width
+  const SLX = ML;             // left sig col x
+  const SRX = ML + CW / 2 + 16;  // right sig col x
+  need(110);
+
+  cp.drawText("Sincerely,",   { x: SLX, y: cy, size: 11, font: fR, color: K });
+  cp.drawText("Acceptance,",  { x: SRX, y: cy, size: 11, font: fR, color: K });
+  cy -= 50;
+
+  /* Provost signature line (static) */
+  cp.drawLine({ start: { x: SLX, y: cy }, end: { x: SLX + SCW, y: cy }, thickness: 0.75, color: K });
+  /* Faculty signature line */
+  cp.drawLine({ start: { x: SRX, y: cy }, end: { x: SRX + SCW, y: cy }, thickness: 0.75, color: K });
+  sigY = cy;   // ← save for form field
+  cy -= 16;
+
+  cp.drawText("Dr. Caroline Boyer", { x: SLX, y: cy, size: 11, font: fR, color: K });
+  cp.drawText("Faculty Member",     { x: SRX, y: cy, size: 11, font: fR, color: K });
+  cy -= 16;
+  cp.drawText("Provost", { x: SLX, y: cy, size: 11, font: fR, color: K });
+  cy -= 32;
+
+  /* Date line (right) */
+  cp.drawLine({ start: { x: SRX, y: cy }, end: { x: SRX + SCW, y: cy }, thickness: 0.75, color: K });
+  dateY = cy;  // ← save for form field
+  cy -= 14;
+  cp.drawText("Date", { x: SRX, y: cy, size: 11, font: fR, color: K });
+
+  /* ================================================================
+     PAGE 2+ — WWU GLOBAL PAY SCHEDULE + SUPPLEMENTAL TERMS
+     ================================================================ */
+  newPage();
+
+  /* --- Title --- */
+  const titleTxt = "WWU Global Pay Schedule";
+  const titleW = fB.widthOfTextAtSize(titleTxt, 18);
+  cp.drawText(titleTxt, { x: ML + (CW - titleW) / 2, y: cy, size: 18, font: fB, color: K });
+  cy -= 32;
+
+  /* --- FULL RATE heading + tables --- */
+  need(20);
+  cp.drawText("FULL RATE", { x: ML, y: cy, size: 11, font: fB, color: K });
+  cy -= 16;
+  para("Any course with eight or more students following the add-drop period will be considered fully enrolled and will be paid at the full rate according to the tables below:",
+    fR, 10, CW, 14, 0);
+  cy -= 10;
+
+  payTable("UNDERGRADUATE COURSES", "8-30 students per course",
+    ["Per 3 credit course", "Years of WWU Service"],
+    [["$1,800", "0-4"], ["$1,900", "5-9"], ["$2,100", "10+"]],
+    "Additional $150 terminal degree stipend (if applicable)");
+  cy -= 6;
+
+  payTable("MASTERS / SPECIALIST COURSES", "8-30 students per course",
+    ["Per 3 credit course", "Years of WWU Service"],
+    [["$2,600", "0-4"], ["$2,800", "5-9"], ["$3,000", "10+"]],
+    null);
+  cy -= 6;
+
+  payTable("DOCTORATE COURSES", "8-30 students per course",
+    ["Per 3 credit course", "Years of WWU Service"],
+    [["$3,000", "0-4"], ["$3,200", "5-9"], ["$3,300", "10+"]],
+    null);
+  cy -= 14;
+
+  /* --- TUTORIAL RATE --- */
+  need(20);
+  cp.drawText("TUTORIAL RATE", { x: ML, y: cy, size: 11, font: fB, color: K });
+  cy -= 16;
+  para("Any course with fewer than eight students following the add/drop period will be considered a tutorial and will be paid at the following rate:",
+    fR, 10, CW, 14, 0);
+  cy -= 10;
+
+  /* Tutorial table (2-col, different layout: Course Type | Per Student/Credit) */
+  {
+    const RHt = 18, COL1t = 210, COL2t = 210, TWt = COL1t + COL2t;
+    const TXt = ML + (CW - TWt) / 2;
+    need(4 * RHt + 8);
+    let tyt = cy;
+    function dtLine(y2) {
+      cp.drawLine({ start: { x: TXt, y: y2 }, end: { x: TXt + TWt, y: y2 }, thickness: 0.5, color: GREY });
+    }
+    function dtCell(x, w, txt, fnt, fs) {
+      cp.drawText(txt, { x: x + 4, y: tyt - RHt + 5, size: fs, font: fnt, color: K });
+    }
+    dtLine(tyt);
+    dtCell(TXt,          COL1t, "",                         fB, 9);
+    dtCell(TXt + COL1t, COL2t, "Per Student / Per Credit Hour", fB, 9);
+    cp.drawLine({ start: { x: TXt + COL1t, y: tyt }, end: { x: TXt + COL1t, y: tyt - RHt }, thickness: 0.5, color: GREY });
+    tyt -= RHt; dtLine(tyt);
+    dtCell(TXt,          COL1t, "Undergraduate Courses", fB, 10);
+    dtCell(TXt + COL1t, COL2t, "$80",                   fR, 10);
+    cp.drawLine({ start: { x: TXt + COL1t, y: tyt }, end: { x: TXt + COL1t, y: tyt - RHt }, thickness: 0.5, color: GREY });
+    tyt -= RHt; dtLine(tyt);
+    dtCell(TXt,          COL1t, "Graduate Courses", fB, 10);
+    dtCell(TXt + COL1t, COL2t, "$120",             fR, 10);
+    cp.drawLine({ start: { x: TXt + COL1t, y: tyt }, end: { x: TXt + COL1t, y: tyt - RHt }, thickness: 0.5, color: GREY });
+    tyt -= RHt; dtLine(tyt);
+    cp.drawLine({ start: { x: TXt,        y: cy  }, end: { x: TXt,        y: tyt }, thickness: 0.5, color: GREY });
+    cp.drawLine({ start: { x: TXt + TWt,  y: cy  }, end: { x: TXt + TWt,  y: tyt }, thickness: 0.5, color: GREY });
+    cy = tyt - 14;
+  }
+
+  /* --- FULL-TIME FACULTY LOAD --- */
+  need(20);
+  cp.drawText("FULL-TIME FACULTY LOAD & SPECIAL CONDITIONS", { x: ML, y: cy, size: 11, font: fB, color: K });
+  cy -= 16;
+  para("Full-time faculty using online courses to satisfy contracted load requirements may have adjustments made in a manner not consistent with the tables above. These instances are on a case-by-case basis and require approval by the Provost. The details of which can be arranged with the Provost’s office by contacting provostoffice@williamwoods.edu",
+    fR, 10, CW, 14, 0);
+  cy -= 20;
+
+  /* ================================================================
+     SUPPLEMENTAL TERMS AND CONDITIONS
+     ================================================================ */
+  need(30);
+  const stTxt = "Supplemental Terms and Conditions";
+  const stW = fB.widthOfTextAtSize(stTxt, 16);
+  cp.drawText(stTxt, { x: ML + (CW - stW) / 2, y: cy, size: 16, font: fB, color: K });
+  cy -= 24;
+
+  heading("Appointments", 11, 6);
+  para("Adjunct appointments are final. This letter of appointment is for temporary, part-time employment and does not imply further or continued employment.",
+    fR, 10, CW, 14, 0);
+  cy -= 12;
+
+  heading("Eligibility for Subsequent Appointment", 11, 6);
+  bullet("Adjunct faculty members are required to participate in one Faculty Development seminar annually (calendar year) and per the requirements of each discipline taught to maintain eligibility for subsequent teaching appointments/assignments.",
+    fR, 10, CW, 14, ML + 6, ML + 18);
+  cy -= 4;
+  bullet("Maintain current, official transcripts and an updated CV/resume on file with Human Resources.",
+    fR, 10, CW, 14, ML + 6, ML + 18);
+  cy -= 12;
+
+  heading("Expectations", 11, 6);
+  para("Adjunct teaching appointments include the following expectations. Failure to comply with these expectations will lead to potential dismissal from courses and will prevent future teaching opportunities at William Woods University.",
+    fR, 10, CW, 14, 0);
+  cy -= 8;
+
+  heading("General Expectations", 10, 4);
+  const genExpect = [
+    "Adjunct faculty members are required to be conversant with the academic regulations of the University.",
+    "Adjunct faculty will conduct courses in a professional manner.",
+    "Adhere to William Woods University’s policies, including accommodations, Academic Integrity, etc.",
+    "Follow all rules of the Institutional Review Board (IRB) regarding human subject research.",
+    "Communicate with your program manager/chair for best practices in teaching.",
+  ];
+  for (const item of genExpect) {
+    bullet(item, fR, 10, CW, 14, ML + 6, ML + 18);
+    cy -= 2;
+  }
+  cy -= 8;
+
+  heading("Classroom/Course Management", 10, 4);
+  const classExpect = [
+    "Meet for the specified total number of contact hours for each course. Regular weekly announcements and active participation in discussion forums are expected.",
+    "All assignments should be graded with feedback to the students within seven days.",
+    "Utilize the LMS and/or William Woods University email for communication with students and administration.",
+    "Ensure all administrative requirements are completed as required such as submitting midterm and/or final grades, student early alerts, incomplete grade forms, etc., as applicable.",
+  ];
+  for (const item of classExpect) {
+    bullet(item, fR, 10, CW, 14, ML + 6, ML + 18);
+    cy -= 2;
+  }
+  cy -= 12;
+
+  /* --- Grade Submission Deadlines table --- */
+  heading("Grade Submission Deadlines", 10, 4);
+  {
+    const RHg = 18, C1g = 110, C2g = 119, C3g = 119, C4g = 120, TWg = C1g + C2g + C3g + C4g;
+    const TXg = ML;
+    need(5 * RHg + 8);
+    let tyg = cy;
+    const xs = [TXg, TXg + C1g, TXg + C1g + C2g, TXg + C1g + C2g + C3g];
+    const ws = [C1g, C2g, C3g, C4g];
+    function gLine(y2) {
+      cp.drawLine({ start: { x: TXg, y: y2 }, end: { x: TXg + TWg, y: y2 }, thickness: 0.5, color: GREY });
+    }
+    function gCell(col, txt, fnt, fs) {
+      cp.drawText(trunc(txt, fnt, fs, ws[col] - 6), { x: xs[col] + 3, y: tyg - RHg + 5, size: fs, font: fnt, color: K });
+    }
+
+    /* Title row (spans 4, grey) */
+    gLine(tyg);
+    cp.drawRectangle({ x: TXg, y: tyg - RHg, width: TWg, height: RHg, color: rgb(0.93, 0.93, 0.93) });
+    const gdTxt = "Grade Submission Deadlines";
+    const gdW = fB.widthOfTextAtSize(gdTxt, 10);
+    cp.drawText(gdTxt, { x: TXg + (TWg - gdW) / 2, y: tyg - RHg + 5, size: 10, font: fB, color: K });
+    tyg -= RHg; gLine(tyg);
+
+    /* Subtitle row */
+    const subTxt = "All Grades are due at 12:00PM Central Time (CT) on the days listed below";
+    const subW = fI.widthOfTextAtSize(subTxt, 8.5);
+    cp.drawText(subTxt, { x: TXg + (TWg - subW) / 2, y: tyg - RHg + 5, size: 8.5, font: fI, color: K });
+    tyg -= RHg; gLine(tyg);
+
+    /* Column headers */
+    [null, "5-Week Courses", "10-Week Courses", "16-Week Courses"].forEach((h, i) => {
+      if (h) gCell(i, h, fB, 9);
+      if (i > 0) cp.drawLine({ start: { x: xs[i], y: tyg }, end: { x: xs[i], y: tyg - RHg }, thickness: 0.5, color: GREY });
+    });
+    tyg -= RHg; gLine(tyg);
+
+    /* Midterm row */
+    const midRow = ["Midterm Grades", "Tuesday of Week 3", "Tuesday of Week 6", "Tuesday of Week 9"];
+    midRow.forEach((v, i) => {
+      gCell(i, v, i === 0 ? fB : fR, 9);
+      if (i > 0) cp.drawLine({ start: { x: xs[i], y: tyg }, end: { x: xs[i], y: tyg - RHg }, thickness: 0.5, color: GREY });
+    });
+    tyg -= RHg; gLine(tyg);
+
+    /* Final row */
+    const finRow = ["Final Grades", "Tuesday following Week 5", "Tuesday following Week 10", "Tuesday following Week 16"];
+    finRow.forEach((v, i) => {
+      gCell(i, v, i === 0 ? fB : fR, 9);
+      if (i > 0) cp.drawLine({ start: { x: xs[i], y: tyg }, end: { x: xs[i], y: tyg - RHg }, thickness: 0.5, color: GREY });
+    });
+    tyg -= RHg; gLine(tyg);
+
+    /* Outer verticals */
+    cp.drawLine({ start: { x: TXg,        y: cy }, end: { x: TXg,        y: tyg }, thickness: 0.5, color: GREY });
+    cp.drawLine({ start: { x: TXg + TWg,  y: cy }, end: { x: TXg + TWg,  y: tyg }, thickness: 0.5, color: GREY });
+    cy = tyg - 10;
+  }
+
+  /* ================================================================
+     ACROFORM FIELDS — Faculty Signature + Date (on Page 1)
+     ================================================================ */
+  const form = pdfDoc.getForm();
+
+  const sigField = form.createTextField("FacultySignature");
+  sigField.setText("");
+  sigField.addToPage(page1, {
+    x: SRX,
+    y: sigY + 2,         // field sits in the 50pt gap ABOVE the signature line
+    width: SCW,
+    height: 44,
+    borderWidth: 0,
+    backgroundColor: rgb(1, 1, 1),
+    textColor: K,
+  });
+
+  const dateField = form.createTextField("SignatureDate");
+  dateField.setText("");
+  dateField.addToPage(page1, {
+    x: SRX,
+    y: dateY + 2,        // field sits in the 32pt gap ABOVE the date line
+    width: SCW,
+    height: 28,
+    borderWidth: 0,
+    backgroundColor: rgb(1, 1, 1),
+    textColor: K,
+  });
+
+  /* Restrict the PDF: allow form filling only, no content editing. */
+  await pdfDoc.encrypt({
+    userPassword: "",
+    ownerPassword: `wwu-contract-${Date.now()}`,
+    permissions: {
+      printing:              "highResolution",
+      modifying:             false,
+      copying:               false,
+      annotating:            false,
+      fillingForms:          true,
+      contentAccessibility:  true,
+      documentAssembly:      false,
+    },
+  });
+
+  /* --- Save & download --- */
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `${courseCodeFull.replace(/\s+/g, "_")}_Contract_${instructor.replace(/[^A-Za-z0-9]/g, "_")}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /* Lock a section and mark it as submitted to the Registrar. */
 function submitSectionToRegistrar(offeringId) {
   const o = state.offerings.find(x => x.id === offeringId);
@@ -5444,6 +5980,14 @@ function submitSectionToRegistrar(offeringId) {
   markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
+  /* Generate and download the contract PDF for online courses. */
+  const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+  if (isOnline) {
+    generateOnlineContractPDF(offeringId).catch(err => {
+      console.error("Contract PDF generation failed:", err);
+      toast("Submitted to Registrar — contract PDF could not be generated", "error");
+    });
+  }
   toast(`${c ? c.code : "Section"} ${sectionNumberFor(o)} submitted to Registrar`);
 }
 
