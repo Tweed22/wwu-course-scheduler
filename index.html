@@ -5244,9 +5244,13 @@ function duplicateSection(offeringId) {
   const src = state.offerings.find(x => x.id === offeringId);
   if (!src) return;
 
-  // Determine the target subterm: always the one the user is looking at.
+  // Determine the target subterm: the one the user is looking at, unless they
+  // are in "ALL" mode (no specific subterm selected), in which case duplicate
+  // into the same subterm as the source so it gets the correct section number.
   const targetSemester = state.termFilter.semester || src.semester;
-  const targetSubterm  = state.termFilter.subterm  || src.subterm;
+  const targetSubterm  = (state.termFilter.subterm && state.termFilter.subterm !== "ALL")
+    ? state.termFilter.subterm
+    : src.subterm;
   const viewDef = SUBTERMS.find(s => s.semester === targetSemester && s.subterm === targetSubterm);
   // If the source slot belongs to the current tab, reuse it (keeps length).
   // Otherwise pick the primary A/B/C slot for the target subterm.
