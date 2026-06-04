@@ -3959,6 +3959,13 @@ function currentRole() {
 function isAdmin() { return currentRole() === "admin"; }
 function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
 function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
+// Deans may only approve Online-modality change requests; registrars and admins
+// may approve any request regardless of modality.
+function canApproveRequest(r) {
+  if (isRegistrar()) return true;
+  if (currentRole() === "dean") return !!(r && r.modality === "Online");
+  return false;
+}
 // Most write actions (assigning instructor, requesting changes, etc.) require
 // at least the program_manager role.
 function canEditAssignments() {
@@ -7204,9 +7211,13 @@ function renderRequestStats(filtered) {
 
 function renderRequestActions(r) {
   // Queue is always Pending Approval — show the four canonical actions.
+  // Deans may only approve Online requests; hide the button for on-ground ones.
+  const approveBtn = canApproveRequest(r)
+    ? `<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`
+    : "";
   return [
     `<button type="button" data-ract="edit">Edit</button>`,
-    `<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`,
+    approveBtn,
     `<button type="button" data-ract="reject" class="reject">Reject</button>`,
     `<button type="button" data-ract="del" class="danger">Delete</button>`,
   ].join("");
@@ -8132,6 +8143,10 @@ function transitionRequest(id, action) {
   const code = requestCourseCode(r) || "(no course)";
   const who = state.userName || "(unknown)";
   if (action === "approve") {
+    if (!canApproveRequest(r)) {
+      toast("You can only approve Online modality change requests.", "error");
+      return;
+    }
     // Approve & Send → goes to Registrar queue immediately.
     r.status = "Sent to Registrar";
     r.approvedBy = who;
