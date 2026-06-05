@@ -729,14 +729,17 @@
   .term-table th[data-tsort="pm"]      { width: 160px; padding-left: 18px; }
   .term-table td.pm-cell               { white-space: nowrap; overflow: hidden; }
 
-  /* ── TITLE: fills all remaining space; truncates with ellipsis and
-     re-expands naturally as the viewport grows (table-layout:fixed) ── */
-  .term-table th[data-tsort="title"],
+  /* ── TITLE: fills remaining space, truncates with ellipsis, re-expands
+     when viewport grows (table-layout:fixed handles this naturally).
+     min-width prevents it from collapsing to 0 on narrow viewports —
+     the table will scroll horizontally before Title disappears. ── */
+  .term-table th[data-tsort="title"]  { min-width: 160px; }
   .term-table td.title-cell {
     padding-left: 18px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 160px;
   }
 
   /* ── NOTES: compact fixed width — gives up space first visually ── */
@@ -1962,7 +1965,7 @@
           <th data-tsort="pm" style="padding-left:18px;">Program Manager</th>
           <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="white-space:nowrap;">Actions</th>
-          <th class="no-sort" style="width:100%;">Notes</th>
+          <th class="no-sort">Notes</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
