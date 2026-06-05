@@ -711,7 +711,18 @@
   .term-15W, .term-16W { background: #eceef0; color: #334855; font-size: 10px; padding: 2px 5px; }
   .term-AN { background: #faeede; color: #8a5a13; font-size: 10px; padding: 2px 5px; }
 
-  td.actions { white-space: nowrap; min-width: 260px; }
+  td.actions { white-space: nowrap; }
+  .term-table td.title-cell,
+  .term-table td.length-cell,
+  .term-table td.pm-cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0; /* tricks auto-layout into honoring text-overflow */
+  }
+  .term-table td.title-cell  { min-width: 120px; }
+  .term-table td.length-cell { min-width: 60px;  }
+  .term-table td.pm-cell     { min-width: 80px;  }
   .actions button {
     font: inherit;
     padding: 3px 9px;
@@ -5182,8 +5193,8 @@ function renderTermTable(list) {
           ${sectionActionBtn}
           ${orphanBadge}${escapeHtml(c.code)} <span class="section-num">${sectionNum}</span>${subtermLabel}${submittedBadge}${canceledBadge}
         </td>
-        <td>${escapeHtml(c.title || "")}</td>
-        <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
+        <td class="title-cell">${escapeHtml(c.title || "")}</td>
+        <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
         <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
