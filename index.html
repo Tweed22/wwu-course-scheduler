@@ -7800,25 +7800,38 @@ function bindTermEvents() {
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
       const c = state.courses.find(x => x.id === o.courseId) || {};
-      if (!confirm(`Remove ${c.code || "this section"} from the Registrar queue and clear the instructor assignment?`)) return;
+      if (!confirm(`Recall submission for ${c.code || "this section"}? This removes it from the Change Requests and/or Registrar queue and clears the instructor assignment.`)) return;
       o.submitted      = false;
       o.submittedAt    = "";
       o.submittedBy    = "";
       o.instructor     = "";
       // Remove the linked Add Section / Add Section & Split Enrollment request
-      // from the Change Requests queue, if one exists.
-      if (o.addRequestId) {
-        const reqIdx = state.requests.findIndex(r => r.id === o.addRequestId);
-        if (reqIdx !== -1) state.requests.splice(reqIdx, 1);
-        o.addRequestId = "";
+      // from whichever queue it's in. Try addRequestId first; fall back to a
+      // property match so recall works even if addRequestId wasn't persisted.
+      const _ADD_TYPES = new Set(["Add Section", "Add Section & Split Enrollment"]);
+      let _reqIdx = o.addRequestId
+        ? state.requests.findIndex(r => r.id === o.addRequestId)
+        : -1;
+      if (_reqIdx === -1 && o.isNewSection) {
+        const _parts = (c.code || "").split(/\s+/);
+        _reqIdx = state.requests.findIndex(r =>
+          _ADD_TYPES.has(r.changeType) &&
+          r.prefix  === (_parts[0] || "") &&
+          r.number  === (_parts[1] || "") &&
+          r.term    === o.semester &&
+          r.subterm === o.subterm &&
+          r.year    === o.year
+        );
       }
+      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      o.addRequestId = "";
       markLocallyTouched(o.id);
       setDirty(true);
       renderTerms();
       if (typeof renderRequests  === "function") renderRequests();
       if (typeof renderRegistrar === "function") renderRegistrar();
       if (typeof renderChangelog === "function") renderChangelog();
-      toast(`${c.code || "Section"} removed from Registrar queue`);
+      toast(`${c.code || "Section"} recalled — removed from queue`);
     }
   });
 
