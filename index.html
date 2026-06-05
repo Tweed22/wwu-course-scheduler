@@ -5482,11 +5482,33 @@ function submitNewSectionChange(o) {
      • Leaves only Faculty Member Signature and Date as editable fields
      • Locks all other content (drawn as static text, not form fields)
    ===================================================================== */
-async function generateOnlineContractPDF(offeringId) {
-  const o = state.offerings.find(x => x.id === offeringId);
-  if (!o) return;
-  const c = state.courses.find(x => x.id === o.courseId);
-  if (!c) return;
+/* Call with an offeringId string, OR a direct data object:
+   { instructor, courseCodeFull, courseTitle, credits, startDate, endDate } */
+async function generateOnlineContractPDF(offeringIdOrData) {
+  function isoSlash(iso) {
+    if (!iso) return "TBD";
+    const [y, m, d] = iso.split("-");
+    return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+  }
+
+  let instructor, courseCodeFull, courseTitle, credits, startDate, endDate;
+  if (typeof offeringIdOrData === "object" && offeringIdOrData !== null) {
+    // Direct data path (from Change Request modal)
+    ({ instructor, courseCodeFull, courseTitle, credits, startDate, endDate } = offeringIdOrData);
+  } else {
+    // Offering-ID path (from Term Assignments)
+    const o = state.offerings.find(x => x.id === offeringIdOrData);
+    if (!o) return;
+    const c = state.courses.find(x => x.id === o.courseId);
+    if (!c) return;
+    instructor    = (o.instructor || "").trim();
+    const secNum  = sectionNumberFor(o);
+    courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
+    courseTitle   = (c.title || "").trim();
+    credits       = c.credits ?? 3;
+    startDate     = isoSlash(termStartDate(o.semester, o.subterm, o.year));
+    endDate       = isoSlash(termEndDate(o.semester, o.subterm, o.year));
+  }
 
   /* --- Lazy-load pdf-lib from CDN --- */
   if (!window.PDFLib) {
@@ -5501,20 +5523,8 @@ async function generateOnlineContractPDF(offeringId) {
 
   const { PDFDocument, StandardFonts, rgb } = PDFLib;
 
-  /* --- Data values --- */
-  const instructor    = (o.instructor || "").trim();
-  const secNum        = sectionNumberFor(o);
-  const courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
-  const courseTitle   = (c.title || "").trim();
-  const credits       = c.credits ?? 3;
-  const creditStr     = `${credits} Credit${credits !== 1 ? "s" : ""}`;
-  function isoSlash(iso) {
-    if (!iso) return "TBD";
-    const [y, m, d] = iso.split("-");
-    return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
-  }
-  const startDate = isoSlash(termStartDate(o.semester, o.subterm, o.year));
-  const endDate   = isoSlash(termEndDate(o.semester, o.subterm, o.year));
+  /* --- Data values (already resolved above) --- */
+  const creditStr = `${credits ?? 3} Credit${(credits ?? 3) !== 1 ? "s" : ""}`;
 
   /* --- Create document & fonts --- */
   const pdfDoc = await PDFDocument.create();
@@ -6009,6 +6019,45 @@ async function generateOnlineContractPDF(offeringId) {
   a.download = `${courseCodeFull.replace(/\s+/g, "_")}_Contract_${instructor.replace(/[^A-Za-z0-9]/g, "_")}.pdf`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* Build contract data from the currently-open Change Request modal and download PDF. */
+function contractDataFromRequestModal() {
+  const prefix  = (document.getElementById("rfld_prefix").value || "").trim().toUpperCase();
+  const number  = (document.getElementById("rfld_number").value || "").trim();
+  const secNum  = (document.getElementById("rfld_sectionNumber").value || "").trim();
+  const term    = document.getElementById("rfld_term").value || "";
+  const subterm = document.getElementById("rfld_subterm").value || "";
+  const year    = Number(document.getElementById("rfld_year").value) || 2026;
+  const instrEl = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
+  const instructor = instrEl ? instrEl.value.trim() : "";
+  if (!instructor) return null;
+  const code   = `${prefix} ${number}`.trim();
+  const course = state.courses.find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase());
+  function isoSlash(iso) {
+    if (!iso) return "TBD";
+    const [y, m, d] = iso.split("-");
+    return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}`;
+  }
+  return {
+    instructor,
+    courseCodeFull: [code, secNum].filter(Boolean).join(" "),
+    courseTitle:    course ? (course.title || "") : "",
+    credits:        course ? (course.credits ?? 3) : 3,
+    startDate:      isoSlash(termStartDate(term, subterm, year)),
+    endDate:        isoSlash(termEndDate(term, subterm, year)),
+  };
+}
+
+/* Update the Save button label in the Change Request modal based on
+   whether an instructor is entered and modality is Online. */
+function _updateReqSaveBtn() {
+  const btn = document.getElementById("btnReqSave");
+  if (!btn) return;
+  const modality   = (document.getElementById("rfld_modality") || {}).value || "";
+  const instrEl    = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
+  const hasInstr   = !!(instrEl && instrEl.value.trim());
+  btn.textContent  = (modality === "Online" && hasInstr) ? "Save & Generate Contract" : "Save";
 }
 
 /* Lock a section and mark it as submitted to the Registrar. */
@@ -8508,6 +8557,7 @@ function openRequestModal(r) {
   const isExisting = state.requests.find(x => x.id === r.id);
   document.getElementById("btnReqDelete").style.display = isExisting ? "" : "none";
   document.getElementById("reqModal").classList.add("open");
+  _updateReqSaveBtn(); // reset button label whenever the modal opens
 }
 function closeRequestModal() {
   document.getElementById("reqModal").classList.remove("open");
@@ -8752,10 +8802,24 @@ function saveRequestFromModal() {
     toast("Request created");
   }
   setDirty(true);
+
+  // Capture contract data BEFORE closing the modal (form fields still accessible).
+  const _reqContractData = (draft.modality === "Online" && !existing)
+    ? contractDataFromRequestModal()
+    : null;
+
   closeRequestModal();
   renderRequests();
   if (typeof renderTerms === "function") renderTerms();
   if (typeof renderChangelog === "function") renderChangelog();
+
+  // Generate and download the contract PDF if applicable.
+  if (_reqContractData) {
+    generateOnlineContractPDF(_reqContractData).catch(err => {
+      console.error("Contract PDF generation failed:", err);
+      toast("Request saved — contract PDF could not be generated", "error");
+    });
+  }
 }
 
 function transitionRequest(id, action) {
@@ -8955,6 +9019,8 @@ function bindRequestEvents() {
     closeRequestModal();
   });
   document.getElementById("reqForm").addEventListener("submit", (e) => { e.preventDefault(); saveRequestFromModal(); });
+  // Morph "Save" ↔ "Save & Generate Contract" as instructor / modality change.
+  document.getElementById("reqModal").addEventListener("input", () => _updateReqSaveBtn());
   document.getElementById("reqModal").addEventListener("click", (e) => {
     if (e.target.id === "reqModal") closeRequestModal();
   });
