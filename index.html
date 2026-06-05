@@ -711,29 +711,36 @@
   .term-15W, .term-16W { background: #eceef0; color: #334855; font-size: 10px; padding: 2px 5px; }
   .term-AN { background: #faeede; color: #8a5a13; font-size: 10px; padding: 2px 5px; }
 
-  /* Each term-table row is tall enough for two lines of text (~44px) */
+  /* Each term-table row is tall enough for two lines of text */
   .term-table tbody tr { height: 50px; }
   td.actions { white-space: nowrap; }
-  /* Never wrap these columns */
+
+  /* ── PRIORITY COLUMNS: Course, Instructor, Actions — never shrink ── */
+  .term-table th[data-tsort="code"],
+  .term-table td.code                                { white-space: nowrap; width: 140px; min-width: 140px; max-width: 140px; }
+  .term-table th[data-tsort="instructor"],
+  .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
+  .term-table th.no-sort:nth-child(7),
+  .term-table td.actions                             { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
+
+  /* ── SECONDARY columns: Length and PM stay on one line but can flex ── */
   .term-table td.length-cell,
   .term-table td.pm-cell { white-space: nowrap; }
-  /* +10px left padding (18px total) on every column gap except Length→PM */
+
+  /* ── SHRINK TIER 2: Title shrinks with ellipsis (after Notes gone) ── */
   .term-table th[data-tsort="title"],
   .term-table td.title-cell {
     padding-left: 18px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 0;           /* lets cell compress — browser fills it from available space */
-    min-width: 60px;        /* floor: never narrower than 60px */
+    max-width: 0;      /* allows browser to compress */
+    min-width: 60px;   /* floor */
   }
-  .term-table th[data-tsort="instructor"],
-  .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
-  .term-table th.no-sort:nth-child(7),
-  .term-table td.actions                             { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
-  /* Notes: drops first when space is tight (min-width 0 so it compresses before Title) */
+
+  /* ── SHRINK TIER 1: Notes drops first (min-width 0) ── */
   .term-table th.no-sort:nth-child(8),
-  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; width: 100%; min-width: 0; }
+  .term-table td:has(input[data-field="notes"]) { padding-left: 18px; width: 100%; min-width: 0; }
   .actions button {
     font: inherit;
     padding: 3px 9px;
