@@ -729,11 +729,11 @@
   .term-table th[data-tsort="pm"]      { width: 160px; padding-left: 18px; }
   .term-table td.pm-cell               { white-space: nowrap; overflow: hidden; }
 
-  /* ── TITLE: fills remaining space, truncates with ellipsis, re-expands
-     when viewport grows (table-layout:fixed handles this naturally).
-     min-width prevents it from collapsing to 0 on narrow viewports —
-     the table will scroll horizontally before Title disappears. ── */
-  .term-table th[data-tsort="title"]  { min-width: 160px; }
+  /* ── TITLE (400px desired, 160px min) + NOTES (120px desired, 80px min):
+     Both truncate with ellipsis. They scale proportionally (~77/23 split of
+     remaining space), so Notes hits its floor first on shrink and Title
+     recovers first on grow. ── */
+  .term-table th[data-tsort="title"]  { width: 400px; min-width: 160px; }
   .term-table td.title-cell {
     padding-left: 18px;
     white-space: nowrap;
@@ -742,9 +742,9 @@
     min-width: 160px;
   }
 
-  /* ── NOTES: compact fixed width — gives up space first visually ── */
-  .term-table th.no-sort:nth-child(8)               { width: 100px; padding-left: 18px; }
-  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; overflow: hidden; }
+  .term-table th.no-sort:nth-child(8)               { width: 120px; min-width: 80px; padding-left: 18px; }
+  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; overflow: hidden; white-space: nowrap; min-width: 80px; }
+  .term-table input[data-field="notes"]              { overflow: hidden; text-overflow: ellipsis; }
   .actions button {
     font: inherit;
     padding: 3px 9px;
