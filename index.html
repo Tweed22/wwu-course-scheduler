@@ -8622,12 +8622,15 @@ function closeRequestModal() {
 
 function openNewRequest(prefill = {}) {
   const r = newRequest(prefill);
+  // Always start with blank modality so the user must make a required selection.
+  // (newRequest defaults to "On-Ground" but the New Request button should be clean.)
+  if (!prefill.modality) r.modality = "";
   openRequestModal(r);
-  // For a blank new request, start with an empty type so the dynamic
-  // form shows just the "What would you like to request?" selector.
+  // For a blank new request, reset to an empty change block and re-enforce locks.
   if (!prefill.prefix && !prefill.number && !prefill.courseId) {
     state.editingChanges = [{ type: "", fields: {} }];
     renderChangeList();
+    _updateReqSaveBtn(); // re-locks change section since modality is blank
   }
 }
 function openEditRequest(id) {
