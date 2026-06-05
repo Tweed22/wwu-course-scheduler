@@ -2397,6 +2397,18 @@
         <input id="rfld_offeringId"    type="hidden">
         <input id="rfld_submitter"     type="hidden">
 
+        <!-- Modality — required, always at the top -->
+        <div class="row full">
+          <div>
+            <label for="rfld_modality_select">Modality <span style="color:var(--danger);font-weight:700;">*</span></label>
+            <select id="rfld_modality_select" required>
+              <option value="">— Select Modality —</option>
+              <option value="On-Ground">On-Ground</option>
+              <option value="Online">Online</option>
+            </select>
+          </div>
+        </div>
+
         <!-- Multi-change list. Each block carries its own type + type-specific
              fields. Use the + button to add additional changes for the same
              course in one submission. -->
@@ -8520,6 +8532,9 @@ function openRequestModal(r) {
   document.getElementById("rfld_date").value = dateVal;
   document.getElementById("rfld_section").value = r.section || "Undergrad";
   document.getElementById("rfld_modality").value = r.modality || "On-Ground";
+  // Sync the visible modality select; new blank requests start with no selection (required).
+  const _modalitySel = document.getElementById("rfld_modality_select");
+  if (_modalitySel) _modalitySel.value = r.modality || "";
   document.getElementById("rfld_term").value = r.term || "Fall";
   document.getElementById("rfld_subterm").value = r.subterm || "Semester";
   document.getElementById("rfld_year").value = r.year || 2026;
@@ -8731,6 +8746,7 @@ function saveRequestFromModal() {
   // Status is always "Pending Approval" while in the queue. Lifecycle transitions
   // (Approve & Send / Reject / Delete) happen via row buttons, not this modal.
   if (!existing) draft.status = "Pending Approval";
+  if (!draft.modality) { toast("Please select a modality before saving"); document.getElementById("rfld_modality_select").focus(); return; }
   if (!draft.submitter) { toast("Submitter is required"); return; }
 
   // Guard: "Add Course" is only valid when the course doesn't already have an
@@ -9021,6 +9037,11 @@ function bindRequestEvents() {
   document.getElementById("reqForm").addEventListener("submit", (e) => { e.preventDefault(); saveRequestFromModal(); });
   // Morph "Save" ↔ "Save & Generate Contract" as instructor / modality change.
   document.getElementById("reqModal").addEventListener("input", () => _updateReqSaveBtn());
+  // Keep hidden rfld_modality in sync with the visible select.
+  document.getElementById("rfld_modality_select").addEventListener("change", (e) => {
+    document.getElementById("rfld_modality").value = e.target.value;
+    _updateReqSaveBtn();
+  });
   document.getElementById("reqModal").addEventListener("click", (e) => {
     if (e.target.id === "reqModal") closeRequestModal();
   });
