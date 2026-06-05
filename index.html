@@ -718,7 +718,8 @@
   .term-table td.title-cell,
   .term-table td.length-cell,
   .term-table td.pm-cell,
-  .term-table td:has(input[data-field="instructor"]) { white-space: nowrap; }
+  .term-table td:has(input[data-field="instructor"]) { white-space: nowrap; min-width: 180px; }
+  .term-table th[data-tsort="instructor"]             { min-width: 180px; }
   /* Notes absorbs leftover space; can shrink to near-zero */
   .term-table td:has(input[data-field="notes"]) { width: 100%; min-width: 60px; }
   .actions button {
