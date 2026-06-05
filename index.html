@@ -5120,7 +5120,8 @@ function renderTermTable(list) {
       // Added sections route through Change Requests for dean approval, not
       // directly to the Registrar. One click — no dialog — mirrors the feel
       // of "Submit to Registrar" but lands in the Change Requests queue.
-      actionBtn = isOnline
+      const _hasInstr = !!(o.instructor && o.instructor.trim());
+      actionBtn = (isOnline && _hasInstr)
         ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
         : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
@@ -7549,18 +7550,25 @@ function bindTermEvents() {
       // Morph the single action button between Submit ↔ Cancel as the user
       // types. Only fires for editable rows (submitted/canceled rows have
       // Re-instate / Request Change which we don't touch).
-      if (f === "instructor" && !o.submitted && !o.canceled && !o.isNewSection) {
+      if (f === "instructor" && !o.submitted && !o.canceled) {
         const cell = row.querySelector("td.actions");
         if (cell) {
           const hasInstructor = !!(o.instructor && o.instructor.trim());
           const oid = escapeHtml(o.id);
           const _c2 = state.courses.find(x => x.id === o.courseId) || {};
           const _online = !!(_c2.onlineFall||[]).length || !!(_c2.onlineSpring||[]).length || !!(_c2.onlineSummer||[]).length;
-          cell.innerHTML = hasInstructor
-            ? (_online
-                ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
-                : `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`)
-            : `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${oid}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
+          if (o.isNewSection) {
+            // New sections: morph between Submit Change ↔ Submit & Generate Contract
+            cell.innerHTML = (hasInstructor && _online)
+              ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
+              : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
+          } else {
+            cell.innerHTML = hasInstructor
+              ? (_online
+                  ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
+                  : `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`)
+              : `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${oid}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
+          }
         }
       }
     }
@@ -7631,10 +7639,10 @@ function bindTermEvents() {
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
       submitNewSectionChange(o);
-      // Also generate the contract PDF for online courses.
+      // Also generate the contract PDF for online courses with an instructor assigned.
       const _c = state.courses.find(x => x.id === o.courseId);
       const _online = _c && (!!((_c.onlineFall||[]).length) || !!((_c.onlineSpring||[]).length) || !!((_c.onlineSummer||[]).length));
-      if (_online) {
+      if (_online && o.instructor && o.instructor.trim()) {
         generateOnlineContractPDF(oid).catch(err => {
           console.error("Contract PDF generation failed:", err);
           toast("Contract PDF could not be generated", "error");
