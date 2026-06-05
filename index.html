@@ -5153,7 +5153,7 @@ function renderTermTable(list) {
     const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
     // Download-contract icon button shown on SENT and DONE rows for online courses
     const _dlIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-    const dlContractBtn = isOnline
+    const dlContractBtn = (isOnline && o.instructor && o.instructor.trim())
       ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">${_dlIcon} Contract</button>`
       : "";
     let actionBtn;
