@@ -5115,7 +5115,7 @@ function renderTermTable(list) {
       actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>${dlContractBtn}`;
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>${dlContractBtn}`;
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>${dlContractBtn}`;
     } else if (o.isNewSection) {
       // Added sections route through Change Requests for dean approval, not
       // directly to the Registrar. One click — no dialog — mirrors the feel
