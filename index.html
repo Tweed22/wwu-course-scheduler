@@ -5116,12 +5116,9 @@ function renderTermTable(list) {
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
       actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>`;
-    } else if (o.isNewSection) {
-      // Added sections route through Change Requests for dean approval, not
-      // directly to the Registrar. One click — no dialog — mirrors the feel
-      // of "Submit to Registrar" but lands in the Change Requests queue.
-      const _hasInstr = !!(o.instructor && o.instructor.trim());
-      actionBtn = (isOnline && _hasInstr)
+    } else if (o.isNewSection && o.instructor && o.instructor.trim()) {
+      // Added sections with an instructor assigned route through Change Requests.
+      actionBtn = (isOnline)
         ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
         : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
@@ -7557,12 +7554,13 @@ function bindTermEvents() {
           const oid = escapeHtml(o.id);
           const _c2 = state.courses.find(x => x.id === o.courseId) || {};
           const _online = !!(_c2.onlineFall||[]).length || !!(_c2.onlineSpring||[]).length || !!(_c2.onlineSummer||[]).length;
-          if (o.isNewSection) {
-            // New sections: morph between Submit Change ↔ Submit & Generate Contract
-            cell.innerHTML = (hasInstructor && _online)
+          if (o.isNewSection && hasInstructor) {
+            // New sections with instructor: morph between Submit Change ↔ Submit & Generate Contract
+            cell.innerHTML = _online
               ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
               : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
           } else {
+            // No instructor (new or regular section): fall through to Cancel Course below
             cell.innerHTML = hasInstructor
               ? (_online
                   ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
