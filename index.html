@@ -5199,7 +5199,7 @@ function renderTermTable(list) {
       // "+" always visible on the first section — even after submission or
       // registrar completion — so a new section can be added at any time.
       sectionActionBtn = `<button type="button" class="add-section-btn" data-tact="addsection" data-oid="${escapeHtml(o.id)}" title="Add another section of this course">+</button>`;
-    } else if (o.isNewSection && !o.submitted) {
+    } else if (o.isNewSection && !o.submitted && !o.canceled) {
       // Added sections that haven't been sent to the Registrar can still be removed.
       sectionActionBtn = `<button type="button" class="add-section-btn remove-section-btn" data-tact="removesection" data-oid="${escapeHtml(o.id)}" title="Remove this added section">−</button>`;
     }
@@ -7544,10 +7544,10 @@ function saveSectionFromModal() {
     instructor:     document.getElementById("sfld_instructor").value.trim(),
     notes:          document.getElementById("sfld_notes").value.trim(),
   });
-  // Added sections always start unsubmitted — instructor can be filled in
-  // now or later. The user clicks "Request Change" to send for approval
-  // rather than routing straight to the Registrar.
-  o.isNewSection = true;
+  o.isNewSection  = true;
+  o.submitted     = true;
+  o.submittedAt   = new Date().toISOString();
+  o.submittedBy   = state.userName || "(unknown)";
   state.offerings.push(o);
   markLocallyTouched(o.id);   // suppress echo before the flush catches up
   setDirty(true);
