@@ -5631,9 +5631,7 @@ async function generateOnlineContractPDF(offeringId) {
     width: _logoDisplayW,
     height: _logoDisplayH,
   });
-  cy -= (_logoDisplayH + 10);
-  cp.drawLine({ start: { x: ML, y: cy }, end: { x: PW - MR, y: cy }, thickness: 0.75, color: GREY });
-  cy -= 10;
+  cy -= (_logoDisplayH + 20);
 
   /* --- Greeting --- */
   cp.drawText(`Dear ${instructor}:`, { x: ML, y: cy, size: 11, font: fR, color: K });
