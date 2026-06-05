@@ -1136,26 +1136,25 @@
   html.dark .term-table .btn-submit.needs-submit:hover {
     background: #9ddcff;
   }
-  /* Re-generate contract download button */
+  /* Re-generate contract download button — matches Undo / Request Change sizing */
   .term-table .btn-dl-contract {
-    padding: 3px 7px;
-    font-size: 13px;
-    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    font-size: 11.5px;
+    border: 1px solid var(--wwu-green);
     border-radius: 5px;
-    background: var(--surface-1);
+    background: white;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--wwu-green);
     margin-left: 5px;
     vertical-align: middle;
     line-height: 1;
   }
-  .term-table .btn-dl-contract:hover {
-    background: var(--surface-2);
-    color: var(--text);
-    border-color: var(--wwu-green);
-  }
-  html.dark .term-table .btn-dl-contract { background: rgba(255,255,255,0.06); color: #aaa; }
-  html.dark .term-table .btn-dl-contract:hover { background: rgba(255,255,255,0.14); color: #fff; border-color: #5cdaef; }
+  .term-table .btn-dl-contract:hover { background: var(--wwu-green); color: white; }
+  html.dark .term-table .btn-dl-contract { background: transparent; color: #5cdaef; border-color: #5cdaef; }
+  html.dark .term-table .btn-dl-contract:hover { background: rgba(92,218,239,0.18); color: #fff; }
   .term-table .btn-req-change {
     color: var(--wwu-green);
     border-color: var(--wwu-green);
@@ -3535,7 +3534,7 @@ let _hasDataColumn = true;
 // realtime echoes "T" back and overwrites local state, then next flush
 // re-sends and bounces again.
 const _localTouchedAt = new Map();
-const LOCAL_TOUCH_WINDOW_MS = 2500;
+const LOCAL_TOUCH_WINDOW_MS = 6000;
 function markLocallyTouched(id) {
   if (id) _localTouchedAt.set(id, Date.now());
 }
@@ -5085,8 +5084,9 @@ function renderTermTable(list) {
     // (see the keystroke handler in bindTermEvents that toggles class/text).
     const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
     // Download-contract icon button shown on SENT and DONE rows for online courses
+    const _dlIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
     const dlContractBtn = isOnline
-      ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">⬇</button>`
+      ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">${_dlIcon}</button>`
       : "";
     let actionBtn;
     if (o.canceled) {
@@ -7534,8 +7534,12 @@ function bindTermEvents() {
         if (cell) {
           const hasInstructor = !!(o.instructor && o.instructor.trim());
           const oid = escapeHtml(o.id);
+          const _c2 = state.courses.find(x => x.id === o.courseId) || {};
+          const _online = !!(_c2.onlineFall||[]).length || !!(_c2.onlineSpring||[]).length || !!(_c2.onlineSummer||[]).length;
           cell.innerHTML = hasInstructor
-            ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`
+            ? (_online
+                ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
+                : `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`)
             : `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${oid}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
         }
       }
