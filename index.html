@@ -1136,6 +1136,26 @@
   html.dark .term-table .btn-submit.needs-submit:hover {
     background: #9ddcff;
   }
+  /* Re-generate contract download button */
+  .term-table .btn-dl-contract {
+    padding: 3px 7px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface-1);
+    cursor: pointer;
+    color: var(--text-muted);
+    margin-left: 5px;
+    vertical-align: middle;
+    line-height: 1;
+  }
+  .term-table .btn-dl-contract:hover {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--wwu-green);
+  }
+  html.dark .term-table .btn-dl-contract { background: rgba(255,255,255,0.06); color: #aaa; }
+  html.dark .term-table .btn-dl-contract:hover { background: rgba(255,255,255,0.14); color: #fff; border-color: #5cdaef; }
   .term-table .btn-req-change {
     color: var(--wwu-green);
     border-color: var(--wwu-green);
@@ -5063,22 +5083,29 @@ function renderTermTable(list) {
     //   • Editable section without instructor: Cancel Course
     // The button morphs in place as the user types into the instructor field
     // (see the keystroke handler in bindTermEvents that toggles class/text).
+    const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+    // Download-contract icon button shown on SENT and DONE rows for online courses
+    const dlContractBtn = isOnline
+      ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">⬇</button>`
+      : "";
     let actionBtn;
     if (o.canceled) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>${dlContractBtn}`;
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>`;
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Undo</button>${dlContractBtn}`;
     } else if (o.isNewSection) {
       // Added sections route through Change Requests for dean approval, not
       // directly to the Registrar. One click — no dialog — mirrors the feel
       // of "Submit to Registrar" but lands in the Change Requests queue.
       actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
-      actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
+      actionBtn = isOnline
+        ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
+        : `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="An instructor is assigned — submit to the Registrar to lock it in">→ Submit to Registrar</button>`;
     } else {
       actionBtn = `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
@@ -7554,6 +7581,13 @@ function bindTermEvents() {
     } else if (act === "submit") {
       const oid = btn.dataset.oid;
       if (oid) submitSectionToRegistrar(oid);
+    } else if (act === "gencontract") {
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      generateOnlineContractPDF(oid).catch(err => {
+        console.error("Contract PDF generation failed:", err);
+        toast("Contract PDF could not be generated", "error");
+      });
     } else if (act === "cancel") {
       const oid = btn.dataset.oid;
       if (oid) cancelCourseOffering(oid);
