@@ -5272,9 +5272,8 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const termLabel = def ? def.label : `${o.semester} ${o.subterm}`;
   const instr = (o.instructor || "").trim();
 
-  // Determine the correct Add Section type from the course modality.
   const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
-  const addSectionType = isOnline ? "Add Section & Split Enrollment" : "Add Section";
+  const addSectionType = opts.addSectionType || (isOnline ? "Add Section & Split Enrollment" : "Add Section");
   const modality       = isOnline ? "Online" : "On-Ground";
 
   // Build the change list.  The Add Section block never carries the instructor
@@ -7531,12 +7530,23 @@ function saveSectionFromModal() {
     return;
   }
   hint.textContent = "";
-  const length = document.getElementById("sfld_length").value;
+  const length   = document.getElementById("sfld_length").value;
+  const semester = document.getElementById("sfld_semester").value;
+  const subterm  = document.getElementById("sfld_subterm").value;
+  const year     = Number(document.getElementById("sfld_year").value) || 2026;
+
+  // Determine request type before creating the offering so the count is accurate.
+  const existingCount = state.offerings.filter(x =>
+    x.courseId === c.id && x.semester === semester &&
+    x.subterm === subterm && x.year === year && !x.canceled
+  ).length;
+  const addSectionType = existingCount > 0 ? "Add Section & Split Enrollment" : "Add Section";
+
   const o = newOffering({
     courseId:       c.id,
-    semester:       document.getElementById("sfld_semester").value,
-    subterm:        document.getElementById("sfld_subterm").value,
-    year:           Number(document.getElementById("sfld_year").value) || 2026,
+    semester,
+    subterm,
+    year,
     length:         length,
     rotationSlot:   rotationSlotForLength(length),
     dean:           deanForCourse(c),
@@ -7549,7 +7559,8 @@ function saveSectionFromModal() {
   o.submittedAt   = new Date().toISOString();
   o.submittedBy   = state.userName || "(unknown)";
   state.offerings.push(o);
-  markLocallyTouched(o.id);   // suppress echo before the flush catches up
+  markLocallyTouched(o.id);
+  createAddCourseRequestForNewSection(o, { addSectionType });
   setDirty(true);
   // Jump the Term Assignments view to the subterm/year where the section was added
   state.termFilter.semester = o.semester;
@@ -7562,7 +7573,7 @@ function saveSectionFromModal() {
   closeSectionModal();
   const hasInstr = !!(o.instructor && o.instructor.trim());
   const instrNote = hasInstr ? ` (instructor: ${o.instructor.trim()})` : " — instructor pending";
-  toast(`Added ${c.code} to ${o.semester} ${o.subterm} ${o.year}${instrNote} — Add Section & Split Enrollment request queued`);
+  toast(`Added ${c.code} to ${semester} ${subterm} ${year}${instrNote} — ${addSectionType} request queued`);
   if (hasInstr) {
     generateOnlineContractPDF(o.id).catch(err => {
       console.error("Contract PDF generation failed:", err);
