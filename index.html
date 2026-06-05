@@ -1156,7 +1156,7 @@
     border-radius: 4px;
     cursor: pointer;
     font-weight: 600;
-    margin-left: 5px;
+    margin-right: 5px;
   }
   .term-table .btn-dl-contract:hover { background: #e9f2ed; }
   html.dark .term-table .btn-dl-contract {
@@ -5112,10 +5112,10 @@ function renderTermTable(list) {
       actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>${dlContractBtn}`;
+      actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>${dlContractBtn}`;
+      actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>`;
     } else if (o.isNewSection) {
       // Added sections route through Change Requests for dean approval, not
       // directly to the Registrar. One click — no dialog — mirrors the feel
