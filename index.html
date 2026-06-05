@@ -6110,6 +6110,13 @@ function _updateReqSaveBtn() {
   // Lock the change section until modality is chosen.
   const section = document.getElementById("reqChangeSection");
   if (section) section.classList.toggle("change-locked", !modality);
+  // Hide "+ Add change" until modality is set AND every existing block has a type.
+  const addBtn = document.getElementById("btnReqAddChange");
+  if (addBtn) {
+    const changes = state.editingChanges || [];
+    const allTyped = changes.length > 0 && changes.every(ch => !!ch.type);
+    addBtn.style.display = (modality && allTyped) ? "" : "none";
+  }
 }
 
 /* Lock a section and mark it as submitted to the Registrar. */
@@ -8392,6 +8399,7 @@ function renderChangeList() {
   const buf = state.editingChanges || [];
   if (!buf.length) {
     wrap.innerHTML = `<div class="cb-empty" style="padding:8px 0;">No changes yet — click "+ Add change" to begin.</div>`;
+    _updateReqSaveBtn();
     return;
   }
   wrap.innerHTML = buf.map((ch, i) => renderChangeBlock(i, ch)).join("");
@@ -8416,6 +8424,7 @@ function renderChangeList() {
         .join("");
     });
   }
+  _updateReqSaveBtn();
 }
 
 /* Pull current values from the rendered DOM back into state.editingChanges
