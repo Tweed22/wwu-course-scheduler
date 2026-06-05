@@ -7805,9 +7805,17 @@ function bindTermEvents() {
       o.submittedAt    = "";
       o.submittedBy    = "";
       o.instructor     = "";
+      // Remove the linked Add Section / Add Section & Split Enrollment request
+      // from the Change Requests queue, if one exists.
+      if (o.addRequestId) {
+        const reqIdx = state.requests.findIndex(r => r.id === o.addRequestId);
+        if (reqIdx !== -1) state.requests.splice(reqIdx, 1);
+        o.addRequestId = "";
+      }
       markLocallyTouched(o.id);
       setDirty(true);
       renderTerms();
+      if (typeof renderRequests  === "function") renderRequests();
       if (typeof renderRegistrar === "function") renderRegistrar();
       if (typeof renderChangelog === "function") renderChangelog();
       toast(`${c.code || "Section"} removed from Registrar queue`);
