@@ -7485,6 +7485,13 @@ function findCourseByInput(val) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+function _updateSecSaveBtn() {
+  const btn = document.getElementById("btnSecSave");
+  if (!btn) return;
+  const hasInstr = !!((document.getElementById("sfld_instructor") || {}).value || "").trim();
+  btn.textContent = hasInstr ? "Submit & Generate Contract" : "Add Section";
+}
+
 function openSectionModal() {
   refreshTermDatalists();       // makes sure dean/pm/instructor datalists are fresh
   refreshSectionCourseList();
@@ -7505,6 +7512,7 @@ function openSectionModal() {
   document.getElementById("sfld_pm").value = "";
   document.getElementById("sfld_instructor").value = "";
   document.getElementById("sfld_notes").value = "";
+  _updateSecSaveBtn();
   document.getElementById("secModal").classList.add("open");
   setTimeout(() => document.getElementById("sfld_course").focus(), 50);
 }
@@ -7552,8 +7560,15 @@ function saveSectionFromModal() {
   if (typeof renderChangelog === "function") renderChangelog();
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   closeSectionModal();
-  const instrNote = (o.instructor && o.instructor.trim()) ? ` (instructor: ${o.instructor.trim()})` : " — instructor pending";
+  const hasInstr = !!(o.instructor && o.instructor.trim());
+  const instrNote = hasInstr ? ` (instructor: ${o.instructor.trim()})` : " — instructor pending";
   toast(`Added ${c.code} to ${o.semester} ${o.subterm} ${o.year}${instrNote} — Add Section & Split Enrollment request queued`);
+  if (hasInstr) {
+    generateOnlineContractPDF(o.id).catch(err => {
+      console.error("Contract PDF generation failed:", err);
+      toast("Section added — contract PDF could not be generated", "error");
+    });
+  }
 }
 
 function bindTermEvents() {
@@ -7804,6 +7819,7 @@ function bindTermEvents() {
   document.getElementById("btnSecClose").addEventListener("click", closeSectionModal);
   document.getElementById("btnSecCancel").addEventListener("click", closeSectionModal);
   document.getElementById("secForm").addEventListener("submit", (e) => { e.preventDefault(); saveSectionFromModal(); });
+  document.getElementById("sfld_instructor").addEventListener("input", _updateSecSaveBtn);
   // Close on backdrop click
   document.getElementById("secModal").addEventListener("click", (e) => {
     if (e.target.id === "secModal") closeSectionModal();
