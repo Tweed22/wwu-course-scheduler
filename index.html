@@ -715,32 +715,33 @@
   .term-table tbody tr { height: 50px; }
   td.actions { white-space: nowrap; }
 
-  /* ── PRIORITY COLUMNS: Course, Instructor, Actions — never shrink ── */
-  .term-table th[data-tsort="code"],
-  .term-table td.code                                { white-space: nowrap; width: 140px; min-width: 140px; max-width: 140px; }
-  .term-table th[data-tsort="instructor"],
-  .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
-  .term-table th.no-sort:nth-child(7),
-  .term-table td.actions                             { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
+  /* ── PRIORITY COLUMNS: fixed widths, never shrink ── */
+  .term-table th[data-tsort="code"]                  { width: 140px; }
+  .term-table td.code                                { white-space: nowrap; overflow: hidden; }
+  .term-table th[data-tsort="instructor"]            { width: 250px; padding-left: 18px; }
+  .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; overflow: hidden; }
+  .term-table th.no-sort:nth-child(7)                { width: 250px; padding-left: 18px; }
+  .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
-  /* ── SECONDARY columns: Length and PM stay on one line but can flex ── */
-  .term-table td.length-cell,
-  .term-table td.pm-cell { white-space: nowrap; }
+  /* ── FIXED secondary columns ── */
+  .term-table th[data-tsort="length"]  { width: 80px; }
+  .term-table td.length-cell           { white-space: nowrap; overflow: hidden; }
+  .term-table th[data-tsort="pm"]      { width: 160px; padding-left: 18px; }
+  .term-table td.pm-cell               { white-space: nowrap; overflow: hidden; }
 
-  /* ── SHRINK TIER 2: Title shrinks with ellipsis (after Notes gone) ── */
+  /* ── TITLE: fills all remaining space; truncates with ellipsis and
+     re-expands naturally as the viewport grows (table-layout:fixed) ── */
   .term-table th[data-tsort="title"],
   .term-table td.title-cell {
     padding-left: 18px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 0;      /* allows browser to compress */
-    min-width: 60px;   /* floor */
   }
 
-  /* ── SHRINK TIER 1: Notes drops first (min-width 0) ── */
-  .term-table th.no-sort:nth-child(8),
-  .term-table td:has(input[data-field="notes"]) { padding-left: 18px; width: 100%; min-width: 0; }
+  /* ── NOTES: compact fixed width — gives up space first visually ── */
+  .term-table th.no-sort:nth-child(8)               { width: 100px; padding-left: 18px; }
+  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; overflow: hidden; }
   .actions button {
     font: inherit;
     padding: 3px 9px;
@@ -1030,7 +1031,7 @@
   .ct-location { background: #f3e6f8; color: #6a2382; }
 
   /* -------- Term-assignment table -------- */
-  .term-table { width: 100%; border-collapse: collapse; }
+  .term-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   /* Length column (3rd) — centered in both header and body. */
   .term-table th:nth-child(3), .term-table td:nth-child(3) { text-align: center; }
   .term-table th, .term-table td {
