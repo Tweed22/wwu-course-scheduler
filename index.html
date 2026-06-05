@@ -6076,9 +6076,10 @@ function contractDataFromRequestModal() {
   const prefix  = (document.getElementById("rfld_prefix").value || "").trim().toUpperCase();
   const number  = (document.getElementById("rfld_number").value || "").trim();
   const secNum  = (document.getElementById("rfld_sectionNumber").value || "").trim();
-  const term    = document.getElementById("rfld_term").value || "";
-  const subterm = document.getElementById("rfld_subterm").value || "";
-  const year    = Number(document.getElementById("rfld_year").value) || 2026;
+  const term        = document.getElementById("rfld_term").value || "";
+  const subtermLbl  = document.getElementById("rfld_subterm").value || "";
+  const year        = Number(document.getElementById("rfld_year").value) || 2026;
+  const { subterm } = reqSubtermToSlot(subtermLbl);
   const instrEl = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
   const instructor = instrEl ? instrEl.value.trim() : "";
   if (!instructor) return null;
