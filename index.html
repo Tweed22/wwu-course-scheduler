@@ -1516,6 +1516,11 @@
 
   /* Multi-change request dialog — each "change block" is a card containing
      a type dropdown, type-specific fields, and a remove button. */
+  #reqChangeSection.change-locked {
+    opacity: 0.38;
+    pointer-events: none;
+    user-select: none;
+  }
   .change-block {
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -2403,17 +2408,15 @@
           <div>
             <label for="rfld_modality_select">Modality <span style="color:var(--danger);font-weight:700;">*</span></label>
             <select id="rfld_modality_select" required>
-              <option value="">— Select Modality —</option>
+              <option value="">Select Modality</option>
               <option value="On-Ground">On-Ground</option>
               <option value="Online">Online</option>
             </select>
           </div>
         </div>
 
-        <!-- Multi-change list. Each block carries its own type + type-specific
-             fields. Use the + button to add additional changes for the same
-             course in one submission. -->
-        <div class="row full">
+        <!-- Multi-change list. Locked until modality is selected. -->
+        <div class="row full" id="reqChangeSection">
           <div>
             <div id="rfld_changeList" style="display:flex;flex-direction:column;gap:10px;"></div>
             <div style="margin-top:10px;display:flex;justify-content:flex-start;">
@@ -6063,15 +6066,17 @@ function contractDataFromRequestModal() {
   };
 }
 
-/* Update the Save button label in the Change Request modal based on
-   whether an instructor is entered and modality is Online. */
+/* Update the Save button label and change-section lock based on
+   whether an instructor is entered and modality is Online/selected. */
 function _updateReqSaveBtn() {
   const btn = document.getElementById("btnReqSave");
-  if (!btn) return;
   const modality   = (document.getElementById("rfld_modality") || {}).value || "";
   const instrEl    = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
   const hasInstr   = !!(instrEl && instrEl.value.trim());
-  btn.textContent  = (modality === "Online" && hasInstr) ? "Save & Generate Contract" : "Save";
+  if (btn) btn.textContent = (modality === "Online" && hasInstr) ? "Save & Generate Contract" : "Save";
+  // Lock the change section until modality is chosen.
+  const section = document.getElementById("reqChangeSection");
+  if (section) section.classList.toggle("change-locked", !modality);
 }
 
 /* Lock a section and mark it as submitted to the Registrar. */
