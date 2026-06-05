@@ -1928,7 +1928,7 @@
           <th data-tsort="code" style="width:140px;">Course</th>
           <th data-tsort="title">Title</th>
           <th data-tsort="length" style="width:80px;">Length</th>
-          <th data-tsort="dean">Dean</th>
+          <th data-tsort="dean" style="display:none;">Dean</th>
           <th data-tsort="pm">Program Manager</th>
           <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="min-width:220px;">Actions</th>
@@ -5184,7 +5184,7 @@ function renderTermTable(list) {
         </td>
         <td>${escapeHtml(c.title || "")}</td>
         <td>${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
-        <td class="dean-cell" title="Dean">${escapeHtml(deanForOffering(o) || "—")}</td>
+        <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
         <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td class="actions">${actionBtn}</td>
