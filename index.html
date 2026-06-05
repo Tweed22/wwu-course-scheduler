@@ -8583,7 +8583,7 @@ function openRequestModal(r) {
   const dateVal = r.date || new Date().toISOString().slice(0,10);
   document.getElementById("rfld_date").value = dateVal;
   document.getElementById("rfld_section").value = r.section || "Undergrad";
-  document.getElementById("rfld_modality").value = r.modality || "On-Ground";
+  document.getElementById("rfld_modality").value = r.modality ?? "On-Ground";
   // Sync the visible modality select; new blank requests start with no selection (required).
   const _modalitySel = document.getElementById("rfld_modality_select");
   if (_modalitySel) _modalitySel.value = r.modality || "";
