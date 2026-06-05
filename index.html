@@ -2458,7 +2458,7 @@
             <input id="rfld_changeType" type="hidden" value="Modify Time/Day">
           </div>
         </div>
-        <div class="row full">
+        <div class="row full" id="reqRationaleSection">
           <div>
             <label for="rfld_rationale">Rationale</label>
             <textarea id="rfld_rationale" rows="2" placeholder="Why this change is needed"></textarea>
@@ -6107,9 +6107,12 @@ function _updateReqSaveBtn() {
   const instrEl    = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
   const hasInstr   = !!(instrEl && instrEl.value.trim());
   if (btn) btn.textContent = (modality === "Online" && hasInstr) ? "Save & Generate Contract" : "Save";
-  // Lock the change section until modality is chosen.
+  // Hide change section and rationale until modality is chosen.
+  const hidden = !modality;
   const section = document.getElementById("reqChangeSection");
-  if (section) section.classList.toggle("change-locked", !modality);
+  if (section) section.style.display = hidden ? "none" : "";
+  const rationale = document.getElementById("reqRationaleSection");
+  if (rationale) rationale.style.display = hidden ? "none" : "";
   // Hide "+ Add change" until modality is set AND every existing block has a type.
   const addBtn = document.getElementById("btnReqAddChange");
   if (addBtn) {
