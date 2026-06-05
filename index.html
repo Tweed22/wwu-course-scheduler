@@ -715,20 +715,25 @@
   .term-table tbody tr { height: 50px; }
   td.actions { white-space: nowrap; }
   /* Never wrap these columns */
-  .term-table td.title-cell,
   .term-table td.length-cell,
   .term-table td.pm-cell { white-space: nowrap; }
-  /* +10px left padding (18px total) on every column gap except Length→PM
-     which is already handled by PM's existing padding-left:18px */
+  /* +10px left padding (18px total) on every column gap except Length→PM */
   .term-table th[data-tsort="title"],
-  .term-table td.title-cell                          { padding-left: 18px; }
+  .term-table td.title-cell {
+    padding-left: 18px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;           /* lets cell compress — browser fills it from available space */
+    min-width: 60px;        /* floor: never narrower than 60px */
+  }
   .term-table th[data-tsort="instructor"],
   .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
   .term-table th.no-sort:nth-child(7),
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; width: 250px; min-width: 250px; max-width: 250px; }
-  /* Notes: absorbs remaining space, can shrink, has left gap */
+  /* Notes: drops first when space is tight (min-width 0 so it compresses before Title) */
   .term-table th.no-sort:nth-child(8),
-  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; width: 100%; min-width: 60px; }
+  .term-table td:has(input[data-field="notes"])      { padding-left: 18px; width: 100%; min-width: 0; }
   .actions button {
     font: inherit;
     padding: 3px 9px;
