@@ -5120,7 +5120,9 @@ function renderTermTable(list) {
       // Added sections route through Change Requests for dean approval, not
       // directly to the Registrar. One click — no dialog — mirrors the feel
       // of "Submit to Registrar" but lands in the Change Requests queue.
-      actionBtn = `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
+      actionBtn = isOnline
+        ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
+        : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
       actionBtn = isOnline
         ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${escapeHtml(o.id)}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
@@ -7629,6 +7631,15 @@ function bindTermEvents() {
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
       submitNewSectionChange(o);
+      // Also generate the contract PDF for online courses.
+      const _c = state.courses.find(x => x.id === o.courseId);
+      const _online = _c && (!!((_c.onlineFall||[]).length) || !!((_c.onlineSpring||[]).length) || !!((_c.onlineSummer||[]).length));
+      if (_online) {
+        generateOnlineContractPDF(oid).catch(err => {
+          console.error("Contract PDF generation failed:", err);
+          toast("Contract PDF could not be generated", "error");
+        });
+      }
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
