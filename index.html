@@ -7803,7 +7803,6 @@ function bindTermEvents() {
   if (btnAddSectionEl) btnAddSectionEl.addEventListener("click", openSectionModal);
   document.getElementById("btnSecClose").addEventListener("click", closeSectionModal);
   document.getElementById("btnSecCancel").addEventListener("click", closeSectionModal);
-  document.getElementById("btnSecSave").addEventListener("click", saveSectionFromModal);
   document.getElementById("secForm").addEventListener("submit", (e) => { e.preventDefault(); saveSectionFromModal(); });
   // Close on backdrop click
   document.getElementById("secModal").addEventListener("click", (e) => {
