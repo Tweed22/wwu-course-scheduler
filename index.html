@@ -145,12 +145,12 @@
   }
   html.dark .modal header { border-bottom-color: var(--border); }
   /* Generic buttons — keep them readable on dark. */
-  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.add-section-btn):not(.term-subchip):not(.term-semester-chip):not(.qf-chip):not(.view-tabs button) {
+  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.add-section-btn):not(.term-subchip):not(.term-semester-chip):not(.qf-chip):not(.view-tabs button) {
     background: var(--surface-2);
     color: var(--text);
     border-color: var(--border);
   }
-  html.dark button:not(.primary):not(.danger):not(.btn-submit):not(.btn-req-change):not(.term-subchip):not(.view-tabs button):hover {
+  html.dark button:not(.primary):not(.danger):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.term-subchip):not(.view-tabs button):hover {
     border-color: #5cdaef;
     color: #5cdaef;
   }
@@ -1139,6 +1139,9 @@
   }
   /* Re-generate contract download button — pixel-identical to btn-req-change */
   .term-table .btn-dl-contract {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
     color: var(--wwu-green);
     border-color: var(--wwu-green);
     font-size: 11.5px;
@@ -1150,8 +1153,6 @@
     cursor: pointer;
     font-weight: 600;
     margin-left: 5px;
-    vertical-align: middle;
-    line-height: 1.4;
   }
   .term-table .btn-dl-contract:hover { background: #e9f2ed; }
   html.dark .term-table .btn-dl-contract {
@@ -1166,6 +1167,9 @@
     box-shadow: 0 0 12px rgba(92, 218, 239, 0.4);
   }
   .term-table .btn-req-change {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
     color: var(--wwu-green);
     border-color: var(--wwu-green);
     font-size: 11.5px;
