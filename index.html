@@ -1916,7 +1916,6 @@
           <th data-tsort="pm">Program Manager</th>
           <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="width:170px;">Actions</th>
-          <th class="no-sort" style="width:140px;">Notes</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -5162,7 +5161,6 @@ function renderTermTable(list) {
         <td class="pm-cell" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
         <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
         <td class="actions">${actionBtn}</td>
-        <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
       </tr>
     `;
   }).join("");
