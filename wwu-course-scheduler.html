@@ -5692,6 +5692,12 @@ async function init() {
   renderChangelog();
   setDirty(state.dirty);
   toast(`Loaded ${state.courses.length} courses from rotation sheet`);
+  // Deep-link support: ?view=requests (or terms/registrar/changelog/rotation)
+  // lets external apps like the Academic Apps hub link directly to a specific tab.
+  const _urlView = new URLSearchParams(location.search).get('view');
+  if (_urlView && ['requests','terms','registrar','changelog','rotation'].includes(_urlView)) {
+    switchView(_urlView);
+  }
   // Auto-resync the sheet every 15 minutes; failures during a poll are
   // surfaced as a toast — they don't block the UI.
   setInterval(async () => {
