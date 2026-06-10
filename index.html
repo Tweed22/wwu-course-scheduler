@@ -32,116 +32,99 @@
   }
   /* ──────────────────────────────────────────────────────────────────────
      Dark theme — blue/green vaporwave.
-     Deep midnight indigo backgrounds, neon teal/cyan accents, and a magenta
-     deadline pop. Designed for high readability — text contrast against the
-     darkest surface clears WCAG AA. */
+     Neutral charcoal — no neon, no glow effects. Matches the Registration
+     Dashboard dark mode for a consistent look across apps. */
   html.dark {
-    --bg: #0a0f24;
-    --surface: #131a36;
-    --surface-2: #1a2347;
-    --border: #2b3866;
-    --border-strong: #3d5290;
-    --text: #e7f4ff;
-    --text-muted: #8fb5d5;
-    --danger: #ff7eb6;
-    --danger-bg: #3a1530;
-    --warn: #f6c177;
-    --warn-bg: #3a2e15;
-    --ok: #5cdaef;
-    --ok-bg: #0e2638;
-    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 4px 18px rgba(8, 16, 50, .55);
-    --highlight-bg: #1a2347;
-    --highlight-border: #5cdaef;
-    --highlight-text: #b8f4ff;
-    /* Magenta-pink deadline accent for the vaporwave pop. */
-    --deadline-accent: #ff66c4;
-    /* Re-skin the brand greens onto the neon teal/mint range. */
-    --wwu-green: #2dd4bf;
-    --wwu-green-dark: #5cdaef;
-    --wwu-green-light: #1a2347;
-    --wwu-gold: #ff9ad6;
+    --bg: #1c1c1c;
+    --surface: #262626;
+    --surface-2: #2e2e2e;
+    --border: #353535;
+    --border-strong: #484848;
+    --text: #e0e0e0;
+    --text-muted: #a8a8a8;
+    --danger: #d77575;
+    --danger-bg: #3a2828;
+    --warn: #d4a55b;
+    --warn-bg: #3a3220;
+    --ok: #5ab57d;
+    --ok-bg: #1f3528;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 4px 18px rgba(0,0,0,.35);
+    --highlight-bg: #2e2e2e;
+    --highlight-border: #484848;
+    --highlight-text: #e0e0e0;
+    --deadline-accent: #d77575;
+    --wwu-green: #5ab57d;
+    --wwu-green-dark: #3a8a5d;
+    --wwu-green-light: #1f3528;
+    --wwu-gold: #d4a55b;
   }
-  /* Page background — visible vaporwave gradient: a soft teal sun in the
-     top-right, a magenta horizon wash in the bottom-left, layered over a diagonal
-     indigo→midnight-purple base. Pinned to the viewport so it doesn't repeat
-     while scrolling. */
   html.dark body {
-    background:
-      radial-gradient(ellipse 80% 60% at 100% 0%,  rgba(92, 218, 239, 0.30), transparent 65%),
-      radial-gradient(ellipse 80% 60% at 0% 100%,  rgba(255, 102, 196, 0.22), transparent 65%),
-      linear-gradient(155deg, #0a0f24 0%, #0d1442 35%, #1a134a 70%, #261138 100%);
-    background-attachment: fixed;
+    background: #1c1c1c;
     min-height: 100vh;
   }
-  /* Header — deep indigo gradient with a subtle teal glow line. */
   html.dark header.app-header {
-    background: linear-gradient(90deg, #0d1430 0%, #161e44 50%, #1a2050 100%);
-    border-bottom: 1px solid #2dd4bf33;
-    box-shadow: 0 0 24px rgba(45, 212, 191, 0.08), var(--shadow);
+    background: #262626;
+    border-bottom: 1px solid #353535;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
   }
   html.dark header.app-header h1 {
-    color: #e7f4ff;
-    text-shadow: 0 0 20px rgba(92, 218, 239, 0.35);
+    color: #e0e0e0;
   }
-  html.dark header.app-header .sub { color: #8fb5d5; }
-  /* Tab nav — same color as the header so it reads as one continuous bar. */
+  html.dark header.app-header .sub { color: #a8a8a8; }
   html.dark .view-tabs {
-    background: linear-gradient(90deg, #0d1430 0%, #161e44 50%, #1a2050 100%);
-    border-top: 1px solid rgba(92, 218, 239, 0.08);
+    background: #1f1f1f;
+    border-top: 1px solid #353535;
   }
   html.dark .view-tabs button {
-    color: #8fb5d5;
+    color: #a8a8a8;
     background: transparent;
   }
-  html.dark .view-tabs button:hover { color: #d4e8ff; }
-  /* Active tab — a softer blue highlight (not bright cyan), with light text
-     that contrasts well without shouting. */
+  html.dark .view-tabs button:hover { color: #e0e0e0; }
   html.dark .view-tabs button.active {
-    background: rgba(92, 142, 200, 0.18);
-    color: #d4e8ff;
-    border-bottom: 2px solid #6ba2d6;
+    background: #353535;
+    color: #e0e0e0;
+    border-bottom: 2px solid #6ba5d4;
     text-shadow: none;
     font-weight: 600;
   }
   html.dark .view-tabs .tab-badge {
     background: rgba(255, 255, 255, 0.16);
-    color: #e7f4ff;
+    color: #e0e0e0;
   }
-  /* Form controls — readable contrast on dark indigo. Use stronger selectors
-     to override the inline `background: white` from .toolbar/.term-table rules. */
+  /* Form controls */
   html.dark input, html.dark select, html.dark textarea,
   html.dark .toolbar input[type=text], html.dark .toolbar select,
   html.dark .term-table input, html.dark .term-table select {
-    background: #1a2347;
+    background: #1a1a1a;
     color: var(--text);
     border-color: var(--border);
   }
-  html.dark input::placeholder, html.dark textarea::placeholder { color: #6a86a8; }
+  html.dark input::placeholder, html.dark textarea::placeholder { color: #707070; }
   html.dark input:focus, html.dark select:focus, html.dark textarea:focus,
   html.dark .toolbar input[type=text]:focus, html.dark .toolbar select:focus,
   html.dark .term-table input:focus, html.dark .term-table select:focus {
-    border-color: #6ba2d6;
-    outline: 2px solid rgba(107, 162, 214, 0.3);
-    background: #1f2a52;
+    border-color: #6ba5d4;
+    outline: 2px solid rgba(107, 165, 212, 0.3);
+    background: #202020;
   }
   /* Override inline `style="background:white"` on toolbar buttons (Sync, Clear).
      Inline styles need !important to lose to CSS. */
   html.dark .toolbar button[style*="background:white"],
   html.dark .toolbar button[style*="background: white"] {
-    background: #1a2347 !important;
+    background: #1a1a1a !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
   }
   html.dark .toolbar button[style*="background:white"]:hover,
   html.dark .toolbar button[style*="background: white"]:hover {
-    border-color: #6ba2d6 !important;
-    color: #d4e8ff !important;
+    border-color: #6ba5d4 !important;
+    color: #e0e0e0 !important;
   }
   html.dark .modal {
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
-    box-shadow: 0 10px 60px rgba(45, 212, 191, 0.12), 0 8px 30px rgba(0,0,0,0.6);
+    box-shadow: 0 10px 60px rgba(0,0,0,0.5);
   }
   html.dark .modal header { border-bottom-color: var(--border); }
   /* Generic buttons — keep them readable on dark. */
@@ -151,8 +134,8 @@
     border-color: var(--border);
   }
   html.dark button:not(.primary):not(.danger):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.term-subchip):not(.view-tabs button):hover {
-    border-color: #5cdaef;
-    color: #5cdaef;
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
   /* Change Request action buttons — dark-mode-only: start with a transparent
      (page-matching) background and a dim accent border, then glow on hover. */
@@ -167,87 +150,80 @@
   }
   /* Edit (default — no special class) */
   html.dark .req-table .actions button[data-ract="edit"]:hover {
-    border-color: #5cdaef;
-    color: #5cdaef;
-    box-shadow: 0 0 12px rgba(92, 218, 239, 0.5);
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
   /* Approve & Send */
   html.dark .req-table .actions button.approve {
-    border-color: rgba(45, 212, 191, 0.5);
-    color: #5cdaef;
+    border-color: rgba(90, 181, 125, 0.5);
+    color: #5ab57d;
   }
   html.dark .req-table .actions button.approve:hover {
-    border-color: #2dd4bf;
-    color: #6cf2c8;
-    box-shadow: 0 0 14px rgba(45, 212, 191, 0.55);
+    border-color: #5ab57d;
+    color: #7dcf9a;
   }
   /* Reject */
   html.dark .req-table .actions button.reject {
-    border-color: rgba(255, 154, 214, 0.45);
-    color: #ff9ad6;
+    border-color: rgba(215, 117, 117, 0.45);
+    color: #d77575;
   }
   html.dark .req-table .actions button.reject:hover {
-    border-color: #ff66c4;
-    color: #ffaad9;
-    box-shadow: 0 0 14px rgba(255, 102, 196, 0.55);
+    border-color: #d77575;
+    color: #e09090;
   }
   /* Delete */
   html.dark .req-table .actions button.danger {
-    border-color: rgba(255, 126, 182, 0.4);
-    color: #ff7eb6;
+    border-color: rgba(215, 117, 117, 0.4);
+    color: #d77575;
   }
   html.dark .req-table .actions button.danger:hover {
-    border-color: #ff66c4;
-    color: #ff9ad6;
-    box-shadow: 0 0 14px rgba(255, 102, 196, 0.5);
+    border-color: #d77575;
+    color: #e09090;
   }
 
-  /* Request Change button — dark-mode-only: black (page-matching) background,
-     teal border + text matching the row hover accent. */
+  /* Request Change button */
   html.dark .term-table .btn-req-change {
     background: transparent !important;
-    color: #5cdaef;
-    border-color: rgba(92, 218, 239, 0.5);
+    color: #6ba5d4;
+    border-color: rgba(107, 165, 212, 0.5);
   }
   html.dark .term-table .btn-req-change:hover {
-    background: rgba(92, 218, 239, 0.10) !important;
-    border-color: #5cdaef;
-    color: #b8f4ff;
-    box-shadow: 0 0 12px rgba(92, 218, 239, 0.4);
+    background: rgba(107, 165, 212, 0.10) !important;
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
 
-  /* Modal form fields — same dark-indigo fill as the page surfaces, so the
-     dialog's inputs/selects/textareas don't pop white against the modal bg. */
+  /* Modal form fields */
   html.dark .modal .body input[type=text],
   html.dark .modal .body input[type=number],
   html.dark .modal .body input[type=date],
   html.dark .modal .body select,
   html.dark .modal .body textarea {
-    background: #0e1430;
+    background: #1a1a1a;
     color: var(--text);
     border-color: var(--border);
   }
   html.dark .modal .body input:focus,
   html.dark .modal .body select:focus,
   html.dark .modal .body textarea:focus {
-    background: #14193a;
-    border-color: #5cdaef;
-    outline-color: rgba(92, 218, 239, 0.3);
+    background: #202020;
+    border-color: #6ba5d4;
+    outline-color: rgba(107, 165, 212, 0.3);
   }
   /* Term-letter picker chips inside the modal. */
   html.dark .term-picker label {
-    background: #0e1430;
+    background: #1a1a1a;
     color: var(--text);
     border-color: var(--border);
   }
   html.dark .term-picker label.checked {
-    background: rgba(45, 212, 191, 0.18);
-    border-color: #2dd4bf;
-    color: #6cf2c8;
+    background: rgba(107, 165, 212, 0.2);
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
   /* Modal footer (the bottom bar with Cancel / Save / Delete). */
   html.dark .modal footer {
-    background: #0a0f24;
+    background: #232323;
     border-top-color: var(--border);
   }
   html.dark .modal footer button {
@@ -256,16 +232,15 @@
     border-color: var(--border);
   }
   html.dark .modal footer button:hover {
-    border-color: #5cdaef;
-    color: #5cdaef;
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
 
-  /* Submit to Registrar — dark-mode-only: row-matching background (transparent),
-     magenta border, magenta text. Light mode keeps the original blue-on-white look. */
+  /* Submit to Registrar */
   html.dark .term-table .btn-submit {
     background: transparent;
-    color: #ffaad9;
-    border-color: #ff66c4;
+    color: #93c5fd;
+    border-color: #6ba5d4;
     font-weight: 600;
     font-size: 11.5px;
     padding: 4px 8px;
@@ -273,37 +248,34 @@
     letter-spacing: 0.2px;
   }
   html.dark .term-table .btn-submit:hover {
-    background: rgba(255, 102, 196, 0.12);
-    border-color: #ff9ad6;
-    color: #ffd1ec;
+    background: rgba(107, 165, 212, 0.12);
+    border-color: #93c5fd;
+    color: #b8d9f8;
   }
   html.dark button.primary {
-    background: linear-gradient(90deg, #2dd4bf, #5cdaef);
-    color: #0a0f24;
-    border-color: #5cdaef;
-    box-shadow: 0 0 14px rgba(45, 212, 191, 0.35);
+    background: #2e5d99;
+    color: #e0e0e0;
+    border-color: #3a6dad;
   }
   html.dark button.primary:hover {
-    box-shadow: 0 0 22px rgba(92, 218, 239, 0.55);
+    background: #3568b0;
   }
   /* Cards / surfaces. */
   html.dark .toolbar, html.dark .stats, html.dark .table-wrap {
     background: var(--surface);
     border-color: var(--border);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 24px rgba(45, 212, 191, 0.04);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
   }
-  html.dark .stats .item strong { color: #5cdaef; }
-  html.dark .stats .item .label { color: #8fb5d5; }
+  html.dark .stats .item strong { color: #5ab57d; }
+  html.dark .stats .item .label { color: #a8a8a8; }
   html.dark .term-table th {
-    background: #0e1430;
-    color: #b8f4ff;
+    background: #232323;
+    color: #909090;
     border-bottom-color: var(--border);
   }
-  /* No hover highlight on the column-header row in dark mode — keep the
-     surface flat so it doesn't fight with the row-glow effect below. */
   html.dark thead th:hover,
   html.dark thead th:hover:not(.no-sort) {
-    background: #0e1430 !important;
+    background: #232323 !important;
   }
   html.dark .term-table td { border-bottom-color: var(--border); }
   /* Submitted rows in dark mode: kill the inherited light-mode `tr.submitted`
@@ -311,30 +283,23 @@
      and the td cells to transparent so the row keeps the surrounding dark
      surface, and tint the text teal so the "submitted" state reads via color. */
   html.dark .term-table tr.submitted { background: transparent !important; }
-  html.dark .term-table tr.submitted td { background: transparent !important; color: #5cdaef; }
+  html.dark .term-table tr.submitted td { background: transparent !important; color: #5ab57d; }
   html.dark .term-table tr.submitted input[data-field="instructor"] {
     background: transparent !important;
-    color: #5cdaef;
+    color: #5ab57d;
     border-color: transparent;
   }
-  /* Row hover in dark mode — keep the row background dark so text stays readable,
-     but draw a glowing teal border around the row. Implemented via inset box-shadow
-     on the td cells so the border traces the full row width without disturbing
-     the table's column layout. The outermost cells also get a side stroke and a
-     soft outer glow. */
+  /* Row hover in dark mode — simple background highlight, no glow. */
   html.dark .term-table tbody tr:hover,
   html.dark .req-table tbody tr:hover,
   html.dark tbody tr:hover {
-    background: transparent !important;
+    background: #202020 !important;
   }
   html.dark .term-table tbody tr:hover td,
   html.dark .req-table tbody tr:hover td,
   html.dark tbody tr:hover td {
-    background: transparent !important;
-    box-shadow: inset 0 1px 0 0 #2dd4bf, inset 0 -1px 0 0 #2dd4bf;
-    /* Shift the row's plain text to the same teal as the glow border so the
-       hover state reads as a unified accent (matches button hover behavior). */
-    color: #5cdaef;
+    background: #202020 !important;
+    color: #e0e0e0;
   }
   /* Inputs and selects inside a hovered row keep their own field colors so
      they still read as form controls, not table text. */
@@ -346,20 +311,10 @@
   html.dark .req-table tbody tr:hover td textarea {
     color: var(--text);
   }
-  html.dark .term-table tbody tr:hover td:first-child,
-  html.dark .req-table tbody tr:hover td:first-child,
-  html.dark tbody tr:hover td:first-child {
-    box-shadow: inset 0 1px 0 0 #2dd4bf, inset 0 -1px 0 0 #2dd4bf, inset 2px 0 0 0 #2dd4bf, -6px 0 14px -4px rgba(45, 212, 191, 0.45);
-  }
-  html.dark .term-table tbody tr:hover td:last-child,
-  html.dark .req-table tbody tr:hover td:last-child,
-  html.dark tbody tr:hover td:last-child {
-    box-shadow: inset 0 1px 0 0 #2dd4bf, inset 0 -1px 0 0 #2dd4bf, inset -2px 0 0 0 #2dd4bf, 6px 0 14px -4px rgba(45, 212, 191, 0.45);
-  }
-  /* Submitted and overdue rows keep their tint but still get the teal hover glow. */
-  html.dark .term-table tbody tr.submitted:hover td { background: transparent !important; color: #5cdaef; }
-  html.dark .term-table tbody tr.overdue:hover td   { background: rgba(255, 126, 182, 0.10) !important; }
-  html.dark .req-table th { background: #0e1430; color: #b8f4ff; border-bottom-color: var(--border); }
+  /* Submitted and overdue rows keep their state on hover. */
+  html.dark .term-table tbody tr.submitted:hover td { background: transparent !important; color: #5ab57d; }
+  html.dark .term-table tbody tr.overdue:hover td   { background: rgba(215, 117, 117, 0.10) !important; }
+  html.dark .req-table th { background: #232323; color: #909090; border-bottom-color: var(--border); }
   html.dark .req-table td { border-bottom-color: var(--border); }
   /* Subterm chips. */
   html.dark .term-subchip {
@@ -367,88 +322,84 @@
     color: var(--text);
     border: 1px solid var(--border);
   }
-  html.dark .term-subchip:hover { border-color: #5cdaef; color: #5cdaef; }
+  html.dark .term-subchip:hover { border-color: #6ba5d4; color: #93c5fd; }
   html.dark .term-subchip.active {
-    background: linear-gradient(135deg, #2dd4bf, #5cdaef);
-    color: #0a0f24;
-    border-color: #5cdaef;
-    box-shadow: 0 0 16px rgba(92, 218, 239, 0.45);
+    background: #2e5d99;
+    color: #e0e0e0;
+    border-color: #3a6dad;
   }
   html.dark .term-semester-chip {
     background: var(--surface-2);
     color: var(--text);
     border-color: var(--border);
   }
-  html.dark .term-semester-chip:hover { border-color: #5cdaef; color: #5cdaef; background: var(--surface-2); }
+  html.dark .term-semester-chip:hover { border-color: #6ba5d4; color: #93c5fd; background: var(--surface-2); }
   html.dark .term-semester-chip.active {
-    background: linear-gradient(135deg, #2dd4bf, #5cdaef);
-    color: #0a0f24;
-    border-color: #5cdaef;
-    box-shadow: 0 0 16px rgba(92, 218, 239, 0.45);
+    background: #2e5d99;
+    color: #e0e0e0;
+    border-color: #3a6dad;
   }
   /* Status / badge pills. */
   html.dark .submitted-badge {
-    background: rgba(45, 212, 191, 0.18);
-    color: #5cdaef;
-    border: 1px solid rgba(92, 218, 239, 0.4);
+    background: rgba(90, 181, 125, 0.18);
+    color: #5ab57d;
+    border: 1px solid rgba(90, 181, 125, 0.4);
   }
   html.dark .done-badge {
-    background: rgba(255, 102, 196, 0.18);
-    color: #ff66c4;
-    border: 1px solid rgba(255, 102, 196, 0.4);
+    background: rgba(107, 165, 212, 0.18);
+    color: #6ba5d4;
+    border: 1px solid rgba(107, 165, 212, 0.4);
   }
   html.dark .ct-pill, html.dark .status-pill {
     background: var(--surface-2);
     color: var(--text);
   }
-  /* Change-type pills in dark mode — translucent vaporwave tints with bright
-     neon text so each type is distinct against the dark surface. */
-  html.dark .ct-add      { background: rgba(45, 212, 191, 0.16);  color: #6cf2c8; border: 1px solid rgba(45, 212, 191, 0.45); }
-  html.dark .ct-remove   { background: rgba(255, 126, 182, 0.16); color: #ff9ad6; border: 1px solid rgba(255, 126, 182, 0.45); }
-  html.dark .ct-instr    { background: rgba(92, 218, 239, 0.16);  color: #5cdaef; border: 1px solid rgba(92, 218, 239, 0.45); }
-  html.dark .ct-time     { background: rgba(246, 193, 119, 0.16); color: #f6c177; border: 1px solid rgba(246, 193, 119, 0.45); }
-  html.dark .ct-location { background: rgba(255, 102, 196, 0.16); color: #ff66c4; border: 1px solid rgba(255, 102, 196, 0.45); }
-  html.dark .status-pill.st-pending { background: #ff9ad6; color: #0a0f24; }
-  html.dark .status-pill.st-approved { background: #5cdaef; color: #0a0f24; }
-  html.dark .status-pill.st-sent { background: #2dd4bf; color: #0a0f24; }
-  html.dark .status-pill.st-finalized { background: #ff66c4; color: #0a0f24; }
-  html.dark .status-pill.st-rejected { background: #ff7eb6; color: #0a0f24; }
-  /* Deadline tile — magenta-pink neon, no border, right-aligned. */
+  /* Change-type pills in dark mode */
+  html.dark .ct-add      { background: rgba(90, 181, 125, 0.16);  color: #5ab57d; border: 1px solid rgba(90, 181, 125, 0.45); }
+  html.dark .ct-remove   { background: rgba(215, 117, 117, 0.16); color: #d77575; border: 1px solid rgba(215, 117, 117, 0.45); }
+  html.dark .ct-instr    { background: rgba(107, 165, 212, 0.16); color: #6ba5d4; border: 1px solid rgba(107, 165, 212, 0.45); }
+  html.dark .ct-time     { background: rgba(212, 165, 91, 0.16);  color: #d4a55b; border: 1px solid rgba(212, 165, 91, 0.45); }
+  html.dark .ct-location { background: rgba(157, 126, 201, 0.16); color: #9d7ec9; border: 1px solid rgba(157, 126, 201, 0.45); }
+  html.dark .status-pill.st-pending   { background: rgba(212, 165, 91, 0.2);  color: #d4a55b; border: 1px solid rgba(212, 165, 91, 0.45); }
+  html.dark .status-pill.st-approved  { background: rgba(90, 181, 125, 0.2);  color: #5ab57d; border: 1px solid rgba(90, 181, 125, 0.45); }
+  html.dark .status-pill.st-sent      { background: rgba(107, 165, 212, 0.2); color: #6ba5d4; border: 1px solid rgba(107, 165, 212, 0.45); }
+  html.dark .status-pill.st-finalized { background: #2e5d99; color: #e0e0e0; }
+  html.dark .status-pill.st-rejected  { background: rgba(215, 117, 117, 0.2); color: #d77575; border: 1px solid rgba(215, 117, 117, 0.45); }
+  /* Deadline tile */
   html.dark .stats .item.term-deadline-tile strong {
-    color: #ff66c4;
-    text-shadow: 0 0 14px rgba(255, 102, 196, 0.55);
+    color: #d77575;
   }
-  html.dark .stats .item.term-deadline-tile .label { color: #ff9ad6; }
+  html.dark .stats .item.term-deadline-tile .label { color: #a8a8a8; }
   /* Add Section "+" button on rows. */
   html.dark .add-section-btn {
-    background: rgba(92, 218, 239, 0.1);
-    color: #5cdaef;
-    border-color: rgba(92, 218, 239, 0.4);
+    background: rgba(107, 165, 212, 0.1);
+    color: #6ba5d4;
+    border-color: rgba(107, 165, 212, 0.4);
   }
-  html.dark .add-section-btn:hover { background: rgba(92, 218, 239, 0.2); }
+  html.dark .add-section-btn:hover { background: rgba(107, 165, 212, 0.2); }
   html.dark .add-section-btn.remove-section-btn {
-    background: rgba(255, 126, 182, 0.1);
-    color: #ff7eb6 !important;
-    border-color: rgba(255, 126, 182, 0.5) !important;
+    background: rgba(215, 117, 117, 0.1);
+    color: #d77575 !important;
+    border-color: rgba(215, 117, 117, 0.5) !important;
   }
   /* Submitted/overdue rows in dark. */
-  html.dark .term-table tr.overdue td { background: rgba(255, 126, 182, 0.08); }
-  /* Code cells — make course codes pop with cyan. */
-  html.dark .code { color: #5cdaef; }
+  html.dark .term-table tr.overdue td { background: rgba(215, 117, 117, 0.08); }
+  /* Code cells */
+  html.dark .code { color: #6ba5d4; }
   /* Helper sections. */
-  html.dark details summary { color: #5cdaef; }
-  html.dark a { color: #5cdaef; }
+  html.dark details summary { color: #6ba5d4; }
+  html.dark a { color: #6ba5d4; }
   /* Toast. */
   html.dark .toast {
-    background: linear-gradient(135deg, #2dd4bf, #5cdaef);
-    color: #0a0f24;
-    box-shadow: 0 0 24px rgba(92, 218, 239, 0.5);
+    background: #2e5d99;
+    color: #e0e0e0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
   }
   /* Theme-toggle button in dark mode. */
   html.dark #btnThemeToggle {
-    background: rgba(92, 218, 239, 0.12) !important;
-    border-color: rgba(92, 218, 239, 0.35) !important;
-    color: #b8f4ff !important;
+    background: rgba(255,255,255,0.12) !important;
+    border-color: rgba(255,255,255,0.25) !important;
+    color: #e0e0e0 !important;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -560,8 +511,8 @@
     pointer-events: auto;
   }
   .iclear-btn:hover { background: rgba(100,100,100,0.55); }
-  html.dark .iclear-btn { background: rgba(180,200,255,0.18); color: #e7f4ff; }
-  html.dark .iclear-btn:hover { background: rgba(180,200,255,0.38); }
+  html.dark .iclear-btn { background: rgba(255,255,255,0.18); color: #e0e0e0; }
+  html.dark .iclear-btn:hover { background: rgba(255,255,255,0.38); }
   .toolbar input[type=text]:focus, .toolbar select:focus {
     outline: 2px solid var(--wwu-green);
     outline-offset: -1px;
@@ -1163,12 +1114,12 @@
     100% { box-shadow: 0 0 0 0   rgba(29,73,137,0);    }
   }
   html.dark .term-table .btn-submit.needs-submit {
-    background: #6dcaff;
-    color: #0a172e;
-    border-color: #6dcaff;
+    background: #2e5d99;
+    color: #e0e0e0;
+    border-color: #3a6dad;
   }
   html.dark .term-table .btn-submit.needs-submit:hover {
-    background: #9ddcff;
+    background: #3568b0;
   }
   /* Re-generate contract download button — pixel-identical to btn-req-change */
   .term-table .btn-dl-contract {
@@ -1194,14 +1145,13 @@
   .term-table .btn-dl-contract:hover { background: #e9f2ed; }
   html.dark .term-table .btn-dl-contract {
     background: transparent !important;
-    color: #5cdaef;
-    border-color: rgba(92, 218, 239, 0.5);
+    color: #6ba5d4;
+    border-color: rgba(107, 165, 212, 0.5);
   }
   html.dark .term-table .btn-dl-contract:hover {
-    background: rgba(92, 218, 239, 0.10) !important;
-    border-color: #5cdaef;
-    color: #b8f4ff;
-    box-shadow: 0 0 12px rgba(92, 218, 239, 0.4);
+    background: rgba(107, 165, 212, 0.10) !important;
+    border-color: #6ba5d4;
+    color: #93c5fd;
   }
   .term-table .btn-req-change {
     display: inline-flex;
@@ -1364,7 +1314,7 @@
   }
   .actions .btn-reinstate:hover { background: rgba(0, 96, 65, 0.08); }
   html.dark .actions .btn-reinstate { color: var(--wwu-green); border-color: var(--wwu-green); }
-  html.dark .actions .btn-reinstate:hover { background: rgba(92, 218, 239, 0.15); }
+  html.dark .actions .btn-reinstate:hover { background: rgba(90, 181, 125, 0.15); }
 
   /* Static header for the change-request dialog. The first row shows the
      course code + title; the second row shows level/modality/term pills and
@@ -1382,7 +1332,7 @@
     margin-bottom: 14px;
   }
   html.dark .req-summary {
-    background: rgba(92, 218, 239, 0.06);
+    background: rgba(90, 181, 125, 0.06);
     border-left-color: var(--wwu-green);
   }
   .req-summary .rs-course { display: flex; flex-direction: column; gap: 2px; }
@@ -1623,7 +1573,7 @@
     cursor: pointer;
   }
   .cb-type-large:focus { outline: 2px solid var(--wwu-green); outline-offset: 1px; }
-  html.dark .cb-type-large { border-color: #2dd4bf; }
+  html.dark .cb-type-large { border-color: #6ba5d4; }
   .cb-context {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1656,8 +1606,8 @@
   }
   .cb-ctx-title.has-match  { color: var(--ok); background: var(--ok-bg, #eef6ee); border-color: var(--ok); font-style: normal; font-weight: 600; }
   .cb-ctx-title.no-match   { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); font-style: normal; }
-  html.dark .cb-ctx-title.has-match { background: rgba(0,128,80,0.12); }
-  html.dark .cb-ctx-title.no-match  { background: rgba(176,58,46,0.12); }
+  html.dark .cb-ctx-title.has-match { background: rgba(90,181,125,0.12); }
+  html.dark .cb-ctx-title.no-match  { background: rgba(215,117,117,0.12); }
 
   /* ── Auth overlays (Phase 2) ─────────────────────────────────────────── */
   .auth-overlay {
