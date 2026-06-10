@@ -2700,7 +2700,17 @@ async function openAppWithSSO(url) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+  // If tokens arrived via URL hash (SSO handoff from Hub), set the session
+  // explicitly before any auth listeners fire to avoid race conditions with
+  // detectSessionInUrl's async processing.
+  const _hp = new URLSearchParams(window.location.hash.slice(1));
+  const _at = _hp.get('access_token'), _rt = _hp.get('refresh_token');
+  if (_at && _rt) {
+    await sb.auth.setSession({ access_token: _at, refresh_token: _rt });
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+
   showCheckingState();
 
   // Helpers for switching between the two sign-in stages.
