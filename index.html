@@ -2625,54 +2625,42 @@ function hideAllAuthOverlays() {
 async function loadProfileAndGate(session) {
   if (!session || !session.user) { showSignInForm(); return; }
   showCheckingState();
-  // Trigger may not have fired yet on the very first sign-in — retry briefly.
-  let profile = null, lastErr = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const { data, error } = await sb
-      .from("profiles")
-      .select("id, email, display_name, role, school")
-      .eq("id", session.user.id)
-      .maybeSingle();
-    if (error) { lastErr = error; break; }
-    if (data) { profile = data; break; }
-    await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
-  }
-  if (lastErr) {
-    console.error("profile load failed", lastErr);
+  const { data: access, error } = await sb
+    .from("user_app_access")
+    .select("display_name, role")
+    .eq("app", "scheduler")
+    .eq("email", (session.user.email || "").toLowerCase())
+    .maybeSingle();
+  if (error) {
+    console.error("access load failed", error);
     showSignInForm();
     const m = _$("authMessage");
     m.classList.add("error");
-    m.textContent = "Couldn't load your profile. Try refreshing.";
+    m.textContent = "Couldn't verify your access. Try refreshing.";
     return;
   }
-  if (!profile) {
-    // Trigger never created the row (rare).  Treat as pending — admin can
-    // manually create the profile from the SQL editor if needed.
-    showPendingOverlay(session.user.email);
-    return;
-  }
-  if (profile.role === "pending") {
-    showPendingOverlay(profile.email);
+  if (!access) {
+    showSignInForm();
+    const m = _$("authMessage");
+    m.classList.add("error");
+    m.textContent = `${session.user.email} does not have access to the Course Scheduler. Contact an admin to be added.`;
+    await sb.auth.signOut();
     return;
   }
   window.AUTH.user = {
-    id:          profile.id,
-    email:       profile.email,
-    displayName: profile.display_name || profile.email,
-    role:        profile.role,
-    school:      profile.school || "",
+    id:          session.user.id,
+    email:       session.user.email,
+    displayName: access.display_name || session.user.email,
+    role:        access.role,
+    school:      "",
   };
-  // Mirror display name into the existing header label so the app's
-  // attribution UI keeps working until Phase 3/5 rewires it.
   const lbl = _$("userNameLabel");
   if (lbl) lbl.textContent = window.AUTH.user.displayName;
-  // Reveal/hide the Admin tab now that the role is known.
   const adminTab = _$("tabAdmin");
-  if (adminTab) adminTab.style.display = (profile.role === "admin") ? "" : "none";
+  if (adminTab) adminTab.style.display = (access.role === "admin") ? "" : "none";
   const academicAppsBtn = _$("btnAcademicApps");
-  if (academicAppsBtn) academicAppsBtn.style.display = (profile.role === "admin") ? "flex" : "none";
+  if (academicAppsBtn) academicAppsBtn.style.display = (access.role === "admin") ? "flex" : "none";
   hideAllAuthOverlays();
-  // Unblock any code awaiting AUTH.ready (init's requireUserName()).
   if (window.AUTH._resolveReady) {
     window.AUTH._resolveReady();
     window.AUTH._resolveReady = null;
