@@ -5165,9 +5165,9 @@ function renderTermTable(list) {
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned.
       actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>`;
-    } else if (o.isNewSection && o.instructor && o.instructor.trim()) {
-      // Added sections with an instructor assigned route through Change Requests.
-      actionBtn = (isOnline)
+    } else if (o.isNewSection) {
+      // Added sections (with or without instructor) always route through Change Requests.
+      actionBtn = (o.instructor && o.instructor.trim() && isOnline)
         ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
         : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${escapeHtml(o.id)}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
     } else if (o.instructor && o.instructor.trim()) {
@@ -5379,7 +5379,7 @@ function duplicateSection(offeringId) {
   renderTerms();
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   const c = state.courses.find(x => x.id === dup.courseId);
-  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — assign an instructor and click Request Change to send for approval`);
+  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — assign an instructor (optional) and click Submit Change to send for approval`);
 }
 
 /* Remove an added section. Refuses if the section has been submitted to the
@@ -5507,7 +5507,14 @@ function submitNewSectionChange(o) {
   }
 
   // Standard path: no prior linked request — create a new Add Section request.
-  createAddCourseRequestForNewSection(o);
+  // Count existing non-canceled sections (excluding this one) to decide type.
+  const _existingCount = state.offerings.filter(x =>
+    x.id !== o.id && x.courseId === o.courseId &&
+    x.semester === o.semester && x.subterm === o.subterm &&
+    x.year === o.year && !x.canceled
+  ).length;
+  const _addType = _existingCount > 0 ? "Add Section & Split Enrollment" : "Add Section";
+  createAddCourseRequestForNewSection(o, { addSectionType: _addType });
   o.submitted   = true;
   o.submittedAt = new Date().toISOString();
   o.submittedBy = who;
@@ -7692,13 +7699,13 @@ function bindTermEvents() {
           const oid = escapeHtml(o.id);
           const _c2 = state.courses.find(x => x.id === o.courseId) || {};
           const _online = !!(_c2.onlineFall||[]).length || !!(_c2.onlineSpring||[]).length || !!(_c2.onlineSummer||[]).length;
-          if (o.isNewSection && hasInstructor) {
-            // New sections with instructor: morph between Submit Change ↔ Submit & Generate Contract
-            cell.innerHTML = _online
+          if (o.isNewSection) {
+            // New sections (with or without instructor) always route through Change Requests.
+            cell.innerHTML = (hasInstructor && _online)
               ? `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval and download course contract">→ Submit &amp; Generate Contract</button>`
               : `<button type="button" class="btn-submit needs-submit" data-tact="submitchangerequest" data-oid="${oid}" title="Submit this new section to the Change Requests queue for approval">→ Submit Change</button>`;
           } else {
-            // No instructor (new or regular section): fall through to Cancel Course below
+            // Regular sections: Submit to Registrar (with instructor) or Cancel Course (without).
             cell.innerHTML = hasInstructor
               ? (_online
                   ? `<button type="button" class="btn-submit needs-submit" data-tact="submit" data-oid="${oid}" title="Submit to Registrar and download course contract">→ Submit &amp; Generate Contract</button>`
