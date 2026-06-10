@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WWU Course Rotation Scheduler</title>
+<title>WWU Course Scheduler</title>
 <style>
   :root {
     --wwu-green: #00563f;
@@ -6058,8 +6058,11 @@ async function generateOnlineContractPDF(offeringIdOrData) {
   const a    = document.createElement("a");
   a.href     = url;
   a.download = `${courseCodeFull.replace(/\s+/g, "_")}_Contract_${instructor.replace(/[^A-Za-z0-9]/g, "_")}.pdf`;
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
 /* Build contract data from the currently-open Change Request modal and download PDF. */
@@ -7628,8 +7631,20 @@ function bindTermEvents() {
     const currentOid = row.dataset.oid;
 
     if (o.isNewSection) {
+      // Check whether the button currently says "Generate Contract" BEFORE the
+      // DOM is rebuilt by submitNewSectionChange → renderTerms.
+      const _actionCell = row.querySelector("td.actions");
+      const _actionBtn  = _actionCell && _actionCell.querySelector("button");
+      const _shouldGenContract = !!(_actionBtn && _actionBtn.textContent.includes("Generate Contract")
+        && o.instructor && o.instructor.trim());
       // Submit change (creates request + SENT state), then advance.
       submitNewSectionChange(o);  // calls renderTerms() internally
+      if (_shouldGenContract) {
+        generateOnlineContractPDF(currentOid).catch(err => {
+          console.error("Contract PDF generation failed:", err);
+          toast("Contract PDF could not be generated", "error");
+        });
+      }
     } else if (o.instructor && o.instructor.trim()) {
       // Regular section with instructor: submit to Registrar, then advance.
       inp.blur();
@@ -7766,11 +7781,11 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      // Read button label BEFORE submitNewSectionChange rebuilds the DOM.
+      const _shouldGenContract = btn.textContent.includes("Generate Contract")
+        && !!(o.instructor && o.instructor.trim());
       submitNewSectionChange(o);
-      // Also generate the contract PDF for online courses with an instructor assigned.
-      const _c = state.courses.find(x => x.id === o.courseId);
-      const _online = _c && (!!((_c.onlineFall||[]).length) || !!((_c.onlineSpring||[]).length) || !!((_c.onlineSummer||[]).length));
-      if (_online && o.instructor && o.instructor.trim()) {
+      if (_shouldGenContract) {
         generateOnlineContractPDF(oid).catch(err => {
           console.error("Contract PDF generation failed:", err);
           toast("Contract PDF could not be generated", "error");
