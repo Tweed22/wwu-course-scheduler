@@ -1400,8 +1400,8 @@
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
   </div>
   <div class="header-actions">
-    <a href="https://wwuprovostoffice.pages.dev"
-       style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;letter-spacing:0.3px;text-decoration:none;display:flex;align-items:center;gap:5px;transition:background 0.15s;"
+    <a id="btnAcademicApps" href="https://wwuprovostoffice.pages.dev"
+       style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;letter-spacing:0.3px;text-decoration:none;display:none;align-items:center;gap:5px;transition:background 0.15s;"
        onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
       ← Academic Apps
     </a>
@@ -2094,7 +2094,32 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+/* ======== Supabase role check — Academic Apps button (admin only) ======== */
+const SCHED_SB_URL = 'https://vmqorqyvirdqpzjyozan.supabase.co';
+const SCHED_SB_KEY = 'sb_publishable_kWXLv3tPyse7q3jGFhB0LQ_VOkXhukv';
+const schedSb = (typeof supabase !== 'undefined')
+  ? supabase.createClient(SCHED_SB_URL, SCHED_SB_KEY)
+  : null;
+
+async function checkAdminRole() {
+  if (!schedSb) return;
+  try {
+    const { data: { session } } = await schedSb.auth.getSession();
+    if (!session) return;
+    const { data: profile } = await schedSb
+      .from('profiles')
+      .select('role')
+      .eq('id', session.user.id)
+      .maybeSingle();
+    if (profile && profile.role === 'admin') {
+      const btn = document.getElementById('btnAcademicApps');
+      if (btn) btn.style.display = 'flex';
+    }
+  } catch (_) {}
+}
+
 /* ======== Embedded rotation seed (real WWU data) ======== */
 const WWU_ROTATION = [];
 
@@ -5655,6 +5680,7 @@ function toggleTheme() {
 
 async function init() {
   loadTheme();
+  checkAdminRole();
   const themeBtn = document.getElementById("btnThemeToggle");
   if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
   // Hook up the user-name chip in the header — clicking it re-opens the prompt.
