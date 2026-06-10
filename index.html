@@ -9616,6 +9616,12 @@ async function init() {
   setDirty(state.dirty);
   // Registrar users land on the Registrar page by default.
   if (currentRole() === "registrar") switchView("registrar");
+  // Deep-link: ?view=requests (or other view) passed via Hub notification click.
+  const _viewParam = new URLSearchParams(window.location.search).get('view');
+  if (_viewParam && _viewParam !== 'terms') {
+    switchView(_viewParam);
+    history.replaceState(null, '', window.location.pathname);
+  }
   toast(`Loaded ${state.courses.length} courses from rotation sheet`);
   // 7) Schedule the next daily sync at 4 AM Central. Each tick reschedules
   // itself, so the timer survives forever.
