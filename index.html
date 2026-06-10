@@ -141,9 +141,9 @@
      (page-matching) background and a dim accent border, then glow on hover. */
   html.dark .req-table .actions button {
     background: transparent !important;
-    border-color: rgba(143, 181, 213, 0.35);
-    color: #8fb5d5;
-    transition: border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+    border-color: rgba(168, 168, 168, 0.35);
+    color: #a8a8a8;
+    transition: border-color 150ms ease, color 150ms ease;
   }
   html.dark .req-table .actions button:hover {
     background: transparent !important;
@@ -3171,7 +3171,7 @@ function showRotationError(err) {
   if (!overlay) {
     overlay = document.createElement("div");
     overlay.id = "rotationErrorOverlay";
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(10,15,36,0.92);z-index:9999;display:flex;align-items:center;justify-content:center;color:#e7f4ff;font-family:inherit;padding:20px;";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;color:#e0e0e0;font-family:inherit;padding:20px;";
     document.body.appendChild(overlay);
   }
   const isFileProtocol = location.protocol === "file:";
@@ -3185,17 +3185,17 @@ function showRotationError(err) {
        </p>`
     : "";
   overlay.innerHTML = `
-    <div style="max-width:560px;padding:32px;background:#131a36;border:1px solid #2b3866;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.5);text-align:center;">
-      <h2 style="margin:0 0 12px;color:#ff66c4;font-size:18px;">Rotation sheet unreachable</h2>
-      <p style="margin:0 0 18px;color:#8fb5d5;line-height:1.5;">
+    <div style="max-width:560px;padding:32px;background:#262626;border:1px solid #353535;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.5);text-align:center;">
+      <h2 style="margin:0 0 12px;color:#d77575;font-size:18px;">Rotation sheet unreachable</h2>
+      <p style="margin:0 0 18px;color:#a8a8a8;line-height:1.5;">
         Couldn't pull the latest course rotation from the source spreadsheet.
         This app runs online-only, so it won't load until the sheet is reachable.
       </p>
       ${fileHint}
-      <p style="margin:0 0 8px;color:#8fb5d5;font-size:11px;text-align:left;">URL attempted:</p>
-      <p style="margin:0 0 14px;padding:8px;background:#0a0f24;border-radius:4px;color:#5cdaef;font-size:11px;font-family:ui-monospace,monospace;text-align:left;word-break:break-all;">${escapeHtml(ROTATION_SHEET_URL)}</p>
-      <p style="margin:0 0 22px;color:#ff9ad6;font-size:12px;font-family:ui-monospace,monospace;">${escapeHtml(String(err && err.message || err))}</p>
-      <button type="button" id="btnRotationRetryOverlay" style="padding:10px 22px;background:linear-gradient(90deg,#2dd4bf,#5cdaef);color:#0a0f24;border:1px solid #5cdaef;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">Retry</button>
+      <p style="margin:0 0 8px;color:#a8a8a8;font-size:11px;text-align:left;">URL attempted:</p>
+      <p style="margin:0 0 14px;padding:8px;background:#1a1a1a;border-radius:4px;color:#6ba5d4;font-size:11px;font-family:ui-monospace,monospace;text-align:left;word-break:break-all;">${escapeHtml(ROTATION_SHEET_URL)}</p>
+      <p style="margin:0 0 22px;color:#d77575;font-size:12px;font-family:ui-monospace,monospace;">${escapeHtml(String(err && err.message || err))}</p>
+      <button type="button" id="btnRotationRetryOverlay" style="padding:10px 22px;background:#2e5d99;color:#e0e0e0;border:1px solid #3a6dad;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">Retry</button>
     </div>
   `;
   overlay.style.display = "flex";
@@ -9332,24 +9332,24 @@ function promptUserName(opts = {}) {
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = "userNameOverlay";
-      overlay.style.cssText = "position:fixed;inset:0;background:rgba(10,15,36,0.92);z-index:10000;display:flex;align-items:center;justify-content:center;color:#e7f4ff;font-family:inherit;padding:20px;";
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:10000;display:flex;align-items:center;justify-content:center;color:#e0e0e0;font-family:inherit;padding:20px;";
       document.body.appendChild(overlay);
     }
     const current = state.userName || getUserName();
     const heading = opts.heading || "Who's editing?";
     const subtitle = opts.subtitle || "Your name is recorded with every change you make in this app — submissions to the Registrar, approvals, rejections, completions. It's stored in your browser only and isn't shared anywhere.";
     overlay.innerHTML = `
-      <div style="max-width:460px;width:100%;padding:32px;background:#131a36;border:1px solid #2b3866;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.5);">
-        <h2 style="margin:0 0 12px;color:#5cdaef;font-size:18px;text-align:center;">${escapeHtml(heading)}</h2>
-        <p style="margin:0 0 18px;color:#8fb5d5;line-height:1.5;text-align:center;font-size:13px;">${escapeHtml(subtitle)}</p>
+      <div style="max-width:460px;width:100%;padding:32px;background:#262626;border:1px solid #353535;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.5);">
+        <h2 style="margin:0 0 12px;color:#e0e0e0;font-size:18px;text-align:center;">${escapeHtml(heading)}</h2>
+        <p style="margin:0 0 18px;color:#a8a8a8;line-height:1.5;text-align:center;font-size:13px;">${escapeHtml(subtitle)}</p>
         <form id="userNameForm">
           <input type="text" id="userNameInput" required autocomplete="off"
                  placeholder="e.g., Tony Weed"
                  value="${escapeHtml(current)}"
-                 style="width:100%;padding:10px 14px;font-size:15px;background:#0e1430;color:#e7f4ff;border:1px solid #2b3866;border-radius:6px;margin-bottom:16px;outline:none;">
+                 style="width:100%;padding:10px 14px;font-size:15px;background:#1a1a1a;color:#e0e0e0;border:1px solid #353535;border-radius:6px;margin-bottom:16px;outline:none;">
           <div style="display:flex;gap:8px;justify-content:flex-end;">
-            ${opts.cancelable ? `<button type="button" id="userNameCancel" style="padding:9px 16px;background:transparent;color:#8fb5d5;border:1px solid #2b3866;border-radius:6px;cursor:pointer;">Cancel</button>` : ""}
-            <button type="submit" style="padding:9px 22px;background:linear-gradient(90deg,#2dd4bf,#5cdaef);color:#0a0f24;border:1px solid #5cdaef;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">Continue</button>
+            ${opts.cancelable ? `<button type="button" id="userNameCancel" style="padding:9px 16px;background:transparent;color:#a8a8a8;border:1px solid #353535;border-radius:6px;cursor:pointer;">Cancel</button>` : ""}
+            <button type="submit" style="padding:9px 22px;background:#2e5d99;color:#e0e0e0;border:1px solid #3a6dad;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">Continue</button>
           </div>
         </form>
       </div>
