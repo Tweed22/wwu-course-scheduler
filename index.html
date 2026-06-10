@@ -3411,11 +3411,9 @@ function fmtDateShort(iso) {
   const datePart = String(iso).slice(0, 10);
   const d = new Date(datePart + "T00:00:00");
   if (isNaN(d.getTime())) return iso;
-  // Month-day-year, zero-padded (e.g., 04-27-2026) for unambiguous reading.
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
-  const yy = d.getFullYear();
-  return `${mm}-${dd}-${yy}`;
+  return `${mm}/${dd}`;
 }
 /* Format an ISO timestamp in America/Chicago (Central Time). Used by the
    Changelog so users see times in their local university time zone. */
