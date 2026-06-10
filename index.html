@@ -1783,6 +1783,11 @@
        style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;text-decoration:none;">
       &#8592; Academic Apps
     </a>
+    <a id="btnDashboard" href="https://retentioncommittee.com"
+       onclick="event.preventDefault(); openAppWithSSO('https://retentioncommittee.com')"
+       style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;text-decoration:none;">
+      Registration Dashboard &#8599;
+    </a>
     <span id="userNameLabel" style="color:rgba(255,255,255,0.75);font-size:13px;font-weight:500;padding:0 4px;"></span>
     <button type="button" id="btnSignOut" title="Sign out"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
@@ -2660,10 +2665,38 @@ async function loadProfileAndGate(session) {
   if (adminTab) adminTab.style.display = (access.role === "admin") ? "" : "none";
   const academicAppsBtn = _$("btnAcademicApps");
   if (academicAppsBtn) academicAppsBtn.style.display = (access.role === "admin") ? "flex" : "none";
+
+  const { data: dashAccess } = await sb
+    .from("user_app_access")
+    .select("role")
+    .eq("app", "dashboard")
+    .eq("email", (session.user.email || "").toLowerCase())
+    .maybeSingle();
+  const dashBtn = _$("btnDashboard");
+  if (dashBtn) dashBtn.style.display = dashAccess ? "flex" : "none";
+
   hideAllAuthOverlays();
   if (window.AUTH._resolveReady) {
     window.AUTH._resolveReady();
     window.AUTH._resolveReady = null;
+  }
+}
+
+async function openAppWithSSO(url) {
+  if (!url) return;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session?.access_token) {
+      const sep = url.includes('#') ? '&' : '#';
+      window.open(
+        `${url}${sep}access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}&token_type=bearer`,
+        '_blank', 'noopener,noreferrer'
+      );
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  } catch {
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 }
 
