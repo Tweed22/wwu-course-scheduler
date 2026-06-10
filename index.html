@@ -1779,6 +1779,10 @@
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
   </div>
   <div class="header-actions">
+    <a id="btnAcademicApps" href="https://hub.wwuapps.com"
+       style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;text-decoration:none;">
+      &#8592; Academic Apps
+    </a>
     <span id="userNameLabel" style="color:rgba(255,255,255,0.75);font-size:13px;font-weight:500;padding:0 4px;"></span>
     <button type="button" id="btnSignOut" title="Sign out"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
@@ -2665,6 +2669,8 @@ async function loadProfileAndGate(session) {
   // Reveal/hide the Admin tab now that the role is known.
   const adminTab = _$("tabAdmin");
   if (adminTab) adminTab.style.display = (profile.role === "admin") ? "" : "none";
+  const academicAppsBtn = _$("btnAcademicApps");
+  if (academicAppsBtn) academicAppsBtn.style.display = (profile.role === "admin") ? "flex" : "none";
   hideAllAuthOverlays();
   // Unblock any code awaiting AUTH.ready (init's requireUserName()).
   if (window.AUTH._resolveReady) {
