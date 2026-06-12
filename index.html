@@ -5120,7 +5120,7 @@ function renderTermTable(list) {
     const classes = [];
     if (isOverdue(o)) classes.push("overdue");
     if (o.submitted)  classes.push("submitted");
-    if (o.canceled)   classes.push("canceled");
+    if (o.canceled && !o.pendingReinstate) classes.push("canceled");
     const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
     const sectionNum = sectionNumberFor(o);
     // Locked when submitted OR when canceled (canceled offerings can't be edited
@@ -5142,7 +5142,10 @@ function renderTermTable(list) {
       ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">${_dlIcon} Contract</button>`
       : "";
     let actionBtn;
-    if (o.canceled) {
+    if (o.pendingReinstate) {
+      // Reinstate submitted — show SENT state with Recall Submission option.
+      actionBtn = `<button type="button" class="btn-req-change" data-tact="undoreinstate" data-oid="${escapeHtml(o.id)}" title="Recall the reinstatement request and return this section to canceled state">Recall Submission</button>`;
+    } else if (o.canceled) {
       // Show "Recall Submission" while the Cancel Course request is still pending;
       // only show "Re-instate" once it has been finalized (or no linked request found).
       const _cancelFinalStatuses = new Set(["Finalized", "Rejected"]);
@@ -5185,7 +5188,7 @@ function renderTermTable(list) {
       : o.submitted
         ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>`
         : "";
-    const canceledBadge = o.canceled ? `<span class="submitted-badge" title="Course canceled${o.canceledAt ? ' on ' + escapeHtml(fmtDateShort(o.canceledAt)) : ''}" style="background:var(--danger);color:white;">CANCELED</span>` : "";
+    const canceledBadge = (o.canceled && !o.pendingReinstate) ? `<span class="submitted-badge" title="Course canceled${o.canceledAt ? ' on ' + escapeHtml(fmtDateShort(o.canceledAt)) : ''}" style="background:var(--danger);color:white;">CANCELED</span>` : "";
     // Orphan warning — course was removed from the current rotation but this
     // offering still references it. Hover text matches the spec exactly.
     const orphanBadge = c.removedFromRotation
@@ -6785,13 +6788,15 @@ function applyReinstateToOffering(r, ch) {
       Number(x.year) === Number(r.year) && x.subterm === r.subterm && x.canceled
     );
   }
-  if (!o || !o.canceled) return null;
-  o.canceled = false;
-  o.canceledAt = "";
-  o.canceledBy = "";
-  o.reinstatedAt = new Date().toISOString();
-  o.reinstatedBy = state.userName || "(unknown)";
-  o.lastModified = new Date().toISOString();
+  if (!o || (!o.canceled && !o.pendingReinstate)) return null;
+  o.canceled          = false;
+  o.canceledAt        = "";
+  o.canceledBy        = "";
+  o.pendingReinstate  = false;
+  o.reinstateRequestId = "";
+  o.reinstatedAt      = new Date().toISOString();
+  o.reinstatedBy      = state.userName || "(unknown)";
+  o.lastModified      = new Date().toISOString();
   const c = state.courses.find(x => x.id === o.courseId) || {};
   return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
 }
@@ -7819,6 +7824,35 @@ function bindTermEvents() {
       removeSectionOffering(oid);
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
+    } else if (act === "undoreinstate") {
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      const o = state.offerings.find(x => x.id === oid);
+      if (!o) return;
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      if (!confirm(`Recall reinstatement for ${c.code || "this section"}? The section will return to canceled state.`)) return;
+      let _reqIdx = o.reinstateRequestId
+        ? state.requests.findIndex(r => r.id === o.reinstateRequestId)
+        : -1;
+      if (_reqIdx === -1) {
+        _reqIdx = state.requests.findIndex(r =>
+          r.changeType === "Re-instate Course" && r.offeringId === o.id &&
+          !["Finalized", "Rejected"].includes(r.status)
+        );
+      }
+      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      o.pendingReinstate   = false;
+      o.reinstateRequestId = "";
+      o.submitted          = false;
+      o.submittedAt        = "";
+      o.submittedBy        = "";
+      markLocallyTouched(o.id);
+      setDirty(true);
+      renderTerms();
+      if (typeof renderRequests  === "function") renderRequests();
+      if (typeof renderRegistrar === "function") renderRegistrar();
+      if (typeof renderChangelog === "function") renderChangelog();
+      toast(`${c.code || "Section"} reinstatement recalled — section returned to canceled state`);
     } else if (act === "undocancel") {
       const oid = btn.dataset.oid;
       if (!oid) return;
@@ -8980,6 +9014,16 @@ function saveRequestFromModal() {
         linkedO.registrarCompleted   = false;
         linkedO.registrarCompletedAt = "";
         linkedO.registrarCompletedBy = "";
+        markLocallyTouched(linkedO.id);
+      }
+      // Re-instate Course: flip the canceled offering to SENT so it appears
+      // in-progress rather than red/canceled while awaiting Registrar approval.
+      if (draft.changeType === "Re-instate Course" && linkedO && linkedO.canceled) {
+        linkedO.pendingReinstate    = true;
+        linkedO.reinstateRequestId  = draft.id;
+        linkedO.submitted           = true;
+        linkedO.submittedAt         = new Date().toISOString();
+        linkedO.submittedBy         = state.userName || "(unknown)";
         markLocallyTouched(linkedO.id);
       }
     }
