@@ -5143,7 +5143,24 @@ function renderTermTable(list) {
       : "";
     let actionBtn;
     if (o.canceled) {
-      actionBtn = `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
+      // Show "Recall Submission" while the Cancel Course request is still pending;
+      // only show "Re-instate" once it has been finalized (or no linked request found).
+      const _cancelFinalStatuses = new Set(["Finalized", "Rejected"]);
+      let _cancelReq = o.cancelRequestId
+        ? state.requests.find(r => r.id === o.cancelRequestId)
+        : null;
+      if (!_cancelReq) {
+        const _cp = (c.code || "").split(/\s+/);
+        _cancelReq = state.requests.find(r =>
+          r.changeType === "Cancel Course" &&
+          r.prefix === (_cp[0] || "") && r.number === (_cp[1] || "") &&
+          r.term === o.semester && r.subterm === o.subterm && r.year === o.year &&
+          (!r.sectionNumber || r.sectionNumber === sectionNumberFor(o))
+        ) || null;
+      }
+      actionBtn = (_cancelReq && !_cancelFinalStatuses.has(_cancelReq.status))
+        ? `<button type="button" class="btn-req-change" data-tact="undocancel" data-oid="${escapeHtml(o.id)}" title="Recall the cancellation request and restore this section">Recall Submission</button>`
+        : `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
       actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
@@ -5437,6 +5454,7 @@ function cancelCourseOffering(offeringId) {
   logRequestEvent(draft, `Created from Cancel Course button by ${who}`);
   markLocallyTouched(draft.id);
   state.requests.push(draft);
+  o.cancelRequestId = draft.id;
   setDirty(true);
   renderTerms();
   if (typeof renderRequests === "function") renderRequests();
@@ -7801,6 +7819,39 @@ function bindTermEvents() {
       removeSectionOffering(oid);
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
+    } else if (act === "undocancel") {
+      const oid = btn.dataset.oid;
+      if (!oid) return;
+      const o = state.offerings.find(x => x.id === oid);
+      if (!o) return;
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      if (!confirm(`Recall cancellation for ${c.code || "this section"}? This will restore the section and remove the cancellation request from the queue.`)) return;
+      const _cancelFinal = new Set(["Finalized", "Rejected"]);
+      let _reqIdx = o.cancelRequestId
+        ? state.requests.findIndex(r => r.id === o.cancelRequestId)
+        : -1;
+      if (_reqIdx === -1) {
+        const _cp = (c.code || "").split(/\s+/);
+        _reqIdx = state.requests.findIndex(r =>
+          r.changeType === "Cancel Course" &&
+          r.prefix === (_cp[0] || "") && r.number === (_cp[1] || "") &&
+          r.term === o.semester && r.subterm === o.subterm && r.year === o.year &&
+          !_cancelFinal.has(r.status) &&
+          (!r.sectionNumber || r.sectionNumber === sectionNumberFor(o))
+        );
+      }
+      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      o.canceled        = false;
+      o.canceledAt      = "";
+      o.canceledBy      = "";
+      o.cancelRequestId = "";
+      markLocallyTouched(o.id);
+      setDirty(true);
+      renderTerms();
+      if (typeof renderRequests  === "function") renderRequests();
+      if (typeof renderRegistrar === "function") renderRegistrar();
+      if (typeof renderChangelog === "function") renderChangelog();
+      toast(`${c.code || "Section"} cancellation recalled — section restored`);
     } else if (act === "undosubmit") {
       const oid = btn.dataset.oid;
       if (!oid) return;
