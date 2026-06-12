@@ -1670,6 +1670,46 @@
   }
   .auth-card .auth-msg { margin: 14px 0 0; font-size: 13px; color: var(--text-muted); min-height: 18px; }
   .auth-card .auth-msg.error { color: var(--danger); }
+
+  /* ─── App Switcher ─────────────────────────────────────────────── */
+  .app-switcher-wrap { position: relative; display: flex; }
+  .app-switcher-btn {
+    padding: 6px 8px; background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    color: white; cursor: pointer; transition: background 0.15s;
+    font-family: inherit; display: flex; align-items: center;
+    justify-content: center; line-height: 1;
+  }
+  .app-switcher-btn:hover { background: rgba(255,255,255,.22); }
+  html.dark .app-switcher-btn       { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.15); }
+  html.dark .app-switcher-btn:hover { background: rgba(255,255,255,.15); }
+  .app-switcher-popup {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 600;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.22); min-width: 240px;
+  }
+  .asp-header {
+    padding: 11px 16px 10px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .asp-grid { padding: 8px; display: grid; grid-template-columns: repeat(2,1fr); gap: 4px; }
+  .asp-item {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 8px; border-radius: 8px; border: none;
+    background: none; cursor: pointer; text-align: center;
+    transition: background 0.12s; color: var(--text); font-family: inherit;
+  }
+  .asp-item:hover             { background: var(--surface-2); }
+  .asp-item.asp-current       { opacity: .55; cursor: default; }
+  .asp-item.asp-current:hover { background: transparent; }
+  .asp-icon {
+    width: 44px; height: 44px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 7px;
+  }
+  .asp-name     { font-size: 11px; font-weight: 600; line-height: 1.35; }
+  .asp-curr-tag { font-size: 10px; color: var(--wwu-green); font-weight: 600; margin-top: 3px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -1729,15 +1769,16 @@
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
   </div>
   <div class="header-actions">
-    <a id="btnAcademicApps" href="https://hub.wwuapps.com"
-       style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;text-decoration:none;">
-      &#8592; Academic Apps
-    </a>
-    <a id="btnDashboard" href="https://retentioncommittee.com"
-       onclick="event.preventDefault(); openAppWithSSO('https://retentioncommittee.com')"
-       style="display:none;align-items:center;gap:6px;background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;text-decoration:none;">
-      Registration Dashboard &#8599;
-    </a>
+    <div class="app-switcher-wrap">
+      <button class="app-switcher-btn" id="app-switcher-btn" onclick="toggleAppGrid(event)" title="Switch app" style="display:none;">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="2" cy="2" r="1.5"/><circle cx="7.5" cy="2" r="1.5"/><circle cx="13" cy="2" r="1.5"/>
+          <circle cx="2" cy="7.5" r="1.5"/><circle cx="7.5" cy="7.5" r="1.5"/><circle cx="13" cy="7.5" r="1.5"/>
+          <circle cx="2" cy="13" r="1.5"/><circle cx="7.5" cy="13" r="1.5"/><circle cx="13" cy="13" r="1.5"/>
+        </svg>
+      </button>
+      <div class="app-switcher-popup" id="app-switcher-popup" style="display:none;"></div>
+    </div>
     <span id="userNameLabel" style="color:rgba(255,255,255,0.75);font-size:13px;font-weight:500;padding:0 4px;"></span>
     <button type="button" id="btnSignOut" title="Sign out"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
@@ -2577,15 +2618,75 @@ function hideAllAuthOverlays() {
   _$("pendingOverlay").style.display = "none";
 }
 
+// ── App Switcher ─────────────────────────────────────────────────────────────
+const CURRENT_APP_ID = 'scheduler';
+
+const _ASP_APPS = [
+  { id:'hub',       name:'Academic Apps',          abbr:'AA',  bg:'rgba(90,181,125,.18)', fg:'#5ab57d', url:()=>'https://hub.wwuapps.com' },
+  { id:'grades',    name:'Missing Att. & Grades',  abbr:'MAG', bg:'rgba(201,169,97,.18)', fg:'#c9a961', url:()=>'https://hub.wwuapps.com/missing-grades.html' },
+  { id:'dashboard', name:'Registration Dashboard', abbr:'RD',  bg:'rgba(91,122,181,.18)', fg:'#5b7ab5', url:()=>'https://retentioncommittee.com' },
+  { id:'scheduler', name:'Course Scheduler',       abbr:'CS',  bg:'rgba(90,181,125,.18)', fg:'#5ab57d', url:()=>location.href },
+];
+let _aspApps = [];
+
+function initAppSwitcher(accessRows) {
+  const access = new Set((accessRows||[]).map(r=>r.app));
+  const ids = ['scheduler'];
+  if(access.has('hub'))       { ids.push('hub','grades'); }
+  if(access.has('dashboard')) ids.push('dashboard');
+  _aspApps = _ASP_APPS.filter(a=>ids.includes(a.id));
+  const btn = document.getElementById('app-switcher-btn');
+  if(btn) btn.style.display = _aspApps.length >= 2 ? 'flex' : 'none';
+}
+
+function toggleAppGrid(e) {
+  e.stopPropagation();
+  const popup = document.getElementById('app-switcher-popup');
+  if(!popup) return;
+  if(popup.style.display==='block') { closeAppGrid(); return; }
+  popup.innerHTML = `<div class="asp-header">Switch App</div><div class="asp-grid">${
+    _aspApps.map(app => {
+      const isCurr = app.id === CURRENT_APP_ID;
+      return `<button class="asp-item${isCurr?' asp-current':''}" onclick="aspNav('${app.id}')">
+        <div class="asp-icon" style="background:${app.bg};color:${app.fg};">${app.abbr}</div>
+        <div class="asp-name">${app.name}</div>
+        ${isCurr?'<div class="asp-curr-tag">Current</div>':''}
+      </button>`;
+    }).join('')
+  }</div>`;
+  popup.style.display = 'block';
+  setTimeout(()=>document.addEventListener('click',_aspOutside), 0);
+}
+
+function closeAppGrid() {
+  const p = document.getElementById('app-switcher-popup');
+  if(p) p.style.display = 'none';
+  document.removeEventListener('click', _aspOutside);
+}
+
+function _aspOutside(e) {
+  const p = document.getElementById('app-switcher-popup');
+  const b = document.getElementById('app-switcher-btn');
+  if(!p?.contains(e.target) && !b?.contains(e.target)) closeAppGrid();
+}
+
+async function aspNav(appId) {
+  closeAppGrid();
+  if(appId === CURRENT_APP_ID) return;
+  const app = _aspApps.find(a=>a.id===appId);
+  if(!app) return;
+  const url = app.url();
+  if(!url) return;
+  openAppWithSSO(url);
+}
+
 async function loadProfileAndGate(session) {
   if (!session || !session.user) { showSignInForm(); return; }
   showCheckingState();
-  const { data: access, error } = await sb
+  const { data: rows, error } = await sb
     .from("user_app_access")
-    .select("display_name, role")
-    .eq("app", "scheduler")
-    .eq("email", (session.user.email || "").toLowerCase())
-    .maybeSingle();
+    .select("app, display_name, role")
+    .eq("email", (session.user.email || "").toLowerCase());
   if (error) {
     console.error("access load failed", error);
     showSignInForm();
@@ -2594,6 +2695,7 @@ async function loadProfileAndGate(session) {
     m.textContent = "Couldn't verify your access. Try refreshing.";
     return;
   }
+  const access = (rows || []).find(r => r.app === "scheduler");
   if (!access) {
     showSignInForm();
     const m = _$("authMessage");
@@ -2613,18 +2715,7 @@ async function loadProfileAndGate(session) {
   if (lbl) lbl.textContent = window.AUTH.user.displayName;
   const adminTab = _$("tabAdmin");
   if (adminTab) adminTab.style.display = (access.role === "admin") ? "" : "none";
-  const academicAppsBtn = _$("btnAcademicApps");
-  if (academicAppsBtn) academicAppsBtn.style.display = (access.role === "admin") ? "flex" : "none";
-
-  const { data: dashAccess } = await sb
-    .from("user_app_access")
-    .select("role")
-    .eq("app", "dashboard")
-    .eq("email", (session.user.email || "").toLowerCase())
-    .maybeSingle();
-  const dashBtn = _$("btnDashboard");
-  if (dashBtn) dashBtn.style.display = dashAccess ? "flex" : "none";
-
+  initAppSwitcher(rows || []);
   hideAllAuthOverlays();
   if (window.AUTH._resolveReady) {
     window.AUTH._resolveReady();
@@ -4031,11 +4122,13 @@ function currentRole() {
 function isAdmin() { return currentRole() === "admin"; }
 function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
 function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
-// Deans, registrars, and admins can approve change requests and send
-// them to the Registrar. Program managers submit directly from Term
-// Assignments (bypassing the approval queue) but cannot approve requests.
+// Registrars and admins can approve any request. Deans can only approve
+// Online-modality requests — On-Ground must go to a registrar or admin.
+// Program managers submit directly from Term Assignments but cannot approve.
 function canApproveRequest(r) {
-  return ["dean", "registrar", "admin"].includes(currentRole());
+  if (isRegistrar()) return true;
+  if (currentRole() === "dean") return !!(r && r.modality === "Online");
+  return false;
 }
 // Most write actions (assigning instructor, requesting changes, etc.) require
 // at least the program_manager role.
