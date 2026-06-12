@@ -4031,10 +4031,11 @@ function currentRole() {
 function isAdmin() { return currentRole() === "admin"; }
 function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
 function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
-// Any role that can edit assignments can also approve and send requests
-// to the Registrar — all profile types flow through the same lifecycle.
+// Deans, registrars, and admins can approve change requests and send
+// them to the Registrar. Program managers submit directly from Term
+// Assignments (bypassing the approval queue) but cannot approve requests.
 function canApproveRequest(r) {
-  return canEditAssignments();
+  return ["dean", "registrar", "admin"].includes(currentRole());
 }
 // Most write actions (assigning instructor, requesting changes, etc.) require
 // at least the program_manager role.
