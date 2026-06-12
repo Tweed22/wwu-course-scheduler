@@ -445,6 +445,34 @@
     font-weight: 600;
   }
   .header-actions { display: flex; gap: 8px; align-items: center; }
+  .hub-logo { display: flex; align-items: center; gap: 11px; }
+  .hub-logo-badge {
+    width: 34px; height: 34px; background: rgba(255,255,255,.18);
+    border: 1px solid rgba(255,255,255,.25); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .hub-logo-text { font-size: 16px; font-weight: 700; letter-spacing: -.2px; }
+  .hub-logo-divider { width: 1px; height: 18px; background: rgba(255,255,255,.25); margin: 0 4px; }
+  .hub-logo-sub { font-size: 12px; opacity: .65; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .header-user { font-size: 13px; color: rgba(255,255,255,.85); }
+  .header-signout {
+    padding: 6px 13px; background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    color: white; font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background 0.15s; font-family: inherit;
+  }
+  .header-signout:hover { background: rgba(255,255,255,.22); }
+  .header-theme-btn {
+    padding: 6px 8px; background: rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    color: white; cursor: pointer; transition: background 0.15s;
+    font-family: inherit; display: flex; align-items: center;
+    justify-content: center; line-height: 1;
+  }
+  .header-theme-btn:hover { background: rgba(255,255,255,.22); }
+  html.dark .header-theme-btn       { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.15); }
+  html.dark .header-theme-btn:hover { background: rgba(255,255,255,.15); }
   main { max-width: 1600px; margin: 0 auto; padding: 18px 20px 60px; }
 
   .toolbar {
@@ -1765,10 +1793,14 @@
 
 <div class="sticky-top">
 <header class="app-header">
-  <div>
-    <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
+  <div class="hub-logo">
+    <div class="hub-logo-badge" style="font-size:12px;font-weight:900;letter-spacing:-0.5px;">CS</div>
+    <div class="hub-logo-text">Course Scheduler</div>
+    <div class="hub-logo-divider"></div>
+    <div class="hub-logo-sub">William Woods University</div>
   </div>
-  <div class="header-actions">
+  <div class="header-right">
+    <span class="header-user" id="userNameLabel"></span>
     <div class="app-switcher-wrap">
       <button class="app-switcher-btn" id="app-switcher-btn" onclick="toggleAppGrid(event)" title="Switch app" style="display:none;">
         <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -1779,15 +1811,10 @@
       </button>
       <div class="app-switcher-popup" id="app-switcher-popup" style="display:none;"></div>
     </div>
-    <span id="userNameLabel" style="color:rgba(255,255,255,0.75);font-size:13px;font-weight:500;padding:0 4px;"></span>
-    <button type="button" id="btnSignOut" title="Sign out"
-            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;">
-      Sign out
-    </button>
-    <button type="button" id="btnThemeToggle" title="Toggle dark mode" aria-label="Toggle dark mode"
-            style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 10px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">
+    <button type="button" id="btnThemeToggle" class="header-theme-btn" title="Toggle dark mode" aria-label="Toggle dark mode">
       <span id="themeToggleIcon"></span>
     </button>
+    <button type="button" id="btnSignOut" class="header-signout">Sign out</button>
   </div>
 </header>
 
