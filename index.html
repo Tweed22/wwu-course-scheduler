@@ -4031,12 +4031,10 @@ function currentRole() {
 function isAdmin() { return currentRole() === "admin"; }
 function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
 function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
-// Deans may only approve Online-modality change requests; registrars and admins
-// may approve any request regardless of modality.
+// Any role that can edit assignments can also approve and send requests
+// to the Registrar — all profile types flow through the same lifecycle.
 function canApproveRequest(r) {
-  if (isRegistrar()) return true;
-  if (currentRole() === "dean") return !!(r && r.modality === "Online");
-  return false;
+  return canEditAssignments();
 }
 // Most write actions (assigning instructor, requesting changes, etc.) require
 // at least the program_manager role.
@@ -8084,7 +8082,6 @@ function renderRequestStats(filtered) {
 
 function renderRequestActions(r) {
   // Queue is always Pending Approval — show the four canonical actions.
-  // Deans may only approve Online requests; hide the button for on-ground ones.
   const approveBtn = canApproveRequest(r)
     ? `<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`
     : "";
@@ -9062,7 +9059,7 @@ function transitionRequest(id, action) {
   const who = state.userName || "(unknown)";
   if (action === "approve") {
     if (!canApproveRequest(r)) {
-      toast("You can only approve Online modality change requests.", "error");
+      toast("You do not have permission to approve requests.", "error");
       return;
     }
     // Approve & Send → goes to Registrar queue immediately.
