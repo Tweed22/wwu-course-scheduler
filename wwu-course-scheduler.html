@@ -1392,6 +1392,47 @@
     color: var(--text-muted);
     font-style: italic;
   }
+
+  /* ─── App Switcher ───────────────────────────────────────── */
+  .app-switcher-wrap { position: relative; display: flex; }
+  .app-switcher-btn {
+    background: rgba(255,255,255,.12); color: white;
+    border: 1px solid rgba(255,255,255,.25); border-radius: 6px;
+    padding: 6px 9px; cursor: pointer; transition: background 0.15s;
+    font-family: inherit; display: flex; align-items: center;
+    justify-content: center; line-height: 1;
+  }
+  .app-switcher-btn:hover { background: rgba(255,255,255,.22); }
+  html.dark .app-switcher-btn       { background: rgba(45,212,191,.10); border-color: rgba(45,212,191,.25); }
+  html.dark .app-switcher-btn:hover { background: rgba(45,212,191,.20); }
+
+  .app-switcher-popup {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 600;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.22); min-width: 240px;
+  }
+  .asp-header {
+    padding: 11px 16px 10px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .asp-grid { padding: 8px; display: grid; grid-template-columns: repeat(2,1fr); gap: 4px; }
+  .asp-item {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 8px; border-radius: 8px; border: none;
+    background: none; cursor: pointer; text-align: center;
+    transition: background 0.12s; color: var(--text); font-family: inherit;
+  }
+  .asp-item:hover             { background: var(--surface-2); }
+  .asp-item.asp-current       { opacity: .55; cursor: default; }
+  .asp-item.asp-current:hover { background: transparent; }
+  .asp-icon {
+    width: 44px; height: 44px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 7px;
+  }
+  .asp-name     { font-size: 11px; font-weight: 600; line-height: 1.35; }
+  .asp-curr-tag { font-size: 10px; color: var(--wwu-green); font-weight: 600; margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -1400,11 +1441,16 @@
     <h1>WWU Course Scheduler <span class="sub">Term Assignments &amp; Change Requests</span></h1>
   </div>
   <div class="header-actions">
-    <a id="btnAcademicApps" href="https://hub.wwuapps.com"
-       style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;letter-spacing:0.3px;text-decoration:none;display:none;align-items:center;gap:5px;transition:background 0.15s;"
-       onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">
-      ← Academic Apps
-    </a>
+    <div class="app-switcher-wrap">
+      <button class="app-switcher-btn" id="app-switcher-btn" onclick="toggleAppGrid(event)" title="Switch app" style="display:none;">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="2" cy="2" r="1.5"/><circle cx="7.5" cy="2" r="1.5"/><circle cx="13" cy="2" r="1.5"/>
+          <circle cx="2" cy="7.5" r="1.5"/><circle cx="7.5" cy="7.5" r="1.5"/><circle cx="13" cy="7.5" r="1.5"/>
+          <circle cx="2" cy="13" r="1.5"/><circle cx="7.5" cy="13" r="1.5"/><circle cx="13" cy="13" r="1.5"/>
+        </svg>
+      </button>
+      <div class="app-switcher-popup" id="app-switcher-popup" style="display:none;"></div>
+    </div>
     <button type="button" id="btnUserName" title="Change name"
             style="background:rgba(255,255,255,0.12);color:white;border:1px solid rgba(255,255,255,0.25);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:0.3px;display:flex;align-items:center;gap:6px;">
       <span style="opacity:0.7;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">User</span>
@@ -2096,12 +2142,68 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-/* ======== Supabase role check — Academic Apps button (admin only) ======== */
+/* ======== Supabase + App Switcher ======== */
 const SCHED_SB_URL = 'https://vmqorqyvirdqpzjyozan.supabase.co';
 const SCHED_SB_KEY = 'sb_publishable_kWXLv3tPyse7q3jGFhB0LQ_VOkXhukv';
 const schedSb = (typeof supabase !== 'undefined')
   ? supabase.createClient(SCHED_SB_URL, SCHED_SB_KEY)
   : null;
+
+const CURRENT_APP_ID = 'scheduler';
+const _ASP_APPS = [
+  { id:'hub',       name:'Academic Apps',          abbr:'AA',  bg:'rgba(90,181,125,.18)', fg:'#5ab57d', url:'https://hub.wwuapps.com/' },
+  { id:'grades',    name:'Missing Att. & Grades',  abbr:'MAG', bg:'rgba(201,169,97,.18)', fg:'#c9a961', url:'https://hub.wwuapps.com/missing-grades.html' },
+  { id:'dashboard', name:'Registration Dashboard', abbr:'RD',  bg:'rgba(91,122,181,.18)', fg:'#5b7ab5', url:'https://retentioncommittee.com' },
+  { id:'scheduler', name:'Course Scheduler',       abbr:'CS',  bg:'rgba(45,212,191,.18)', fg:'#2dd4bf', url:'' },
+];
+let _aspApps = [];
+
+function initAppSwitcher(role) {
+  const ids = ['hub', 'grades', 'scheduler'];
+  if (role === 'admin') ids.push('dashboard');
+  _aspApps = _ASP_APPS.filter(a => ids.includes(a.id));
+  const btn = document.getElementById('app-switcher-btn');
+  if (btn) btn.style.display = _aspApps.length >= 2 ? 'flex' : 'none';
+}
+
+function toggleAppGrid(e) {
+  e.stopPropagation();
+  const popup = document.getElementById('app-switcher-popup');
+  if (!popup) return;
+  if (popup.style.display === 'block') { closeAppGrid(); return; }
+  popup.innerHTML = `<div class="asp-header">Switch App</div><div class="asp-grid">${
+    _aspApps.map(app => {
+      const isCurr = app.id === CURRENT_APP_ID;
+      return `<button class="asp-item${isCurr ? ' asp-current' : ''}" onclick="aspNav('${app.id}')">
+        <div class="asp-icon" style="background:${app.bg};color:${app.fg};">${app.abbr}</div>
+        <div class="asp-name">${app.name}</div>
+        ${isCurr ? '<div class="asp-curr-tag">Current</div>' : ''}
+      </button>`;
+    }).join('')
+  }</div>`;
+  popup.style.display = 'block';
+  setTimeout(() => document.addEventListener('click', _aspOutside), 0);
+}
+
+function closeAppGrid() {
+  const p = document.getElementById('app-switcher-popup');
+  if (p) p.style.display = 'none';
+  document.removeEventListener('click', _aspOutside);
+}
+
+function _aspOutside(e) {
+  const p = document.getElementById('app-switcher-popup');
+  const b = document.getElementById('app-switcher-btn');
+  if (!p?.contains(e.target) && !b?.contains(e.target)) closeAppGrid();
+}
+
+function aspNav(appId) {
+  closeAppGrid();
+  if (appId === CURRENT_APP_ID) return;
+  const app = _aspApps.find(a => a.id === appId);
+  if (!app || !app.url) return;
+  window.open(app.url, '_blank');
+}
 
 async function checkAdminRole() {
   if (!schedSb) return;
@@ -2113,10 +2215,7 @@ async function checkAdminRole() {
       .select('role')
       .eq('id', session.user.id)
       .maybeSingle();
-    if (profile && profile.role === 'admin') {
-      const btn = document.getElementById('btnAcademicApps');
-      if (btn) btn.style.display = 'flex';
-    }
+    initAppSwitcher(profile?.role || '');
   } catch (_) {}
 }
 
