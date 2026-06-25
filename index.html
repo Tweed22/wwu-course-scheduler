@@ -1788,6 +1788,21 @@
         <button id="authForgotPw" type="button" class="btn-secondary" style="margin-top:-4px;">Forgot password?</button>
       </form>
 
+      <!-- Stage 3: code-based password reset -->
+      <form id="authResetForm" style="display:none;flex-direction:column;gap:12px;">
+        <p class="auth-sub" id="authResetSentTo" style="margin:0;"></p>
+        <label for="authResetCode">6-digit reset code</label>
+        <input id="authResetCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+               autocomplete="one-time-code" placeholder="000000"
+               oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        <label for="authResetPw">New password</label>
+        <input id="authResetPw" type="password" autocomplete="new-password" placeholder="Minimum 8 characters">
+        <label for="authResetPwConfirm">Confirm new password</label>
+        <input id="authResetPwConfirm" type="password" autocomplete="new-password" placeholder="Repeat your password">
+        <button id="authResetSubmit" type="submit" class="btn-primary">Reset Password &amp; Sign In</button>
+        <button id="authResetBack" type="button" class="btn-secondary">← Start over</button>
+      </form>
+
       <p id="authMessage" class="auth-msg"></p>
     </div>
   </div>
@@ -2826,6 +2841,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     _$("authForm").style.display = "flex";
     _$("authSetPasswordForm").style.display = "none";
     _$("authPasswordForm").style.display = "none";
+    _$("authResetForm").style.display = "none";
     _$("authEmail").value = "";
     clearAuthMsg();
     setTimeout(() => _$("authEmail").focus(), 50);
@@ -2940,13 +2956,67 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   _$("authPwBack").addEventListener("click", () => showEmailStage());
   _$("authSetPwBack").addEventListener("click", () => showEmailStage());
+  _$("authResetBack").addEventListener("click", () => showEmailStage());
 
   _$("authForgotPw").addEventListener("click", async () => {
     clearAuthMsg();
-    const { error } = await sb.auth.resetPasswordForEmail(_authEmail, {
-      redirectTo: window.location.origin + window.location.pathname,
-    });
-    setAuthMsg(error ? (error.message || "Could not send reset email.") : "Password reset email sent — check your inbox.");
+    const btn = _$("authForgotPw");
+    btn.disabled = true; btn.textContent = "Sending…";
+    try {
+      const res  = await fetch(AUTH_SETUP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
+        body: JSON.stringify({ action: "send_reset_code", email: _authEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthMsg(data.error || "Could not send reset code. Try again.", true);
+      } else {
+        _$("authPasswordForm").style.display = "none";
+        _$("authResetSentTo").textContent =
+          `A 6-digit code was sent to ${_authEmail}. Enter it below along with your new password.`;
+        _$("authResetForm").style.display = "flex";
+        setTimeout(() => _$("authResetCode").focus(), 50);
+      }
+    } catch {
+      setAuthMsg("Could not connect. Please try again.", true);
+    }
+    btn.disabled = false; btn.textContent = "Forgot password?";
+  });
+
+  _$("authResetForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code     = _$("authResetCode").value.trim();
+    const password = _$("authResetPw").value;
+    const confirm  = _$("authResetPwConfirm").value;
+    const btn      = _$("authResetSubmit");
+    clearAuthMsg();
+    if (code.length < 6)      { setAuthMsg("Please enter the full 6-digit code.", true); return; }
+    if (password.length < 8)  { setAuthMsg("Password must be at least 8 characters.", true); return; }
+    if (password !== confirm)  { setAuthMsg("Passwords do not match.", true); return; }
+    btn.disabled = true; btn.textContent = "Verifying…";
+    try {
+      const res  = await fetch(AUTH_SETUP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
+        body: JSON.stringify({ action: "reset_password_with_code", email: _authEmail, code, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthMsg(data.error || "Could not reset password. Try again.", true);
+        btn.disabled = false; btn.textContent = "Reset Password & Sign In";
+        return;
+      }
+      const { error } = await sb.auth.signInWithPassword({ email: _authEmail, password });
+      if (error) {
+        setAuthMsg(error.message, true);
+        btn.disabled = false; btn.textContent = "Reset Password & Sign In";
+      }
+      // Success — onAuthStateChange fires
+    } catch {
+      setAuthMsg("Could not connect. Please try again.", true);
+      btn.disabled = false; btn.textContent = "Reset Password & Sign In";
+    }
   });
 
   // Recovery overlay (shown after user clicks a password-reset email link)
