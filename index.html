@@ -1658,7 +1658,8 @@
   .auth-card .auth-sub { margin: 0 0 20px; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
   .auth-card label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
   .auth-card input[type=email],
-  .auth-card input[type=text] {
+  .auth-card input[type=text],
+  .auth-card input[type=password] {
     padding: 10px 14px;
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
@@ -1669,7 +1670,8 @@
     box-sizing: border-box;
   }
   .auth-card input[type=email]:focus,
-  .auth-card input[type=text]:focus {
+  .auth-card input[type=text]:focus,
+  .auth-card input[type=password]:focus {
     outline: none;
     border-color: var(--wwu-green);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--wwu-green) 20%, transparent);
@@ -1757,27 +1759,53 @@
     </div>
     <div id="authSignInBlock" style="display:none;">
       <h2>WWU Course Scheduler</h2>
-      <p class="auth-sub" id="authSubLine">Sign in with your work email. We'll send you a 6-digit code — no password needed.</p>
 
-      <!-- Stage 1: enter email -->
+      <!-- Stage 1: email -->
       <form id="authForm" style="display:flex;flex-direction:column;gap:12px;">
+        <p class="auth-sub" style="margin:0;">Sign in with your William Woods email address.</p>
         <label for="authEmail">Email</label>
         <input id="authEmail" type="email" required autocomplete="email" placeholder="you@williamwoods.edu">
-        <button id="authSubmit" type="submit" class="btn-primary">Send me a 6-digit code</button>
+        <button id="authSubmit" type="submit" class="btn-primary">Continue</button>
       </form>
 
-      <!-- Stage 2: enter the code from the email -->
-      <form id="authCodeForm" style="display:none;flex-direction:column;gap:12px;">
-        <label for="authCode">6-digit code</label>
-        <input id="authCode" type="text" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
-               autocomplete="one-time-code" placeholder="123456"
-               style="font-size:24px;letter-spacing:10px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
-        <button id="authVerify" type="submit" class="btn-primary">Sign in</button>
-        <button id="authCodeBack" type="button" class="btn-secondary">Use a different email</button>
+      <!-- Stage 2a: new user — set a password -->
+      <form id="authSetPasswordForm" style="display:none;flex-direction:column;gap:12px;">
+        <p class="auth-sub" id="authSetEmailDisplay" style="margin:0;"></p>
+        <label for="authNewPassword">Choose a password</label>
+        <input id="authNewPassword" type="password" required autocomplete="new-password" placeholder="Minimum 8 characters">
+        <label for="authConfirmPassword">Confirm password</label>
+        <input id="authConfirmPassword" type="password" required autocomplete="new-password" placeholder="Repeat your password">
+        <button id="authSetPwSubmit" type="submit" class="btn-primary">Create Account &amp; Sign In</button>
+        <button id="authSetPwBack" type="button" class="btn-secondary">Use a different email</button>
+      </form>
+
+      <!-- Stage 2b: returning user — enter password -->
+      <form id="authPasswordForm" style="display:none;flex-direction:column;gap:12px;">
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" required autocomplete="current-password" placeholder="Your password">
+        <button id="authPwSubmit" type="submit" class="btn-primary">Sign In</button>
+        <button id="authPwBack" type="button" class="btn-secondary">Use a different email</button>
+        <button id="authForgotPw" type="button" class="btn-secondary" style="margin-top:-4px;">Forgot password?</button>
       </form>
 
       <p id="authMessage" class="auth-msg"></p>
     </div>
+  </div>
+</div>
+
+<!-- ── Password Recovery Overlay ──────────────────────────────────────────── -->
+<div id="recoveryOverlay" class="auth-overlay" style="display:none;">
+  <div class="auth-card">
+    <h2>Set New Password</h2>
+    <p class="auth-sub">Choose a new password for your account.</p>
+    <form id="recoveryForm" style="display:flex;flex-direction:column;gap:12px;">
+      <label for="recoveryPassword">New password</label>
+      <input id="recoveryPassword" type="password" required autocomplete="new-password" placeholder="Minimum 8 characters">
+      <label for="recoveryConfirm">Confirm new password</label>
+      <input id="recoveryConfirm" type="password" required autocomplete="new-password" placeholder="Repeat your password">
+      <button id="recoverySubmit" type="submit" class="btn-primary">Update Password</button>
+    </form>
+    <p id="recoveryMessage" class="auth-msg"></p>
   </div>
 </div>
 
@@ -2781,82 +2809,168 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   showCheckingState();
 
-  // Helpers for switching between the two sign-in stages.
+  const AUTH_SETUP_URL = SB_URL + "/functions/v1/auth-setup";
+  let _authEmail = "";
+
+  function clearAuthMsg() {
+    const msg = _$("authMessage");
+    msg.classList.remove("error");
+    msg.textContent = "";
+  }
+  function setAuthMsg(text, isError = false) {
+    const msg = _$("authMessage");
+    msg.classList.toggle("error", isError);
+    msg.textContent = text;
+  }
   function showEmailStage() {
     _$("authForm").style.display = "flex";
-    _$("authCodeForm").style.display = "none";
-    _$("authSubLine").textContent = "Sign in with your work email. We'll send you a 6-digit code — no password needed.";
-    _$("authMessage").classList.remove("error");
-    _$("authMessage").textContent = "";
+    _$("authSetPasswordForm").style.display = "none";
+    _$("authPasswordForm").style.display = "none";
+    _$("authEmail").value = "";
+    clearAuthMsg();
+    setTimeout(() => _$("authEmail").focus(), 50);
   }
-  function showCodeStage(email) {
+  function showSetPasswordStage(email) {
     _$("authForm").style.display = "none";
-    _$("authCodeForm").style.display = "flex";
-    _$("authSubLine").textContent = `Enter the 6-digit code we sent to ${email}.`;
-    _$("authMessage").classList.remove("error");
-    _$("authMessage").textContent = "";
-    setTimeout(() => _$("authCode").focus(), 50);
+    _$("authSetPasswordForm").style.display = "flex";
+    _$("authPasswordForm").style.display = "none";
+    _$("authSetEmailDisplay").textContent = `Welcome! Create a password for ${email}`;
+    _$("authNewPassword").value = "";
+    _$("authConfirmPassword").value = "";
+    clearAuthMsg();
+    setTimeout(() => _$("authNewPassword").focus(), 50);
+  }
+  function showPasswordStage() {
+    _$("authForm").style.display = "none";
+    _$("authSetPasswordForm").style.display = "none";
+    _$("authPasswordForm").style.display = "flex";
+    _$("authPassword").value = "";
+    clearAuthMsg();
+    setTimeout(() => _$("authPassword").focus(), 50);
   }
 
-  // Stage 1: user enters email, we ask Supabase to send a code.
+  // Stage 1: email → check authorization and password status
   _$("authForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = _$("authEmail").value.trim();
-    const msg = _$("authMessage");
-    const btn = _$("authSubmit");
-    msg.classList.remove("error");
-    msg.textContent = "";
+    const btn   = _$("authSubmit");
+    clearAuthMsg();
     if (!email) return;
     btn.disabled = true;
-    btn.textContent = "Sending…";
-    // shouldCreateUser:true is the default — keeps signup-on-first-attempt
-    // behavior.  No emailRedirectTo: we're using the code, not the link.
-    const { error } = await sb.auth.signInWithOtp({ email });
+    btn.textContent = "Checking…";
+    try {
+      const res  = await fetch(AUTH_SETUP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
+        body: JSON.stringify({ action: "check", email, app: "scheduler" }),
+      });
+      const data = await res.json();
+      if (!data.authorized) {
+        setAuthMsg(`${email} does not have access to the Course Scheduler. Contact an admin to be added.`, true);
+      } else {
+        _authEmail = email;
+        data.hasPassword ? showPasswordStage() : showSetPasswordStage(email);
+      }
+    } catch {
+      setAuthMsg("Could not connect. Please try again.", true);
+    }
     btn.disabled = false;
-    btn.textContent = "Send me a 6-digit code";
+    btn.textContent = "Continue";
+  });
+
+  // Stage 2a: new user sets their password
+  _$("authSetPasswordForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = _$("authNewPassword").value;
+    const confirm  = _$("authConfirmPassword").value;
+    const btn      = _$("authSetPwSubmit");
+    clearAuthMsg();
+    if (password.length < 8) { setAuthMsg("Password must be at least 8 characters.", true); return; }
+    if (password !== confirm) { setAuthMsg("Passwords do not match.", true); return; }
+    btn.disabled = true;
+    btn.textContent = "Setting up…";
+    try {
+      const res  = await fetch(AUTH_SETUP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
+        body: JSON.stringify({ action: "set_password", email: _authEmail, password, app: "scheduler" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthMsg(data.error || "Could not set password. Please try again.", true);
+        btn.disabled = false;
+        btn.textContent = "Create Account & Sign In";
+        return;
+      }
+      const { error } = await sb.auth.signInWithPassword({ email: _authEmail, password });
+      if (error) {
+        setAuthMsg(error.message, true);
+        btn.disabled = false;
+        btn.textContent = "Create Account & Sign In";
+      }
+      // Success — onAuthStateChange fires and loadProfileAndGate handles the rest
+    } catch {
+      setAuthMsg("Could not connect. Please try again.", true);
+      btn.disabled = false;
+      btn.textContent = "Create Account & Sign In";
+    }
+  });
+
+  // Stage 2b: returning user enters password
+  _$("authPasswordForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = _$("authPassword").value;
+    const btn      = _$("authPwSubmit");
+    clearAuthMsg();
+    if (!password) { setAuthMsg("Please enter your password.", true); return; }
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+    const { error } = await sb.auth.signInWithPassword({ email: _authEmail, password });
+    btn.disabled = false;
+    btn.textContent = "Sign In";
+    if (error) {
+      setAuthMsg(error.message === "Invalid login credentials"
+        ? "Incorrect password. Please try again."
+        : error.message, true);
+      _$("authPassword").value = "";
+      _$("authPassword").focus();
+    }
+    // Success — onAuthStateChange fires and loadProfileAndGate handles the rest
+  });
+
+  _$("authPwBack").addEventListener("click", () => showEmailStage());
+  _$("authSetPwBack").addEventListener("click", () => showEmailStage());
+
+  _$("authForgotPw").addEventListener("click", async () => {
+    clearAuthMsg();
+    const { error } = await sb.auth.resetPasswordForEmail(_authEmail, {
+      redirectTo: window.location.origin + window.location.pathname,
+    });
+    setAuthMsg(error ? (error.message || "Could not send reset email.") : "Password reset email sent — check your inbox.");
+  });
+
+  // Recovery overlay (shown after user clicks a password-reset email link)
+  _$("recoveryForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = _$("recoveryPassword").value;
+    const confirm  = _$("recoveryConfirm").value;
+    const msg      = _$("recoveryMessage");
+    const btn      = _$("recoverySubmit");
+    msg.textContent = "";
+    if (password.length < 8) { msg.classList.add("error"); msg.textContent = "Password must be at least 8 characters."; return; }
+    if (password !== confirm) { msg.classList.add("error"); msg.textContent = "Passwords do not match."; return; }
+    btn.disabled = true;
+    btn.textContent = "Updating…";
+    const { error } = await sb.auth.updateUser({ password });
     if (error) {
       msg.classList.add("error");
       msg.textContent = error.message;
+      btn.disabled = false;
+      btn.textContent = "Update Password";
       return;
     }
-    // Remember the email for the verify step and switch to code entry.
-    _$("authCodeForm").dataset.email = email;
-    showCodeStage(email);
-  });
-
-  // Stage 2: user enters the 6-digit code, we verify it.
-  _$("authCodeForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = _$("authCodeForm").dataset.email || "";
-    const token = _$("authCode").value.trim();
-    const msg = _$("authMessage");
-    const btn = _$("authVerify");
-    msg.classList.remove("error");
-    msg.textContent = "";
-    if (!email || !/^\d{6}$/.test(token)) {
-      msg.classList.add("error");
-      msg.textContent = "Enter the 6-digit code from your email.";
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = "Signing in…";
-    const { error } = await sb.auth.verifyOtp({ email, token, type: "email" });
-    btn.disabled = false;
-    btn.textContent = "Sign in";
-    if (error) {
-      msg.classList.add("error");
-      msg.textContent = error.message || "That code didn't work. Try again.";
-      return;
-    }
-    // Success — onAuthStateChange will fire and loadProfileAndGate() handles
-    // the rest.  Nothing else to do here.
-  });
-
-  // "Use a different email" — go back to the email stage.
-  _$("authCodeBack").addEventListener("click", () => {
-    _$("authCodeForm").dataset.email = "";
-    _$("authCode").value = "";
-    showEmailStage();
+    _$("recoveryOverlay").style.display = "none";
+    // Session is now active — onAuthStateChange fires SIGNED_IN
   });
 
   _$("pendingSignOut").addEventListener("click", async () => {
@@ -2874,7 +2988,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  sb.auth.onAuthStateChange((_event, session) => {
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === "PASSWORD_RECOVERY") {
+      _$("authOverlay").style.display = "none";
+      _$("recoveryOverlay").style.display = "flex";
+      setTimeout(() => _$("recoveryPassword").focus(), 50);
+      return;
+    }
     loadProfileAndGate(session);
   });
 
