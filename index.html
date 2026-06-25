@@ -2640,7 +2640,6 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    flowType: 'pkce',
   }
 });
 window.sb = sb;
@@ -2996,7 +2995,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       setTimeout(() => _$("recoveryPassword").focus(), 50);
       return;
     }
-    loadProfileAndGate(session);
+    if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") return;
+    if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "SIGNED_OUT") {
+      loadProfileAndGate(session);
+    }
   });
 
   sb.auth.getSession().then(({ data: { session } }) => loadProfileAndGate(session));
