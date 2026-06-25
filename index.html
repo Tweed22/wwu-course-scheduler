@@ -2818,8 +2818,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const _qp = new URLSearchParams(window.location.search);
   const _at = _qp.get('sso_at'), _rt = _qp.get('sso_rt');
   if (_at && _rt) {
-    await sb.auth.setSession({ access_token: _at, refresh_token: _rt });
     history.replaceState(null, '', window.location.pathname);
+    try { await sb.auth.setSession({ access_token: _at, refresh_token: _rt }); } catch {}
   }
 
   showCheckingState();
