@@ -2639,7 +2639,8 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,   // picks up magic-link tokens from URL hash
+    detectSessionInUrl: true,
+    flowType: 'pkce',
   }
 });
 window.sb = sb;
