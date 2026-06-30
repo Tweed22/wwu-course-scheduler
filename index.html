@@ -2231,6 +2231,7 @@
         <option value="submission">Section submitted</option>
         <option value="completion">Registrar completed</option>
         <option value="request">Change request</option>
+        <option value="edit">Direct edit</option>
       </select>
     </div>
     <div>
@@ -2264,7 +2265,7 @@
   <details style="margin-top:16px;">
     <summary style="cursor:pointer;font-weight:600;color:var(--wwu-green-dark);">How this view works</summary>
     <div style="margin-top:8px;color:var(--text-muted);font-size:13px;line-height:1.5;">
-      <p>The Changelog is a chronological feed of every meaningful action that's happened in this scheduler. It pulls from two sources: each section's submission to the Registrar (with timestamp and the instructor that was locked in), and the per-request history entries on every Change Request (creation, approval, rejection, send to registrar, finalize, etc.).</p>
+      <p>The Changelog is a chronological feed of every meaningful action that's happened in this scheduler. It pulls from three sources: each section's submission to the Registrar (with timestamp and the instructor that was locked in), the per-request history entries on every Change Request (creation, approval, rejection, send to registrar, finalize, etc.), and direct edits to the Instructor or Notes field on Term Assignments (logged the moment you leave the field, even if the section is never submitted or a Change Request is never filed).</p>
       <p>Newest events appear first. Use the search box to find a course code or a person's name, the type filter to narrow to just submissions or just request lifecycle events, and the range filter to focus on recent activity.</p>
     </div>
   </details>
@@ -7223,6 +7224,21 @@ function buildChangelogEvents() {
         actor: o.registrarCompletedBy || "Registrar",
       });
     }
+    // Direct field edits (instructor/notes changed on Term Assignments
+    // without going through Submit or a formal Change Request).
+    const fh = Array.isArray(o.fieldHistory) ? o.fieldHistory : [];
+    if (fh.length) {
+      const c = state.courses.find(x => x.id === o.courseId) || {};
+      for (const h of fh) {
+        events.push({
+          at: h.at || "",
+          type: "edit",
+          subject: `${c.code || "?"} §${sectionNumberFor(o)}`,
+          detail: h.msg || "(no message)",
+          actor: h.actor || "—",
+        });
+      }
+    }
   }
   // Change request lifecycle entries
   for (const r of state.requests || []) {
@@ -7327,11 +7343,13 @@ function renderChangelog() {
     const submissions = events.filter(e => e.type === "submission").length;
     const completions = events.filter(e => e.type === "completion").length;
     const requests = events.filter(e => e.type === "request").length;
+    const edits = events.filter(e => e.type === "edit").length;
     stats.innerHTML = `
       <div class="item"><strong>${events.length}</strong><span class="label">events</span></div>
       <div class="item"><strong>${submissions}</strong><span class="label">submissions</span></div>
       <div class="item"><strong>${completions}</strong><span class="label">completions</span></div>
       <div class="item"><strong>${requests}</strong><span class="label">request entries</span></div>
+      <div class="item"><strong>${edits}</strong><span class="label">direct edits</span></div>
     `;
   }
   const tbody = document.getElementById("cltbody");
@@ -7344,9 +7362,11 @@ function renderChangelog() {
   tbody.innerHTML = events.map(e => {
     const typeLabel = e.type === "submission" ? "Submission"
                     : e.type === "completion" ? "Completed"
+                    : e.type === "edit"       ? "Edit"
                     : "Request";
     const typeColor = e.type === "submission" ? "var(--wwu-green)"
                     : e.type === "completion" ? "#1a73a8"
+                    : e.type === "edit"       ? "#c9a961"
                     : "#7a4ea0";
     // Restore is offered for change-request events whose request is currently
     // archived (Rejected or Deleted). It moves the request back to the queue
@@ -7926,6 +7946,29 @@ function bindTermEvents() {
     }, 0);
   });
 
+  // Changelog visibility for direct edits: capture the value a field had
+  // when it gained focus, then on blur — if it actually changed — log one
+  // Changelog entry. Keyed off focus rather than the "input" handler above
+  // so typing doesn't produce one event per keystroke.
+  document.getElementById("ttbody").addEventListener("focusin", (e) => {
+    const inp = e.target.closest('input[data-field="instructor"], input[data-field="notes"]');
+    if (!inp) return;
+    inp.dataset.preEditValue = inp.value;
+  });
+  document.getElementById("ttbody").addEventListener("focusout", (e) => {
+    const inp = e.target.closest('input[data-field="instructor"], input[data-field="notes"]');
+    if (!inp || inp.dataset.preEditValue === undefined) return;
+    const before = inp.dataset.preEditValue;
+    const after  = inp.value;
+    delete inp.dataset.preEditValue;
+    if (before === after) return;
+    const row = inp.closest("tr[data-oid]");
+    const o = row && state.offerings.find(x => x.id === row.dataset.oid);
+    if (!o) return;
+    const fieldLabel = inp.dataset.field === "instructor" ? "Instructor" : "Notes";
+    logOfferingFieldChange(o, fieldLabel, before, after);
+  });
+
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
@@ -8343,6 +8386,24 @@ function requestCourseCode(r) {
 function logRequestEvent(r, message) {
   r.history = r.history || [];
   r.history.push({ at: new Date().toISOString(), msg: message, actor: state.userName || "(unknown)" });
+}
+
+// Records a direct field edit (instructor/notes changed on Term Assignments
+// outside the formal submit/change-request flow) so it shows up in the
+// Changelog. Lives inside the offering's own `data` jsonb blob — same
+// persistence path as everything else on the offering, no schema change
+// needed. Capped at 50 entries/offering so a frequently-edited row's history
+// can't grow unbounded.
+function logOfferingFieldChange(o, fieldLabel, before, after) {
+  o.fieldHistory = o.fieldHistory || [];
+  const fromTxt = (before || "").trim() ? `"${before}"` : "(blank)";
+  const toTxt   = (after  || "").trim() ? `"${after}"`  : "(blank)";
+  o.fieldHistory.push({
+    at: new Date().toISOString(),
+    msg: `${fieldLabel} changed from ${fromTxt} to ${toTxt}`,
+    actor: state.userName || "(unknown)",
+  });
+  if (o.fieldHistory.length > 50) o.fieldHistory = o.fieldHistory.slice(-50);
 }
 
 function applyRequestFilters(rows) {
