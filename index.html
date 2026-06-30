@@ -4086,6 +4086,22 @@ async function loadFromSupabase() {
 /* ---- Debounced flush ---- */
 let _supabaseFlushTimer = null;
 let _flushInFlight = false;
+
+// Explicit delete tracking. flushToSupabase used to delete any DB row whose
+// id wasn't present in this browser's local state — but a browser's local
+// state can be incomplete for reasons that have nothing to do with the user
+// wanting to delete anything (a realtime event missed while the tab was
+// backgrounded, a session that loaded before another user's row was
+// created, etc). That diff-by-absence logic deleted other users' work —
+// e.g. a dean's change request created in one tab could be silently wiped
+// the next time any other browser flushed, because that browser's stale
+// local snapshot didn't include it. Deletes must now be explicit: only ids
+// pushed here (by code that the user actually asked to delete something)
+// are ever sent to Supabase as a DELETE.
+const _pendingOfferingDeletes = new Set();
+const _pendingRequestDeletes  = new Set();
+function markOfferingDeleted(id) { if (id) _pendingOfferingDeletes.add(id); }
+function markRequestDeleted(id)  { if (id) _pendingRequestDeletes.add(id); }
 function scheduleSupabaseFlush() {
   if (!window.AUTH || !window.AUTH.user) return;
   if (_supabaseFlushTimer) clearTimeout(_supabaseFlushTimer);
@@ -4103,40 +4119,17 @@ async function flushToSupabase() {
   // window between setDirty and flush-start (e.g. new rows pushed after dirty
   // was last set will be caught here).
   try {
-    // localOIds tracks EVERY local offering id (including ones with missing
-    // course_code that we'll skip on upsert). That's important because the
-    // delete-sweep below removes any DB row whose id isn't in localOIds —
-    // if we skipped those ids, we'd silently delete the user's data from
-    // the server (May 2026 bug: this is what wiped most classes after a
-    // refresh; my own filter-during-flush change caused it).
     const allOfferings = state.offerings || [];
     const allRequests  = state.requests  || [];
-    const localOIds = new Set(allOfferings.map(o => o.id).filter(Boolean));
-    const localRIds = new Set(allRequests.map(r => r.id).filter(Boolean));
-    // Now build the upsert payload — only rows that have the required
+    // Build the upsert payload — only rows that have the required
     // course_code make it in. If course_code can't be resolved, we keep the
     // offering locally but skip pushing it to the DB until it can.
     const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code);
     const rRows = allRequests.map(requestToRow).filter(r => r.id);
-    // Diff against the FULL DB row set — must use selectAll(), not a plain
-    // select(), because select() silently caps at 1000 rows. Previously this
-    // capped query made oDel look enormous (the "safety stop" toast fired
-    // on every keystroke when the table had >1000 rows), and even worse it
-    // could delete real data when the 1000 rows the query returned didn't
-    // overlap with local IDs.
-    const safeToDelete = localOIds.size > 0;
-    let oDel = [];
-    let rDel = [];
-    if (safeToDelete) {
-      const [oIdRes, rIdRes] = await Promise.all([
-        selectAll("offerings", "id"),
-        selectAll("change_requests", "id"),
-      ]);
-      const dbOIds = (oIdRes.data || []).map(r => r.id);
-      const dbRIds = (rIdRes.data || []).map(r => r.id);
-      oDel = dbOIds.filter(id => !localOIds.has(id));
-      rDel = dbRIds.filter(id => !localRIds.has(id));
-    }
+    // Deletes are explicit-only (see _pendingOfferingDeletes/_pendingRequestDeletes
+    // above) — never inferred from "missing from this browser's local state".
+    const oDel = [..._pendingOfferingDeletes].filter(id => !allOfferings.some(o => o.id === id));
+    const rDel = [..._pendingRequestDeletes].filter(id => !allRequests.some(r => r.id === id));
     if (oRows.length) {
       const { error } = await sb.from("offerings").upsert(oRows);
       if (error) {
@@ -4172,11 +4165,13 @@ async function flushToSupabase() {
       const chunk = oDel.slice(i, i + DEL_CHUNK);
       const { error } = await sb.from("offerings").delete().in("id", chunk);
       if (error) { _err("offerings delete failed", error); break; }
+      chunk.forEach(id => _pendingOfferingDeletes.delete(id));
     }
     for (let i = 0; i < rDel.length; i += DEL_CHUNK) {
       const chunk = rDel.slice(i, i + DEL_CHUNK);
       const { error } = await sb.from("change_requests").delete().in("id", chunk);
       if (error) { _err("change_requests delete failed", error); break; }
+      chunk.forEach(id => _pendingRequestDeletes.delete(id));
     }
   } finally {
     _flushInFlight = false;
@@ -4998,7 +4993,8 @@ function syncOfferingsFromRotation(defaultYear, semesterFilter) {
     if (VALID_SLOTS.has(o.rotationSlot)) return true;  // keep valid slots
     if (o.submitted || o.registrarCompleted) return true; // always keep submitted
     if (o.isNewSection) return true;            // keep user-added extra sections
-    return false;                               // drop stale invalid-slot artefact
+    markOfferingDeleted(o.id);                  // drop stale invalid-slot artefact
+    return false;
   });
 
   // Pass 2: dedup by course CODE + slot (not courseId, which is browser-local).
@@ -5392,9 +5388,13 @@ function clearTermAssignments(semester, year) {
   if (!ok) return;
   const removedCount = affected.length;
   // Drop every offering for this (semester, year) from local state. The
-  // debounced flush will propagate the deletes to Supabase (the diff query
-  // sees these ids in DB but not locally, so it issues DELETE for them).
-  state.offerings = state.offerings.filter(o => !(o.semester === semester && o.year === year));
+  // debounced flush will propagate the deletes to Supabase via the explicit
+  // tombstone set (markOfferingDeleted), not by diffing against the DB.
+  state.offerings = state.offerings.filter(o => {
+    const drop = o.semester === semester && o.year === year;
+    if (drop) markOfferingDeleted(o.id);
+    return !drop;
+  });
   // Rebuild from the rotation sheet defaults — pass the semester so only
   // the cleared semester is rebuilt, not all three.
   try { syncOfferingsFromRotation(year, semester); } catch (e) { _err("Rebuild after Clear Term failed", e); }
@@ -5711,6 +5711,7 @@ function removeSectionOffering(offeringId) {
   }
   const c = state.courses.find(x => x.id === o.courseId) || {};
   const label = `${c.code || "Section"} §${sectionNumberFor(o)}`;
+  markOfferingDeleted(o.id);
   state.offerings.splice(idx, 1);
   setDirty(true);
   renderTerms();
@@ -8152,7 +8153,7 @@ function bindTermEvents() {
           !["Finalized", "Rejected"].includes(r.status)
         );
       }
-      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      if (_reqIdx !== -1) { markRequestDeleted(state.requests[_reqIdx].id); state.requests.splice(_reqIdx, 1); }
       o.pendingReinstate   = false;
       o.reinstateRequestId = "";
       o.submitted          = false;
@@ -8186,7 +8187,7 @@ function bindTermEvents() {
           (!r.sectionNumber || r.sectionNumber === sectionNumberFor(o))
         );
       }
-      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      if (_reqIdx !== -1) { markRequestDeleted(state.requests[_reqIdx].id); state.requests.splice(_reqIdx, 1); }
       o.canceled        = false;
       o.canceledAt      = "";
       o.canceledBy      = "";
@@ -8227,7 +8228,7 @@ function bindTermEvents() {
           r.year    === o.year
         );
       }
-      if (_reqIdx !== -1) state.requests.splice(_reqIdx, 1);
+      if (_reqIdx !== -1) { markRequestDeleted(state.requests[_reqIdx].id); state.requests.splice(_reqIdx, 1); }
       o.addRequestId = "";
       markLocallyTouched(o.id);
       setDirty(true);
@@ -9445,6 +9446,7 @@ function transitionRequest(id, action) {
     if (linkedOIdx >= 0) {
       const linkedO = state.offerings[linkedOIdx];
       markLocallyTouched(linkedO.id);
+      markOfferingDeleted(linkedO.id);
       state.offerings.splice(linkedOIdx, 1);
     }
     logRequestEvent(r, `Deleted from queue by ${who} (${code})`);
