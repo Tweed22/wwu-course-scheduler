@@ -2812,15 +2812,37 @@ async function openAppWithSSO(url) {
   }
 }
 
+// ── Shared session cookies (*.wwuapps.com SSO) ───────────────────────────────
+const _wwuHosted = location.protocol !== 'file:';
+function _wwuWriteSession(s) {
+  if (!_wwuHosted || !s?.access_token) return;
+  const f = `domain=.wwuapps.com; path=/; max-age=${7*24*3600}; SameSite=Lax; Secure`;
+  document.cookie = `wwu_at=${encodeURIComponent(s.access_token)}; ${f}`;
+  document.cookie = `wwu_rt=${encodeURIComponent(s.refresh_token)}; ${f}`;
+}
+function _wwuClearSession() {
+  if (!_wwuHosted) return;
+  const f = `domain=.wwuapps.com; path=/; max-age=0; SameSite=Lax; Secure`;
+  document.cookie = `wwu_at=; ${f}`; document.cookie = `wwu_rt=; ${f}`;
+}
+function _wwuReadSession() {
+  const a = document.cookie.match(/(?:^|;\s*)wwu_at=([^;]*)/);
+  const r = document.cookie.match(/(?:^|;\s*)wwu_rt=([^;]*)/);
+  const at = a?.[1] ? decodeURIComponent(a[1]) : '';
+  const rt = r?.[1] ? decodeURIComponent(r[1]) : '';
+  return (at && rt) ? { access_token: at, refresh_token: rt } : null;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
-  // If tokens arrived via URL hash (SSO handoff from Hub), set the session
-  // explicitly before any auth listeners fire to avoid race conditions with
-  // detectSessionInUrl's async processing.
+  // SSO: URL params take priority, then shared domain cookie
   const _qp = new URLSearchParams(window.location.search);
   const _at = _qp.get('sso_at'), _rt = _qp.get('sso_rt');
   if (_at && _rt) {
     history.replaceState(null, '', window.location.pathname);
     try { await sb.auth.setSession({ access_token: _at, refresh_token: _rt }); } catch {}
+  } else {
+    const shared = _wwuReadSession();
+    if (shared) try { await sb.auth.setSession(shared); } catch {}
   }
 
   showCheckingState();
@@ -3060,6 +3082,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   sb.auth.onAuthStateChange((event, session) => {
+    if (session) _wwuWriteSession(session); else if (event === "SIGNED_OUT") _wwuClearSession();
     if (event === "PASSWORD_RECOVERY") {
       _$("authOverlay").style.display = "none";
       _$("recoveryOverlay").style.display = "flex";
