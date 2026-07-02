@@ -3976,6 +3976,12 @@ function rowToOffering(row) {
   let o;
   if (row.data && typeof row.data === "object") {
     o = { ...row.data };
+    // Scalar columns are authoritative for completion state. The data blob can
+    // be stale if another browser flushed its local snapshot without knowing
+    // about this browser's registrar-completion write. The scalar columns are
+    // always written atomically by offeringToRow, so trust them.
+    o.registrarCompleted   = !!row.registrar_completed;
+    o.registrarCompletedAt = row.registrar_completed_at || o.registrarCompletedAt || "";
   } else {
     // Fallback: rebuild from indexed columns. Happens when the phase 3
     // migration hasn't run, or when an admin inserted a row by hand.
@@ -4023,7 +4029,13 @@ function requestToRow(r) {
 }
 function rowToRequest(row) {
   if (!row) return null;
-  if (row.data && typeof row.data === "object") return row.data;
+  if (row.data && typeof row.data === "object") {
+    const r = { ...row.data };
+    // status scalar column is authoritative — a stale data blob from another
+    // browser can't revert a Finalized request back to Sent to Registrar.
+    if (row.status) r.status = row.status;
+    return r;
+  }
   // Fallback for rows missing the data blob — return what little we have
   // so the request at least shows up in the queue.
   return {
@@ -5465,7 +5477,8 @@ function renderTermTable(list) {
     // inline — they have to go through Request Change).
     const isLocked = o.submitted || o.canceled;
     const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
-    const instructorValue = o.canceled ? "Canceled" : (o.instructor || "");
+    const pendingInstr = pendingInstructorForOffering(o);
+    const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
     // Action button: single dynamic button per Tony's spec (May 2026).
     //   • Canceled section: Re-instate
     //   • Submitted section: Request Change
@@ -6518,6 +6531,28 @@ function refreshTermDatalists() {
   set("deanList", deans);
   set("pmList", pms);
   set("instrList", instrs);
+}
+
+// Return the instructor name from a "Sent to Registrar" change request that
+// targets this offering, or null if none exists. Used to show the pending
+// name in the term-assignments table before the registrar finalizes.
+function pendingInstructorForOffering(o) {
+  const c = (state.courses || []).find(x => x.id === o.courseId) || {};
+  const parts = (c.code || "").split(/\s+/);
+  for (const r of (state.requests || [])) {
+    if (r.status !== "Sent to Registrar") continue;
+    const linked = r.offeringId === o.id ||
+      (r.prefix === (parts[0] || "") && r.number === (parts[1] || "") &&
+       r.term === o.semester && r.subterm === o.subterm && r.year === o.year);
+    if (!linked) continue;
+    for (const ch of requestChanges(r)) {
+      if ((ch.type === "Assign Instructor" || ch.type === "Change Instructor") &&
+          ch.fields && ch.fields.instructor) {
+        return ch.fields.instructor;
+      }
+    }
+  }
+  return null;
 }
 
 function renderTerms() {
