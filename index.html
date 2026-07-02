@@ -2694,6 +2694,7 @@ const CURRENT_APP_ID = 'scheduler';
 
 const _ASP_APPS = [
   { id:'hub',       name:'Academic Apps',          abbr:'AA',  bg:'rgba(90,181,125,.18)', fg:'#5ab57d', url:()=>'https://hub.wwuapps.com' },
+  { id:'oat',       name:'Activity Tracker',       abbr:'OAT', bg:'rgba(45,106,159,.18)', fg:'#2d6a9f', url:()=>'https://hub.wwuapps.com/online-activity-tracker.html' },
   { id:'grades',    name:'Missing Att. & Grades',  abbr:'MAG', bg:'rgba(201,169,97,.18)', fg:'#c9a961', url:()=>'https://hub.wwuapps.com/missing-grades.html' },
   { id:'dashboard', name:'Registration Dashboard', abbr:'RD',  bg:'rgba(91,122,181,.18)', fg:'#5b7ab5', url:()=>'https://dashboard.wwuapps.com' },
   { id:'scheduler', name:'Course Scheduler',       abbr:'CS',  bg:'rgba(90,181,125,.18)', fg:'#5ab57d', url:()=>location.href },
@@ -2703,7 +2704,7 @@ let _aspApps = [];
 function initAppSwitcher(accessRows) {
   const access = new Set((accessRows||[]).map(r=>r.app));
   const ids = ['scheduler'];
-  if(access.has('hub'))       { ids.push('hub','grades'); }
+  if(access.has('hub'))       { ids.push('hub','oat','grades'); }
   if(access.has('dashboard')) ids.push('dashboard');
   _aspApps = _ASP_APPS.filter(a=>ids.includes(a.id));
   const btn = document.getElementById('app-switcher-btn');
