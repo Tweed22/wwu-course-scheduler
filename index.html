@@ -2704,8 +2704,9 @@ let _aspApps = [];
 function initAppSwitcher(accessRows) {
   const access = new Set((accessRows||[]).map(r=>r.app));
   const ids = ['scheduler'];
-  if(access.has('hub'))       { ids.push('hub','oat','grades'); }
-  if(access.has('dashboard')) ids.push('dashboard');
+  if(access.has('hub'))                       { ids.push('hub','grades'); }
+  if(access.has('hub') || access.has('oat'))  { ids.push('oat'); }
+  if(access.has('dashboard'))                 { ids.push('dashboard'); }
   _aspApps = _ASP_APPS.filter(a=>ids.includes(a.id));
   const btn = document.getElementById('app-switcher-btn');
   if(btn) btn.style.display = _aspApps.length >= 2 ? 'flex' : 'none';
