@@ -4251,10 +4251,40 @@ function handleRealtimeOffering(payload) {
   const incoming = rowToOffering(row);
   if (!incoming) return;
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
-  // Suppress echoes of our own writes (both UPDATE and INSERT) during the
-  // touch-suppression window — the guard was previously idx>=0 only, which
-  // allowed INSERT echoes from newly-created sections to slip through.
-  if (recentlyTouched(incoming.id)) return;
+  if (recentlyTouched(incoming.id)) {
+    // Within our own-write suppression window we still apply "forward-only"
+    // fields so a concurrent browser's assignment or completion write is never
+    // lost due to this browser flushing stale data. These fields only move in
+    // one direction (empty→name, false→true), so merging them in is always
+    // safe. After merging we schedule a re-flush so the corrected state reaches
+    // the DB even if an in-flight stale flush already sent the old value.
+    if (idx < 0) return; // new INSERT echoes during suppression are safe to ignore
+    const local = state.offerings[idx];
+    let changed = false;
+    if (incoming.instructor && !local.instructor) {
+      local.instructor = incoming.instructor; changed = true;
+    }
+    if (!local.submitted && incoming.submitted) {
+      local.submitted = true;
+      local.submittedAt = incoming.submittedAt || local.submittedAt;
+      changed = true;
+    }
+    if (!local.registrarCompleted && incoming.registrarCompleted) {
+      local.registrarCompleted = true;
+      local.registrarCompletedAt = incoming.registrarCompletedAt || local.registrarCompletedAt;
+      local.registrarCompletedBy = incoming.registrarCompletedBy || local.registrarCompletedBy;
+      changed = true;
+    }
+    if (!local.canceled && incoming.canceled) {
+      local.canceled = true; changed = true;
+    }
+    if (changed) {
+      markLocallyTouched(incoming.id); // extend window so the re-flush echo is suppressed
+      scheduleSupabaseFlush();
+      scheduleReRender();
+    }
+    return;
+  }
   if (idx >= 0) state.offerings[idx] = incoming;
   else state.offerings.push(incoming);
   scheduleReRender();
@@ -4274,8 +4304,22 @@ function handleRealtimeRequest(payload) {
   const incoming = rowToRequest(row);
   if (!incoming) return;
   const idx = state.requests.findIndex(r => r.id === incoming.id);
-  // Suppress echoes of our own writes (UPDATE and INSERT) during the window.
-  if (recentlyTouched(incoming.id)) return;
+  if (recentlyTouched(incoming.id)) {
+    // Forward-only status merge within suppression window: a request can only
+    // advance through STATUS_ORDER, so apply any advancement from another browser.
+    if (idx >= 0) {
+      const local = state.requests[idx];
+      const inOrder = STATUS_ORDER[incoming.status] || 0;
+      const lcOrder = STATUS_ORDER[local.status] || 0;
+      if (inOrder > lcOrder) {
+        local.status = incoming.status;
+        markLocallyTouched(incoming.id);
+        scheduleSupabaseFlush();
+        scheduleReRender();
+      }
+    }
+    return;
+  }
   if (idx >= 0) state.requests[idx] = incoming;
   else state.requests.push(incoming);
   scheduleReRender();
