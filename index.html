@@ -3933,6 +3933,23 @@ function recentlyTouched(id) {
   return t && (Date.now() - t < LOCAL_TOUCH_WINDOW_MS);
 }
 
+// Field-level edit tracking. When a user is actively typing in a cell we only
+// want to suppress that specific field from realtime echoes — not the entire
+// row. Atomic actions (submit, cancel, complete) still use the row-level
+// recentlyTouched path above because they change multiple fields at once.
+const _localEditedFields = new Map(); // id → Map<fieldName, timestamp>
+function markFieldEdited(id, field) {
+  if (!id || !field) return;
+  if (!_localEditedFields.has(id)) _localEditedFields.set(id, new Map());
+  _localEditedFields.get(id).set(field, Date.now());
+}
+function fieldRecentlyEdited(id, field) {
+  const fields = _localEditedFields.get(id);
+  if (!fields) return false;
+  const t = fields.get(field);
+  return t !== undefined && (Date.now() - t < LOCAL_TOUCH_WINDOW_MS);
+}
+
 function _err(label, error) {
   // Compact, user-visible error toast — Supabase error objects can be deep,
   // so we only surface message + code.
@@ -4235,6 +4252,17 @@ function startRealtime() {
         (payload) => handleRealtimeTermDate(payload))
     .subscribe();
 }
+// Fields that are merged field-by-field from realtime events. Structural fields
+// (id, courseId, courseCode, semester, subterm, year) are not listed because
+// they are set at row-creation time and never changed by any user action.
+const _OFFERING_MERGE_FIELDS = [
+  'instructor', 'notes', 'contractReturned',
+  'length', 'rotationSlot', 'deadline', 'fullTimeNeeded',
+  'dean', 'programManager',
+  'submitted', 'submittedAt', 'submittedBy',
+  'registrarCompleted', 'registrarCompletedAt', 'registrarCompletedBy',
+  'canceled',
+];
 function handleRealtimeOffering(payload) {
   const event = payload.eventType || payload.type;
   if (event === "DELETE") {
@@ -4251,13 +4279,14 @@ function handleRealtimeOffering(payload) {
   const incoming = rowToOffering(row);
   if (!incoming) return;
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
+
   if (recentlyTouched(incoming.id)) {
-    // Within our own-write suppression window we still apply "forward-only"
-    // fields so a concurrent browser's assignment or completion write is never
-    // lost due to this browser flushing stale data. These fields only move in
-    // one direction (empty→name, false→true), so merging them in is always
-    // safe. After merging we schedule a re-flush so the corrected state reaches
-    // the DB even if an in-flight stale flush already sent the old value.
+    // An atomic action (submit, cancel, complete, approve, etc.) was taken on
+    // this row recently. Suppress the full-row echo to prevent flicker — but
+    // still apply "forward-only" fields from another browser so an assignment
+    // or completion from a concurrent user is never lost. After merging, a
+    // re-flush is scheduled so the corrected state reaches the DB even if an
+    // in-flight stale flush already sent the old value.
     if (idx < 0) return; // new INSERT echoes during suppression are safe to ignore
     const local = state.offerings[idx];
     let changed = false;
@@ -4267,6 +4296,7 @@ function handleRealtimeOffering(payload) {
     if (!local.submitted && incoming.submitted) {
       local.submitted = true;
       local.submittedAt = incoming.submittedAt || local.submittedAt;
+      local.submittedBy = incoming.submittedBy || local.submittedBy;
       changed = true;
     }
     if (!local.registrarCompleted && incoming.registrarCompleted) {
@@ -4279,15 +4309,29 @@ function handleRealtimeOffering(payload) {
       local.canceled = true; changed = true;
     }
     if (changed) {
-      markLocallyTouched(incoming.id); // extend window so the re-flush echo is suppressed
+      markLocallyTouched(incoming.id);
       scheduleSupabaseFlush();
       scheduleReRender();
     }
     return;
   }
-  if (idx >= 0) state.offerings[idx] = incoming;
-  else state.offerings.push(incoming);
-  scheduleReRender();
+
+  // No recent atomic action on this row. Merge field-by-field so changes made
+  // by any user (dean, PM, registrar, admin) are applied immediately — except
+  // for the specific field this browser is actively typing, which is skipped to
+  // prevent keystrokes from being overwritten by an echo of the previous value.
+  if (idx >= 0) {
+    const local = state.offerings[idx];
+    let changed = false;
+    for (const f of _OFFERING_MERGE_FIELDS) {
+      if (fieldRecentlyEdited(incoming.id, f)) continue; // user is typing this field right now
+      if (incoming[f] !== local[f]) { local[f] = incoming[f]; changed = true; }
+    }
+    if (changed) scheduleReRender();
+  } else {
+    state.offerings.push(incoming);
+    scheduleReRender();
+  }
 }
 function handleRealtimeRequest(payload) {
   const event = payload.eventType || payload.type;
@@ -8162,9 +8206,10 @@ function bindTermEvents() {
     // Guard: instructor is locked once a section has been submitted to the Registrar
     if (f === "instructor" && o.submitted) { inp.value = o.instructor || ""; return; }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
-    // Record the local touch so any realtime echo of our own write within
-    // the next few seconds gets ignored (prevents the disappear-reappear
-    // flicker while the user is still typing).
+    // Record which specific field is being edited so the realtime handler can
+    // suppress echoes for just that field without blocking updates to other
+    // fields on the same row from other browsers.
+    markFieldEdited(o.id, f);
     markLocallyTouched(o.id);
     setDirty(true);
     // For deadline/instructor changes, re-apply row styling + badge without full re-render
@@ -8207,6 +8252,7 @@ function bindTermEvents() {
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o) return;
     o[inp.dataset.field] = inp.checked;
+    markFieldEdited(o.id, inp.dataset.field);
     setDirty(true);
   });
 
