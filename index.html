@@ -289,6 +289,9 @@
     color: #5ab57d;
     border-color: transparent;
   }
+  html.dark .term-table input.pending-instr {
+    color: var(--text-muted);
+  }
   /* Row hover in dark mode — simple background highlight, no glow. */
   html.dark .term-table tbody tr:hover,
   html.dark .req-table tbody tr:hover,
@@ -1086,6 +1089,13 @@
     color: var(--text);
     cursor: not-allowed;
     border-color: transparent;
+  }
+  .term-table input.pending-instr {
+    font-style: italic;
+    color: var(--text-muted);
+    border-color: transparent;
+    background: transparent;
+    cursor: default;
   }
   .term-table .submitted-badge {
     display: inline-block;
@@ -5563,10 +5573,15 @@ function renderTermTable(list) {
     const sectionNum = sectionNumberFor(o);
     // Locked when submitted OR when canceled (canceled offerings can't be edited
     // inline — they have to go through Request Change).
-    const isLocked = o.submitted || o.canceled;
+    const pendingInstrResult = pendingInstructorForOffering(o);
+    const pendingInstr = pendingInstrResult ? pendingInstrResult.name : null;
+    // Lock the instructor cell when submitted, canceled, or when a change
+    // request is actively pending — prevents conflicting direct edits.
+    const isLocked = o.submitted || o.canceled || (!!pendingInstr && !o.instructor);
     const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
-    const pendingInstr = pendingInstructorForOffering(o);
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
+    const pendingInstrTitle = (pendingInstr && !o.instructor)
+      ? ` title="Pending (${pendingInstrResult.status})"` : "";
     // Action button: single dynamic button per Tony's spec (May 2026).
     //   • Canceled section: Re-instate
     //   • Submitted section: Request Change
@@ -5663,7 +5678,7 @@ function renderTermTable(list) {
         <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
-        <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}></td>
+        <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}${pendingInstrTitle}${pendingInstr && !o.instructor ? ' class="pending-instr"' : ''}></td>
         <td class="actions">${actionBtn}</td>
         <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
       </tr>
@@ -6624,11 +6639,16 @@ function refreshTermDatalists() {
 // Return the instructor name from a "Sent to Registrar" change request that
 // targets this offering, or null if none exists. Used to show the pending
 // name in the term-assignments table before the registrar finalizes.
+// Any status where an instructor change request is in-flight (not yet finalized
+// or rejected). "Finalized" means the instructor was already written directly
+// onto the offering; "Rejected"/"Draft" mean nothing was approved.
+const PENDING_INSTR_STATUSES = new Set(["Pending Approval", "Approved", "Sent to Registrar"]);
+
 function pendingInstructorForOffering(o) {
   const c = (state.courses || []).find(x => x.id === o.courseId) || {};
   const parts = (c.code || "").split(/\s+/);
   for (const r of (state.requests || [])) {
-    if (r.status !== "Sent to Registrar") continue;
+    if (!PENDING_INSTR_STATUSES.has(r.status)) continue;
     const linked = r.offeringId === o.id ||
       (r.prefix === (parts[0] || "") && r.number === (parts[1] || "") &&
        r.term === o.semester && r.subterm === o.subterm && r.year === o.year);
@@ -6636,7 +6656,7 @@ function pendingInstructorForOffering(o) {
     for (const ch of requestChanges(r)) {
       if ((ch.type === "Assign Instructor" || ch.type === "Change Instructor") &&
           ch.fields && ch.fields.instructor) {
-        return ch.fields.instructor;
+        return { name: ch.fields.instructor, status: r.status };
       }
     }
   }
