@@ -5785,6 +5785,10 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   // Only stamp addRequestId when the offering doesn't already have a linked
   // request — prevents overwriting the Add Course link with a new Add Section.
   if (!o.addRequestId) o.addRequestId = draft.id;
+  // Bidirectional link: stamp the offering's id onto the request so
+  // markRegistrarItemComplete can find the offering even if addRequestId
+  // was lost from the offering's blob due to a concurrent stale flush.
+  if (!draft.offeringId) draft.offeringId = o.id;
   return draft;
 }
 
@@ -7076,7 +7080,11 @@ function markRegistrarItemComplete(regId) {
       } else if (ch.type === "Add Course" || ch.type === "Add Section" || ch.type === "Add Section & Split Enrollment") {
         // Mark the linked provisional offering as registrar-completed so it
         // transitions from SENT → DONE in Term Assignments.
-        const linked = state.offerings.find(o => o.addRequestId === r.id);
+        // Primary lookup: offering.addRequestId → request.id (set at creation).
+        // Fallback: request.offeringId → offering.id (also set at creation as a
+        // reverse link so a stale blob can't break the connection).
+        let linked = state.offerings.find(o => o.addRequestId === r.id);
+        if (!linked && r.offeringId) linked = state.offerings.find(o => o.id === r.offeringId);
         if (linked) {
           linked.registrarCompleted   = true;
           linked.registrarCompletedAt = new Date().toISOString();
@@ -7358,7 +7366,9 @@ function bindRegistrarEvents() {
     const id = btn.dataset.regid;
     if (!id) return;
     if (btn.dataset.ract === "complete") {
-      if (!confirm("Mark this item as completed by the Registrar? It will be removed from this queue.")) return;
+      // No confirm() — browsers suppress repeated dialogs in rapid succession,
+      // which silently skips markRegistrarItemComplete calls. The Undo button
+      // handles accidental completions.
       markRegistrarItemComplete(id);
     } else if (btn.dataset.ract === "undo") {
       undoRegistrarItem(id);
