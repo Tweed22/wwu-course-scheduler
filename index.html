@@ -6664,6 +6664,7 @@ function pendingInstructorForOffering(o) {
   const c = (state.courses || []).find(x => x.id === o.courseId) || {};
   const parts = (c.code || "").split(/\s+/);
   for (const r of (state.requests || [])) {
+    if (r.archived) continue;
     if (!PENDING_INSTR_STATUSES.has(r.status)) continue;
     const linked = r.offeringId === o.id ||
       (r.prefix === (parts[0] || "") && r.number === (parts[1] || "") &&
