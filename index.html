@@ -2320,6 +2320,18 @@
     </div>
   </div>
 
+  <!-- Schedule Backup -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
+    <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Schedule Backup</h3>
+    <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
+      Download a complete CSV snapshot of every term assignment across all semesters and years — course, instructor, submission status, completion, and notes all included. Use this before making bulk changes so you have a dated, portable recovery point. The underlying data is also stored in Supabase and can be restored from the database if needed.
+    </p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button type="button" id="btnAdmBackup" style="padding:6px 14px;">↓ Download Full Backup</button>
+      <span id="admBackupStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
+    </div>
+  </div>
+
   <!-- Clear Change Log -->
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
     <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Clear Change Log</h3>
@@ -7553,6 +7565,43 @@ function renderChangelog() {
     `;
   }).join("");
 }
+function exportScheduleBackup() {
+  const cols = ["Course","Section","Title","Semester","Subterm","Year","Length","School","Dean","Program Manager","Deadline","Instructor","Submitted","Submitted At","Registrar Completed","Completed At","Canceled","Notes"];
+  const rows = [cols.join(",")];
+  const semOrd = { Fall:0, Spring:1, Summer:2 };
+  const sorted = [...(state.offerings || [])].sort((a, b) => {
+    if ((a.year||0) !== (b.year||0)) return (a.year||0) - (b.year||0);
+    if (a.semester !== b.semester) return (semOrd[a.semester]||0) - (semOrd[b.semester]||0);
+    return (a.subterm||"").localeCompare(b.subterm||"");
+  });
+  for (const o of sorted) {
+    const c = state.courses.find(x => x.id === o.courseId) || {};
+    const prefix = (c.code||"").split(" ")[0];
+    const cells = [
+      c.code||"", sectionNumberFor(o), c.title||"",
+      o.semester||"", o.subterm||"", o.year||"",
+      o.length||"", SCHOOL_BY_PREFIX[prefix]||"",
+      deanForOffering(o), pmForOffering(o)||"", deadlineForOffering(o),
+      o.instructor||"",
+      o.submitted ? "Yes" : "No",
+      o.submittedAt ? o.submittedAt.slice(0,10) : "",
+      o.registrarCompleted ? "Yes" : "No",
+      o.registrarCompletedAt ? o.registrarCompletedAt.slice(0,10) : "",
+      o.canceled ? "Yes" : "No",
+      o.notes||"",
+    ].map(v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; });
+    rows.push(cells.join(","));
+  }
+  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const today = new Date().toISOString().slice(0,10);
+  a.href = url; a.download = `wwu-schedule-backup-${today}.csv`; a.click();
+  URL.revokeObjectURL(url);
+  const statusEl = document.getElementById("admBackupStatus");
+  if (statusEl) statusEl.textContent = `${sorted.length} assignments exported — ${today}`;
+  toast(`Schedule backup downloaded (${sorted.length} rows)`);
+}
 function exportChangelogCsv() {
   const events = applyChangelogFilters(buildChangelogEvents())
     .sort((a, b) => (b.at || "").localeCompare(a.at || ""));
@@ -7735,6 +7784,8 @@ function bindAdminEvents() {
     });
   }
   // Clear change log by date range.
+  const backupBtn = $("btnAdmBackup");
+  if (backupBtn) backupBtn.addEventListener("click", exportScheduleBackup);
   const clearLogBtn = $("btnAdmClearLog");
   if (clearLogBtn) clearLogBtn.addEventListener("click", clearChangeLogByDateRange);
   // Save term-date overrides.
