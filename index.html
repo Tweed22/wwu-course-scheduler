@@ -9715,9 +9715,18 @@ function transitionRequest(id, action) {
       // Find via the linked addRequestId stamp on the offering.
       const linked = state.offerings.find(o => o.addRequestId === r.id);
       if (linked && !linked.canceled) {
-        linked.canceled   = true;
-        linked.canceledAt = now;
-        linked.canceledBy = who;
+        linked.canceled      = true;
+        linked.canceledAt    = now;
+        linked.canceledBy    = who;
+        // Also clear any submission so the section isn't stuck as SENT.
+        // submitted is a scalar DB column that survives reloads; canceled is
+        // data-blob only and can be lost on sync — clearing submitted here
+        // prevents the offering from getting stuck in a SENT-but-no-queue limbo.
+        if (linked.submitted) {
+          linked.submitted   = false;
+          linked.submittedAt = "";
+          linked.submittedBy = "";
+        }
         markLocallyTouched(linked.id);
         logRequestEvent(r, `Linked section canceled (rejected by ${who})`);
       }
