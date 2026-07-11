@@ -9638,7 +9638,14 @@ function createProvisionalOffering(draft) {
                       (changes[0] && changes[0].fields && changes[0].fields.instructor) || "";
 
   const now = new Date().toISOString();
-  const hasInstructor = !!instructor.trim();
+  // This offering exists only because a change request was FILED to the queue,
+  // so it is already in-flight — show it as SENT (with Recall Submission)
+  // regardless of whether an instructor is assigned yet, rather than a
+  // "Submit Change" it doesn't need. It rides its request's lifecycle: SENT
+  // while pending/approved, DONE once the registrar finalizes. (isNewSection
+  // offerings are excluded from the Registrar queue in buildRegistrarQueue,
+  // so this doesn't push a pending item into the registrar's list.)
+  const isFiled = !!draft.status && draft.status !== "Draft";
   const o = Object.assign({}, {
     id:           uuid(),
     courseId:     course.id,
@@ -9649,11 +9656,9 @@ function createProvisionalOffering(draft) {
     length:       SLOT_LENGTH[slot] || "5 Weeks",
     instructor:   instructor.trim(),
     notes:        "",
-    // If the request already includes an instructor, show SENT immediately
-    // so the row reflects the in-flight status as soon as it appears.
-    submitted:    hasInstructor,
-    submittedAt:  hasInstructor ? now : "",
-    submittedBy:  hasInstructor ? (draft.submitter || state.userName || "") : "",
+    submitted:    isFiled,
+    submittedAt:  isFiled ? now : "",
+    submittedBy:  isFiled ? (draft.submitter || state.userName || "") : "",
     registrarCompleted:   false,
     registrarCompletedAt: "",
     registrarCompletedBy: "",
@@ -9663,7 +9668,7 @@ function createProvisionalOffering(draft) {
     isNewSection: true,
     addRequestId: draft.id,
     createdBy:    myUid(),
-    submittedByUid: hasInstructor ? myUid() : null,
+    submittedByUid: isFiled ? myUid() : null,
     lastModified: now,
   });
   state.offerings.push(o);
