@@ -7426,14 +7426,22 @@ function applyReinstateToOffering(r, ch) {
     );
   }
   if (!o || (!o.canceled && !o.pendingReinstate)) return null;
+  const nowIso = new Date().toISOString();
   o.canceled          = false;
   o.canceledAt        = "";
   o.canceledBy        = "";
   o.pendingReinstate  = false;
   o.reinstateRequestId = "";
-  o.reinstatedAt      = new Date().toISOString();
+  o.reinstatedAt      = nowIso;
   o.reinstatedBy      = state.userName || "(unknown)";
-  o.lastModified      = new Date().toISOString();
+  // Finalizing the reinstate IS the registrar processing it, so land the
+  // section in a terminal DONE state rather than leaving it SENT (which would
+  // re-enter the registrar queue for a redundant second "Complete").
+  o.submitted            = true;
+  o.registrarCompleted   = true;
+  o.registrarCompletedAt = nowIso;
+  o.registrarCompletedBy = state.userName || "(unknown)";
+  o.lastModified      = nowIso;
   const c = state.courses.find(x => x.id === o.courseId) || {};
   return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
 }
@@ -9857,27 +9865,21 @@ function transitionRequest(id, action) {
     r.archivedReason = "Rejected" + (reason ? `: ${reason}` : "");
     logRequestEvent(r, `Rejected by ${who} (${code})${reason ? ` — ${reason}` : ""}`);
     markLocallyTouched(r.id);
-    // If this request created an added section, cancel that offering so it
-    // enters the Canceled state on the Term Assignments page.
+    // If this request created a provisional (new-section) offering, REMOVE it —
+    // a rejected proposal was never really scheduled, so it should not linger as
+    // a canceled row (which used to offer a misleading "Re-instate"). The
+    // rejection itself stays in the Changelog via the request's history. The
+    // offerings_provisional_delete RLS policy lets the approver (dean/registrar/
+    // admin) or the creator delete it even though it is submitted.
     const isAddSection = ["Add Section", "Add Section & Split Enrollment", "Add Course"].includes(r.changeType);
     if (isAddSection) {
-      // Find via the linked addRequestId stamp on the offering.
-      const linked = state.offerings.find(o => o.addRequestId === r.id);
-      if (linked && !linked.canceled) {
-        linked.canceled      = true;
-        linked.canceledAt    = now;
-        linked.canceledBy    = who;
-        // Also clear any submission so the section isn't stuck as SENT.
-        // submitted is a scalar DB column that survives reloads; canceled is
-        // data-blob only and can be lost on sync — clearing submitted here
-        // prevents the offering from getting stuck in a SENT-but-no-queue limbo.
-        if (linked.submitted) {
-          linked.submitted   = false;
-          linked.submittedAt = "";
-          linked.submittedBy = "";
-        }
+      const idx = state.offerings.findIndex(o => o.addRequestId === r.id);
+      if (idx >= 0) {
+        const linked = state.offerings[idx];
         markLocallyTouched(linked.id);
-        logRequestEvent(r, `Linked section canceled (rejected by ${who})`);
+        markOfferingDeleted(linked.id);
+        state.offerings.splice(idx, 1);
+        logRequestEvent(r, `Linked section removed (rejected by ${who})`);
       }
     }
     setDirty(true);
