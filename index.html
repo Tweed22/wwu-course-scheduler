@@ -4218,6 +4218,28 @@ function snapshotAllBaselines() {
   (state.offerings || []).forEach(_baseOffering);
   (state.requests  || []).forEach(_baseRequest);
 }
+// Upsert rows one at a time so a single row that a policy rejects (e.g. a
+// dean touching an already-submitted offering, which RLS reserves for the
+// registrar) can't roll back the whole batch and take an innocent
+// brand-new-section INSERT down with it. Only the genuinely-forbidden row
+// fails; every permitted row still persists. Returns {ok, failed}.
+async function _upsertRowByRow(table, rows, baselineMap) {
+  let ok = 0, failed = 0;
+  for (const row of rows) {
+    let { error } = await sb.from(table).upsert(row);
+    if (error && /column .*data.* does not exist/i.test(error.message || "")) {
+      _hasDataColumn = false;
+      const { data, ...rest } = row;
+      ({ error } = await sb.from(table).upsert(rest));
+    }
+    if (error) { failed++; _err(table + " row upsert failed (id " + row.id + ")", error); }
+    else { ok++; baselineMap.set(row.id, _canonRow(row)); }
+  }
+  if (failed) {
+    try { toast(`Saved ${ok} change${ok === 1 ? "" : "s"}; ${failed} couldn't be saved (permission).`); } catch (e) {}
+  }
+  return { ok, failed };
+}
 async function flushToSupabase() {
   if (!window.AUTH || !window.AUTH.user) return;
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
@@ -4251,7 +4273,9 @@ async function flushToSupabase() {
           if (r2.error) _err("offerings upsert failed", r2.error);
           else { oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r))); try { toast("Saved without rich data (data column missing — run phase 3 SQL)."); } catch (e) {} }
         } else {
-          _err("offerings upsert failed", error);
+          // Batch rejected (often one RLS-guarded row). Retry per row so the
+          // permitted rows — e.g. a new section INSERT — still persist.
+          await _upsertRowByRow("offerings", oRows, _syncBaseOfferings);
         }
       } else {
         oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r)));
@@ -4267,7 +4291,8 @@ async function flushToSupabase() {
           if (r2.error) _err("change_requests upsert failed", r2.error);
           else rRows.forEach(r => _syncBaseRequests.set(r.id, _canonRow(r)));
         } else {
-          _err("change_requests upsert failed", error);
+          // Batch rejected — retry per row so permitted requests still persist.
+          await _upsertRowByRow("change_requests", rRows, _syncBaseRequests);
         }
       } else {
         rRows.forEach(r => _syncBaseRequests.set(r.id, _canonRow(r)));
@@ -5972,6 +5997,10 @@ function cancelCourseOffering(offeringId) {
   markLocallyTouched(draft.id);
   state.requests.push(draft);
   o.cancelRequestId = draft.id;
+  // Bidirectional link: stamp the offering id onto the request so a Cancel
+  // can always be traced back to its exact offering (matches the Add Section
+  // flow). Without this, a lost cancel flag can't be safely reconciled.
+  if (!draft.offeringId) draft.offeringId = o.id;
   setDirty(true);
   renderTerms();
   if (typeof renderRequests === "function") renderRequests();
