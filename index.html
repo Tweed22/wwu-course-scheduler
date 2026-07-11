@@ -3898,7 +3898,13 @@ function scheduleLocalDraftSave() {
   }, 500);
 }
 function saveLocalDraft() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify({ courses: state.courses, requests: state.requests, offerings: state.offerings, ts: Date.now() })); }
+  // Cache ONLY the rotation catalog (sourced from the Google Sheet, it has no
+  // Supabase home) and term-deadline prefs. Offerings and change_requests are
+  // deliberately NOT cached: they live in Supabase and are the shared source of
+  // truth. Caching them locally used to let a change that never reached the DB
+  // look "saved" (it survived reload from cache) while no other user could see
+  // it — and could be flushed as stale state after a failed load.
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ courses: state.courses, termDeadlines: state.termDeadlines, ts: Date.now() })); }
   catch (e) { /* quota or disabled */ }
 }
 function loadLocalDraft() {
@@ -3911,8 +3917,10 @@ function loadLocalDraft() {
       state.courses = d.courses;
       ok = true;
     }
-    if (Array.isArray(d.requests)) state.requests = d.requests;
-    if (Array.isArray(d.offerings)) state.offerings = d.offerings;
+    // Offerings and change_requests are intentionally NOT restored from cache —
+    // they are loaded fresh from Supabase (the shared source of truth) so what
+    // you see always matches the server. Legacy caches may still contain them;
+    // we simply ignore those keys.
     if (d.termDeadlines && typeof d.termDeadlines === "object") state.termDeadlines = d.termDeadlines;
     return ok;
   } catch (e) { /* ignore */ }
@@ -4167,6 +4175,7 @@ async function loadFromSupabase() {
         };
       }
     }
+    _supabaseReady = true;  // baselines are set — flushing is now safe
     return true;
   } catch (e) {
     _err("loadFromSupabase failed", e);
@@ -4177,6 +4186,12 @@ async function loadFromSupabase() {
 /* ---- Debounced flush ---- */
 let _supabaseFlushTimer = null;
 let _flushInFlight = false;
+// True only after a SUCCESSFUL loadFromSupabase (which snapshots the per-row
+// baselines). Until then we must never flush: with no baseline every local row
+// looks "changed", so a flush would push this browser's entire (possibly stale)
+// state and overwrite other users. If the initial load fails, writes are held
+// rather than pushed blind.
+let _supabaseReady = false;
 
 // Explicit delete tracking. flushToSupabase used to delete any DB row whose
 // id wasn't present in this browser's local state — but a browser's local
@@ -4253,6 +4268,9 @@ async function _upsertRowByRow(table, rows, baselineMap) {
 }
 async function flushToSupabase() {
   if (!window.AUTH || !window.AUTH.user) return;
+  // Never push before the shared state has loaded — otherwise we'd flush this
+  // browser's whole local set against an empty baseline and clobber other users.
+  if (!_supabaseReady) return;
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
   _flushInFlight = true;
   // Note: ids are already touched by setDirty(true) which fires before every
@@ -10348,6 +10366,12 @@ async function init() {
   // 2) Phase 3: shared state lives in Supabase.  Load offerings +
   // change_requests + PM mapping + term-date overrides.
   const dbLoaded = await loadFromSupabase();
+  if (!dbLoaded) {
+    // We couldn't reach the shared database. Offerings/requests are not cached
+    // locally and flushing is held (_supabaseReady stays false), so nothing is
+    // shown or saved from stale state — tell the user to reconnect and reload.
+    try { toast("Couldn't load the shared schedule. Check your connection and reload — changes won't be saved until it loads.", "error"); } catch (e) {}
+  }
   // termDeadlines stays in localStorage for now (not migrated).
   try {
     const s = localStorage.getItem(LS_KEY);
