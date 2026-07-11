@@ -1061,6 +1061,12 @@
   }
   .term-table .code { font-family: inherit; font-weight: 600; color: var(--wwu-green-dark); white-space: nowrap; }
   .term-table .code .section-num { color: var(--text-muted); font-weight: 500; font-size: 11.5px; margin-left: 2px; }
+  /* Section numbers are hidden from all viewer-facing tables: the scheduler's
+     positional section number often differs from the Registrar's official
+     number, so it must not be read as authoritative. The value is still
+     computed by sectionNumberFor() and recorded in change requests / the
+     Changelog for internal change-tracking. */
+  .section-num { display: none; }
   .term-table .deadline-warn { color: #b03a2e; font-weight: 700; }
   .term-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--wwu-green); }
   .term-table .add-section-btn {
@@ -4352,7 +4358,8 @@ const _OFFERING_MERGE_FIELDS = [
   'dean', 'programManager',
   'submitted', 'submittedAt', 'submittedBy',
   'registrarCompleted', 'registrarCompletedAt', 'registrarCompletedBy',
-  'canceled', 'submittedByUid',
+  'canceled', 'canceledAt', 'canceledBy', 'submittedByUid',
+  'pendingReinstate', 'reinstateRequestId',
 ];
 function handleRealtimeOffering(payload) {
   const event = payload.eventType || payload.type;
@@ -4400,7 +4407,10 @@ function handleRealtimeOffering(payload) {
       changed = true;
     }
     if (!local.canceled && incoming.canceled) {
-      local.canceled = true; changed = true;
+      local.canceled = true;
+      local.canceledAt = incoming.canceledAt || local.canceledAt;
+      local.canceledBy = incoming.canceledBy || local.canceledBy;
+      changed = true;
     }
     if (changed) {
       markLocallyTouched(incoming.id);
@@ -5321,38 +5331,31 @@ function termLastEndDate(semester, year) {
 }
 
 function rollOverCompletedAssignments(now) {
+  // Rollover is a shared maintenance sweep. Only a registrar/admin can persist
+  // changes to submitted / registrar-completed offerings, so restrict it to
+  // them — otherwise a program manager's browser would locally blank & advance
+  // rows it can't write, showing phantom state that never reaches the DB.
+  if (!isRegistrar()) return 0;
   const today = (now instanceof Date) ? now : new Date();
-  // Build a list of (semester, year) buckets that are eligible for rollover —
-  // i.e., the last subterm ended at least 10 weeks ago.
-  const eligible = new Set();
-  // We only consider years actually present in TERM_DATES — no need to scan
-  // forever.
-  const yearsByTerm = new Map(); // "Fall" → [2026, 2027, ...]
-  for (const k of Object.keys(TERM_DATES)) {
-    const [sem, , yr] = k.split("|");
-    if (!yearsByTerm.has(sem)) yearsByTerm.set(sem, new Set());
-    yearsByTerm.get(sem).add(Number(yr));
-  }
-  for (const [sem, years] of yearsByTerm.entries()) {
-    for (const yr of years) {
-      const lastEnd = termLastEndDate(sem, yr);
-      if (!lastEnd) continue;
-      const endTs = new Date(lastEnd + "T23:59:59").getTime();
-      if (isNaN(endTs)) continue;
-      if (today.getTime() - endTs >= TEN_WEEKS_MS) {
-        eligible.add(`${sem}|${yr}`);
-      }
-    }
-  }
-  if (!eligible.size) return 0;
   let rolled = 0;
   for (const o of state.offerings) {
-    if (!eligible.has(`${o.semester}|${o.year}`)) continue;
     // Canceled offerings stay canceled (a deliberate close-out, not a
-    // future-term assignment). Everything else rolls forward — including
-    // sections that never made it through the Registrar, per spec.
+    // future-term assignment).
     if (o.canceled) continue;
-    // Bump to next academic year (+1) and reset workflow state.
+    // o.year is the ACADEMIC year; the academic year turns over at Fall.
+    // termLastEndDate() takes the academic year and converts Spring/Summer to
+    // the following calendar year internally, so the 10-week test lines up for
+    // every semester. (The previous version compared TERM_DATES calendar-year
+    // keys against academic-year offerings and double-converted, so Spring/
+    // Summer never rolled — a safe no-op, but wrong.)
+    const lastEnd = termLastEndDate(o.semester, Number(o.year));
+    if (!lastEnd) continue;                                  // beyond TERM_DATES horizon
+    const endTs = new Date(lastEnd + "T23:59:59").getTime();
+    if (isNaN(endTs)) continue;
+    if (today.getTime() - endTs < TEN_WEEKS_MS) continue;    // term ended < 10 weeks ago
+    // Bump to next academic year (+1) and reset workflow so the slot is ready
+    // for fresh assignments. Idempotent: the bumped row's new term end is in the
+    // future, so a later pass won't roll it again.
     o.year = Number(o.year) + 1;
     o.instructor = "";
     o.programManager = "";
@@ -5360,12 +5363,11 @@ function rollOverCompletedAssignments(now) {
     o.submitted = false;
     o.submittedAt = "";
     o.submittedBy = "";
+    o.submittedByUid = null;
     o.registrarCompleted = false;
     o.registrarCompletedAt = "";
     o.registrarCompletedBy = "";
-    // The deadline is auto-derived from TERM_DATES at render time; no need to
-    // store one explicitly. Clear any legacy override.
-    o.deadline = "";
+    o.deadline = "";  // auto-derived from TERM_DATES at render time
     rolled++;
   }
   if (rolled) setDirty(true);
