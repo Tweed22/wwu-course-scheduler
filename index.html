@@ -4766,10 +4766,11 @@ function renderTable(filtered) {
       <td class="rot-cell">${renderTermList(c.onlineSummer)}</td>
       <td>${escapeHtml(c.takesEffect || "")}</td>
       <td class="actions">
-        <button type="button" data-act="edit">Edit</button>
+        <!-- The rotation catalog's source of truth is the Google Sheet. Direct
+             Edit/Duplicate/Delete only changed this browser's local cache (never
+             shared, wiped at the next sync), so catalog changes go through
+             "Request Change" (a persisted, shared change request) instead. -->
         <button type="button" data-act="request" style="color:var(--wwu-green);border-color:var(--wwu-green);">Request Change</button>
-        <button type="button" data-act="dup">Duplicate</button>
-        <button type="button" data-act="del" class="danger">Delete</button>
       </td>
     </tr>
   `).join("") + trunc;
