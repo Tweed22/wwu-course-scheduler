@@ -4136,6 +4136,7 @@ async function loadFromSupabase() {
     }
     state.offerings = rows.map(rowToOffering).filter(Boolean);
     state.requests  = (rRes.data || []).map(rowToRequest).filter(Boolean);
+    snapshotAllBaselines(); // record the server state so flushes push only real changes
     // Phase 4 lookups
     state.pmByCourse   = {};
     state.deanByCourse = {};
@@ -4189,6 +4190,34 @@ function scheduleSupabaseFlush() {
     flushToSupabase().catch(e => _err("flushToSupabase failed", e));
   }, 600);
 }
+// ---- Change-scoped sync ---------------------------------------------------
+// The flush used to upsert the ENTIRE local offerings/requests set every time,
+// so a browser holding a stale row would silently overwrite another user's
+// newer value (e.g. wiping a Cancel Course flag or an added section). We now
+// diff each row against the last-known SERVER value — recorded on load, on each
+// realtime event, and after a successful flush — and push ONLY genuine changes.
+// courseId/courseCode are browser-local (re-resolved per browser from the stable
+// course_code), so they're excluded from the diff to avoid false positives.
+const _syncBaseOfferings = new Map(); // id -> canonical JSON as last known on the server
+const _syncBaseRequests  = new Map();
+function _canonRow(row) {
+  if (!row) return "";
+  const clone = { ...row };
+  if (clone.data && typeof clone.data === "object") {
+    const d = { ...clone.data };
+    delete d.courseId;   // browser-local id, re-resolved on load
+    delete d.courseCode; // derived from course_code
+    clone.data = d;
+  }
+  return JSON.stringify(clone);
+}
+function _baseOffering(o) { const r = offeringToRow(o); if (r && r.id) _syncBaseOfferings.set(r.id, _canonRow(r)); }
+function _baseRequest(r0) { const r = requestToRow(r0); if (r && r.id) _syncBaseRequests.set(r.id, _canonRow(r)); }
+function snapshotAllBaselines() {
+  _syncBaseOfferings.clear(); _syncBaseRequests.clear();
+  (state.offerings || []).forEach(_baseOffering);
+  (state.requests  || []).forEach(_baseRequest);
+}
 async function flushToSupabase() {
   if (!window.AUTH || !window.AUTH.user) return;
   if (_flushInFlight) { scheduleSupabaseFlush(); return; }
@@ -4203,8 +4232,11 @@ async function flushToSupabase() {
     // Build the upsert payload — only rows that have the required
     // course_code make it in. If course_code can't be resolved, we keep the
     // offering locally but skip pushing it to the DB until it can.
-    const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code);
-    const rRows = allRequests.map(requestToRow).filter(r => r.id);
+    // Only push rows that differ from the last-known server value (change-scoped).
+    const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code)
+      .filter(r => _syncBaseOfferings.get(r.id) !== _canonRow(r));
+    const rRows = allRequests.map(requestToRow).filter(r => r.id)
+      .filter(r => _syncBaseRequests.get(r.id) !== _canonRow(r));
     // Deletes are explicit-only (see _pendingOfferingDeletes/_pendingRequestDeletes
     // above) — never inferred from "missing from this browser's local state".
     const oDel = [..._pendingOfferingDeletes].filter(id => !allOfferings.some(o => o.id === id));
@@ -4217,10 +4249,12 @@ async function flushToSupabase() {
           const retryRows = oRows.map(({ data, ...rest }) => rest);
           const r2 = await sb.from("offerings").upsert(retryRows);
           if (r2.error) _err("offerings upsert failed", r2.error);
-          else try { toast("Saved without rich data (data column missing — run phase 3 SQL)."); } catch (e) {}
+          else { oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r))); try { toast("Saved without rich data (data column missing — run phase 3 SQL)."); } catch (e) {} }
         } else {
           _err("offerings upsert failed", error);
         }
+      } else {
+        oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r)));
       }
     }
     if (rRows.length) {
@@ -4231,9 +4265,12 @@ async function flushToSupabase() {
           const retryRows = rRows.map(({ data, ...rest }) => rest);
           const r2 = await sb.from("change_requests").upsert(retryRows);
           if (r2.error) _err("change_requests upsert failed", r2.error);
+          else rRows.forEach(r => _syncBaseRequests.set(r.id, _canonRow(r)));
         } else {
           _err("change_requests upsert failed", error);
         }
+      } else {
+        rRows.forEach(r => _syncBaseRequests.set(r.id, _canonRow(r)));
       }
     }
     // Delete in chunks of 100 to stay within Supabase/PostgREST URL-length
@@ -4295,6 +4332,7 @@ function handleRealtimeOffering(payload) {
     if (recentlyTouched(id)) return; // ignore — we may be in the middle of editing
     const before = state.offerings.length;
     state.offerings = state.offerings.filter(o => o.id !== id);
+    _syncBaseOfferings.delete(id);
     if (state.offerings.length !== before) scheduleReRender();
     return;
   }
@@ -4302,6 +4340,7 @@ function handleRealtimeOffering(payload) {
   if (!row) return;
   const incoming = rowToOffering(row);
   if (!incoming) return;
+  _baseOffering(incoming); // the server now holds this — record it as the sync baseline
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
 
   if (recentlyTouched(incoming.id)) {
@@ -4364,6 +4403,7 @@ function handleRealtimeRequest(payload) {
     if (!id) return;
     const before = state.requests.length;
     state.requests = state.requests.filter(r => r.id !== id);
+    _syncBaseRequests.delete(id);
     if (state.requests.length !== before) scheduleReRender();
     return;
   }
@@ -4371,6 +4411,7 @@ function handleRealtimeRequest(payload) {
   if (!row) return;
   const incoming = rowToRequest(row);
   if (!incoming) return;
+  _baseRequest(incoming); // server now holds this — record it as the sync baseline
   const idx = state.requests.findIndex(r => r.id === incoming.id);
   if (recentlyTouched(incoming.id)) {
     // Forward-only status merge within suppression window: a request can only
