@@ -4057,6 +4057,9 @@ function rowToOffering(row) {
     const byCode = (state.courses || []).find(c => c.code === row.course_code);
     if (byCode) o.courseId = byCode.id;
   }
+  // Ownership identity (authoritative from the DB columns) for UI gating.
+  o.createdBy      = row.created_by       || o.createdBy      || null;
+  o.submittedByUid = row.submitted_by_uid || o.submittedByUid || null;
   return o;
 }
 function requestToRow(r) {
@@ -4075,6 +4078,7 @@ function rowToRequest(row) {
     // status scalar column is authoritative — a stale data blob from another
     // browser can't revert a Finalized request back to Sent to Registrar.
     if (row.status) r.status = row.status;
+    r.createdBy = row.created_by || r.createdBy || null;  // ownership for UI gating
     return r;
   }
   // Fallback for rows missing the data blob — return what little we have
@@ -4083,6 +4087,7 @@ function rowToRequest(row) {
     id: row.id,
     year: row.year || 2026,
     status: row.status || "Pending Approval",
+    createdBy: row.created_by || null,
   };
 }
 
@@ -4347,7 +4352,7 @@ const _OFFERING_MERGE_FIELDS = [
   'dean', 'programManager',
   'submitted', 'submittedAt', 'submittedBy',
   'registrarCompleted', 'registrarCompletedAt', 'registrarCompletedBy',
-  'canceled',
+  'canceled', 'submittedByUid',
 ];
 function handleRealtimeOffering(payload) {
   const event = payload.eventType || payload.type;
@@ -4385,6 +4390,7 @@ function handleRealtimeOffering(payload) {
       local.submitted = true;
       local.submittedAt = incoming.submittedAt || local.submittedAt;
       local.submittedBy = incoming.submittedBy || local.submittedBy;
+      local.submittedByUid = incoming.submittedByUid || local.submittedByUid;
       changed = true;
     }
     if (!local.registrarCompleted && incoming.registrarCompleted) {
@@ -4553,6 +4559,24 @@ function currentRole() {
 function isAdmin() { return currentRole() === "admin"; }
 function isRegistrar() { return currentRole() === "registrar" || isAdmin(); }
 function isDean() { return ["dean","registrar","admin"].includes(currentRole()); }
+// ---- Ownership (self-service) --------------------------------------------
+// The DB stamps offerings/change_requests with created_by = auth.uid() (and
+// offerings with submitted_by_uid on submit). window.AUTH.user.id IS that
+// auth uid, so these client checks line up exactly with the RLS owner policies
+// — a button only shows when the write behind it will actually be permitted.
+function myUid() { return (window.AUTH && window.AUTH.user && window.AUTH.user.id) || null; }
+function isOwner(row) { const u = myUid(); return !!(u && row && row.createdBy && row.createdBy === u); }
+function isMySubmission(o) { const u = myUid(); return !!(u && o && o.submittedByUid && o.submittedByUid === u); }
+// Who may recall an offering's submission: its creator, whoever submitted it,
+// or a registrar/admin.
+function canRecallOffering(o) { return isOwner(o) || isMySubmission(o) || isRegistrar(); }
+// Who may withdraw a change request via its linked offering (undocancel /
+// undoreinstate delete the linked request): the request's creator or an admin.
+function ownsLinkedRequest(reqId) {
+  if (!reqId) return false;
+  const req = (state.requests || []).find(r => r.id === reqId);
+  return isOwner(req) || isAdmin();
+}
 // Registrars and admins can approve any request. Deans can only approve
 // Online-modality requests — On-Ground must go to a registrar or admin.
 // Program managers submit directly from Term Assignments but cannot approve.
@@ -5128,8 +5152,10 @@ function newOffering(prefill = {}) {
     notes: "",
     submitted: false,           // true after Dean submits this section to Registrar; instructor locks
     submittedAt: "",
+    submittedByUid: null,       // auth uid of the submitter (DB-authoritative; set here for immediate UI)
     registrarCompleted: false,  // true after Registrar marks the submitted section processed
     registrarCompletedAt: "",
+    createdBy: myUid(),         // owner for self-service gating (DB stamps this too)
   }, prefill);
 }
 
@@ -5677,8 +5703,11 @@ function renderTermTable(list) {
       : "";
     let actionBtn;
     if (o.pendingReinstate) {
-      // Reinstate submitted — show SENT state with Recall Submission option.
-      actionBtn = `<button type="button" class="btn-req-change" data-tact="undoreinstate" data-oid="${escapeHtml(o.id)}" title="Recall the reinstatement request and return this section to canceled state">Recall Submission</button>`;
+      // Reinstate submitted — show SENT state with Recall Submission option,
+      // but only to whoever can actually recall it (submitter/creator/registrar).
+      actionBtn = canRecallOffering(o)
+        ? `<button type="button" class="btn-req-change" data-tact="undoreinstate" data-oid="${escapeHtml(o.id)}" title="Recall the reinstatement request and return this section to canceled state">Recall Submission</button>`
+        : "";
     } else if (o.canceled) {
       // Show "Recall Submission" while the Cancel Course request is still pending;
       // only show "Re-instate" once it has been finalized (or no linked request found).
@@ -5695,15 +5724,22 @@ function renderTermTable(list) {
           (!r.sectionNumber || r.sectionNumber === sectionNumberFor(o))
         ) || null;
       }
-      actionBtn = (_cancelReq && !_cancelFinalStatuses.has(_cancelReq.status))
+      // The canceler (owner of the Cancel request) or a registrar/admin can
+      // quick-recall; everyone else must file a Re-instate request for approval.
+      const _canRecallCancel = _cancelReq && !_cancelFinalStatuses.has(_cancelReq.status)
+        && (isOwner(_cancelReq) || isRegistrar());
+      actionBtn = _canRecallCancel
         ? `<button type="button" class="btn-req-change" data-tact="undocancel" data-oid="${escapeHtml(o.id)}" title="Recall the cancellation request and restore this section">Recall Submission</button>`
         : `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
       actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
     } else if (o.submitted) {
-      // Sent to registrar but not yet processed — allow undo back to unassigned.
-      actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>`;
+      // Sent to registrar but not yet processed — allow undo back to unassigned,
+      // but only for whoever submitted it (or its creator / a registrar/admin).
+      actionBtn = canRecallOffering(o)
+        ? `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="undosubmit" data-oid="${escapeHtml(o.id)}" title="Remove from Registrar queue and clear the instructor assignment">Recall Submission</button>`
+        : `${dlContractBtn}`;
     } else if (o.isNewSection) {
       // Added sections (with or without instructor) always route through Change Requests.
       actionBtn = (o.instructor && o.instructor.trim() && isOnline)
@@ -5734,9 +5770,9 @@ function renderTermTable(list) {
     // so the only inline action is the "+" on the first section.
     const sectionIdx = parseInt(sectionNum, 10) || 1;
     let sectionActionBtn = "";
-    if (o.isNewSection && !o.submitted && !o.canceled) {
-      // Unsubmitted new sections always show "−" first so they can be removed
-      // regardless of whether they're section 1 (which would otherwise show "+").
+    if (o.isNewSection && !o.submitted && !o.canceled && (isOwner(o) || isRegistrar())) {
+      // Unsubmitted new sections show "−" so their creator (or a registrar/admin)
+      // can remove them. Non-owners fall through to the normal "+" add control.
       sectionActionBtn = `<button type="button" class="add-section-btn remove-section-btn" data-tact="removesection" data-oid="${escapeHtml(o.id)}" title="Remove this added section">−</button>`;
     } else if (sectionIdx === 1 && !o.canceled) {
       // "+" on the first section of rotation courses — add another section.
@@ -5933,6 +5969,10 @@ function removeSectionOffering(offeringId) {
   const o = state.offerings[idx];
   if (o.submitted) {
     toast("Submitted sections cannot be removed");
+    return;
+  }
+  if (!(isOwner(o) || isRegistrar())) {
+    toast("Only the section's creator or a registrar/admin can remove it.", "error");
     return;
   }
   const c = state.courses.find(x => x.id === o.courseId) || {};
@@ -6693,6 +6733,7 @@ function submitSectionToRegistrar(offeringId) {
   o.submitted    = true;
   o.submittedAt  = new Date().toISOString();
   o.submittedBy  = state.userName || "(unknown)";
+  o.submittedByUid = myUid();   // recall rights (DB stamps this too)
   markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
@@ -8211,6 +8252,7 @@ function saveSectionFromModal() {
   o.submitted     = true;
   o.submittedAt   = new Date().toISOString();
   o.submittedBy   = state.userName || "(unknown)";
+  o.submittedByUid = myUid();
   state.offerings.push(o);
   markLocallyTouched(o.id);
   createAddCourseRequestForNewSection(o, { addSectionType });
@@ -8489,6 +8531,7 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      if (!canRecallOffering(o)) { toast("Only the submitter or a registrar/admin can recall this.", "error"); return; }
       const c = state.courses.find(x => x.id === o.courseId) || {};
       if (!confirm(`Recall reinstatement for ${c.code || "this section"}? The section will return to canceled state.`)) return;
       let _reqIdx = o.reinstateRequestId
@@ -8518,6 +8561,7 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      if (!(isRegistrar() || ownsLinkedRequest(o.cancelRequestId))) { toast("Only the person who canceled it or a registrar/admin can recall this.", "error"); return; }
       const c = state.courses.find(x => x.id === o.courseId) || {};
       if (!confirm(`Recall cancellation for ${c.code || "this section"}? This will restore the section and remove the cancellation request from the queue.`)) return;
       const _cancelFinal = new Set(["Finalized", "Rejected"]);
@@ -8551,6 +8595,7 @@ function bindTermEvents() {
       if (!oid) return;
       const o = state.offerings.find(x => x.id === oid);
       if (!o) return;
+      if (!canRecallOffering(o)) { toast("Only the submitter or a registrar/admin can recall this.", "error"); return; }
       const c = state.courses.find(x => x.id === o.courseId) || {};
       if (!confirm(`Recall submission for ${c.code || "this section"}? This removes it from the Change Requests and/or Registrar queue and clears the instructor assignment.`)) return;
       o.submitted      = false;
@@ -8675,6 +8720,7 @@ function newRequest(prefill = {}) {
     archived: false,
     archivedAt: "",
     archivedReason: "",
+    createdBy: myUid(),   // owner for self-service gating (DB stamps this too)
   }, prefill);
 }
 
@@ -8761,16 +8807,18 @@ function renderRequestStats(filtered) {
 }
 
 function renderRequestActions(r) {
-  // Queue is always Pending Approval — show the four canonical actions.
-  const approveBtn = canApproveRequest(r)
-    ? `<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`
-    : "";
-  return [
-    `<button type="button" data-ract="edit">Edit</button>`,
-    approveBtn,
-    `<button type="button" data-ract="reject" class="reject">Reject</button>`,
-    `<button type="button" data-ract="del" class="danger">Delete</button>`,
-  ].join("");
+  // Only show actions the user can actually persist (matches RLS):
+  //  • Edit    — the request's owner, or a dean/registrar/admin (cr_update).
+  //  • Approve/Reject — approvers only (registrar/admin, or dean for online).
+  //  • Delete  — the owner (withdraw own) or an admin (delete any).
+  // This prevents the "click → looks done → reverts on reload" trap that hit
+  // program managers, whom cr_update/delete exclude for others' requests.
+  const btns = [];
+  if (isOwner(r) || isDean()) btns.push(`<button type="button" data-ract="edit">Edit</button>`);
+  if (canApproveRequest(r))   btns.push(`<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`);
+  if (canApproveRequest(r))   btns.push(`<button type="button" data-ract="reject" class="reject">Reject</button>`);
+  if (isOwner(r) || isAdmin()) btns.push(`<button type="button" data-ract="del" class="danger">Delete</button>`);
+  return btns.join("");
 }
 
 function renderRequestTable(filtered) {
@@ -9593,6 +9641,8 @@ function createProvisionalOffering(draft) {
     canceledBy:   "",
     isNewSection: true,
     addRequestId: draft.id,
+    createdBy:    myUid(),
+    submittedByUid: hasInstructor ? myUid() : null,
     lastModified: now,
   });
   state.offerings.push(o);
@@ -9701,6 +9751,7 @@ function saveRequestFromModal() {
         linkedO.submitted           = true;
         linkedO.submittedAt         = new Date().toISOString();
         linkedO.submittedBy         = state.userName || "(unknown)";
+        linkedO.submittedByUid      = myUid();
         markLocallyTouched(linkedO.id);
       }
     }
@@ -9754,6 +9805,7 @@ function transitionRequest(id, action) {
       provisionalO.submitted   = true;
       provisionalO.submittedAt = now;
       provisionalO.submittedBy = who;
+      provisionalO.submittedByUid = myUid();
       markLocallyTouched(provisionalO.id);
     }
     logRequestEvent(r, `Approved & sent to Registrar by ${who} (${code})`);
@@ -9767,6 +9819,7 @@ function transitionRequest(id, action) {
     return;
   }
   if (action === "reject") {
+    if (!canApproveRequest(r)) { toast("You do not have permission to reject this request.", "error"); return; }
     const reason = prompt("Reason for rejecting this request? (optional, will appear in Changelog)") || "";
     r.status = "Rejected";
     r.approvedBy = who;
@@ -9809,6 +9862,7 @@ function transitionRequest(id, action) {
     return;
   }
   if (action === "del") {
+    if (!(isOwner(r) || isAdmin())) { toast("Only the request's creator or an admin can delete it.", "error"); return; }
     if (!confirm(`Delete this change request? It will be removed from the queue and recorded in the Changelog.`)) return;
     r.archived = true;
     r.archivedAt = now;
