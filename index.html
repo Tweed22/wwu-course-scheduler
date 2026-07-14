@@ -314,9 +314,8 @@
   html.dark .req-table tbody tr:hover td textarea {
     color: var(--text);
   }
-  /* Submitted and overdue rows keep their state on hover. */
+  /* Submitted rows keep their state on hover. */
   html.dark .term-table tbody tr.submitted:hover td { background: transparent !important; color: #5ab57d; }
-  html.dark .term-table tbody tr.overdue:hover td   { background: rgba(215, 117, 117, 0.10) !important; }
   html.dark .req-table th { background: #232323; color: #909090; border-bottom-color: var(--border); }
   html.dark .req-table td { border-bottom-color: var(--border); }
   /* Subterm chips. */
@@ -385,8 +384,6 @@
     color: #d77575 !important;
     border-color: rgba(215, 117, 117, 0.5) !important;
   }
-  /* Submitted/overdue rows in dark. */
-  html.dark .term-table tr.overdue td { background: rgba(215, 117, 117, 0.08); }
   /* Code cells */
   html.dark .code { color: #6ba5d4; }
   /* Helper sections. */
@@ -1041,8 +1038,7 @@
   }
   .term-table th.no-sort { cursor: default; }
   .term-table tbody tr:hover { background: #f6f8f7; }
-  .term-table tbody tr.overdue { background: #fdebe8; }
-  .term-table tbody tr.overdue:hover { background: #fce0db; }
+
   .term-table tbody tr.finalized { background: #f3efea; }
   .term-table input, .term-table select {
     width: 100%;
@@ -1243,7 +1239,6 @@
     font-weight: 700;
   }
   .term-subchip.active .chip-count { background: rgba(255,255,255,0.25); }
-  .term-subchip.has-overdue { border-color: #b03a2e; box-shadow: inset 0 0 0 1px #b03a2e; }
 
   /* Two-row chip layout: semester buttons span 3 columns each above
      their corresponding A/B/C subterm buttons. */
@@ -5693,7 +5688,7 @@ function renderTermTable(list) {
     const prefix = (c.code || "").split(" ")[0];
     const school = SCHOOL_BY_PREFIX[prefix] || "";
     const classes = [];
-    if (isOverdue(o)) classes.push("overdue");
+
     if (o.submitted)  classes.push("submitted");
     if (o.canceled && !o.pendingReinstate) classes.push("canceled");
     const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
@@ -6835,12 +6830,8 @@ function updateTermSortIndicators() {
 function updateTermBadge() {
   // Keep the Registrar tab's pending counter in sync whenever offerings change.
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
-  const overdue = state.offerings.filter(isOverdue).length;
   const el = document.getElementById("badgeTerms");
   if (!el) return;
-  el.textContent = overdue;
-  el.style.background = overdue > 0 ? "#b03a2e" : "";
-  el.style.color = overdue > 0 ? "white" : "";
 }
 
 function exportTermCsv() {
@@ -8439,7 +8430,6 @@ function bindTermEvents() {
     setDirty(true);
     // For deadline/instructor changes, re-apply row styling + badge without full re-render
     if (f === "deadline" || f === "instructor") {
-      row.classList.toggle("overdue", isOverdue(o));
       updateTermBadge();
       renderTermSubtermChips();
       // Morph the single action button between Submit ↔ Cancel as the user
