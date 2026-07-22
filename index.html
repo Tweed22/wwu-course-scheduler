@@ -284,7 +284,8 @@
      surface, and tint the text teal so the "submitted" state reads via color. */
   html.dark .term-table tr.submitted { background: transparent !important; }
   html.dark .term-table tr.submitted td { background: transparent !important; color: #5ab57d; }
-  html.dark .term-table tr.submitted input[data-field="instructor"] {
+  html.dark .term-table tr.submitted input[data-field="instructor"],
+  html.dark .term-table tr.done input[data-field="instructor"] {
     background: transparent !important;
     color: #5ab57d;
     border-color: transparent;
@@ -1086,7 +1087,8 @@
   .term-table .add-section-btn.remove-section-btn { color: var(--danger); border-color: var(--danger); background: white; }
   .term-table .add-section-btn.remove-section-btn:hover { background: var(--danger); color: white; }
   .term-table tr.submitted { background: #f4f7f5; }
-  .term-table tr.submitted input[data-field="instructor"] {
+  .term-table tr.submitted input[data-field="instructor"],
+  .term-table tr.done input[data-field="instructor"] {
     background: #eef0ef;
     color: var(--text);
     cursor: not-allowed;
@@ -5690,6 +5692,9 @@ function renderTermTable(list) {
     const classes = [];
 
     if (o.submitted)  classes.push("submitted");
+    // DONE rows carry their own class: registrar-finalized sections are locked even
+    // when they never passed through the SENT state, and must LOOK locked too.
+    if (o.registrarCompleted) classes.push("done");
     if (o.canceled && !o.pendingReinstate) classes.push("canceled");
     const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
     const sectionNum = sectionNumberFor(o);
@@ -5697,9 +5702,12 @@ function renderTermTable(list) {
     // inline — they have to go through Request Change).
     const pendingInstrResult = pendingInstructorForOffering(o);
     const pendingInstr = pendingInstrResult ? pendingInstrResult.name : null;
-    // Lock the instructor cell when submitted, canceled, or when a change
-    // request is actively pending — prevents conflicting direct edits.
-    const isLocked = o.submitted || o.canceled || (!!pendingInstr && !o.instructor);
+    // Lock the instructor cell when submitted, FINALIZED BY THE REGISTRAR (DONE),
+    // canceled, or when a change request is actively pending — prevents conflicting
+    // direct edits. registrarCompleted is checked independently of `submitted`: a row
+    // can reach DONE without ever being SENT (e.g. a reinstate/change-request finalize
+    // sets registrar_completed directly), and those rows were still editable.
+    const isLocked = o.submitted || o.registrarCompleted || o.canceled || (!!pendingInstr && !o.instructor);
     const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
     const pendingInstrTitle = (pendingInstr && !o.instructor)
@@ -8420,7 +8428,8 @@ function bindTermEvents() {
     if (!o) return;
     const f = inp.dataset.field;
     // Guard: instructor is locked once a section has been submitted to the Registrar
-    if (f === "instructor" && o.submitted) { inp.value = o.instructor || ""; return; }
+    // OR finalized by them (DONE) — a row can reach DONE without ever being SENT.
+    if (f === "instructor" && (o.submitted || o.registrarCompleted)) { inp.value = o.instructor || ""; return; }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
     // Record which specific field is being edited so the realtime handler can
     // suppress echoes for just that field without blocking updates to other
@@ -9039,6 +9048,37 @@ function composeExplanation(changes) {
   return changes.map((c, i) => `${i + 1}. ${changeSummary(c)}`).join(" • ");
 }
 
+/* On-Ground courses live ONLY in the rotation sheet — they are never Term
+   Assignments (those are the online sub-term schedule). So the term-first picker,
+   which is built from state.offerings, is always empty for On-Ground. A course
+   counts as available on-ground in a semester when its rotation cadence for that
+   semester is set at all — Every / Even / Odd. All three cadences are included:
+   the request is about the course being offered on-ground, not about which
+   specific year it next runs. Summer has no on-ground rotation column, so nothing
+   is on-ground in Summer. */
+function onGroundCoursesForTerm(semester) {
+  const key = semester === "Fall" ? "ogFall" : semester === "Spring" ? "ogSpring" : null;
+  if (!key) return [];
+  return (state.courses || [])
+    .filter(c => String(c[key] || "").trim())
+    .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
+}
+/* Label form for an on-ground catalog course. Mirrors the offering label shape
+   ("CODE — Title") so both branches parse identically, with the rotation cadence
+   appended so the advisor can see Every/Even/Odd at a glance. */
+function onGroundCourseLabel(c, semester) {
+  const cad = semester === "Fall" ? (c.ogFall || "") : semester === "Spring" ? (c.ogSpring || "") : "";
+  const base = `${c.code || ""} — ${c.title || ""}`.trim();
+  return cad ? `${base} (${cad})` : base;
+}
+/* Resolve a typed on-ground label back to its catalog course by leading code. */
+function findOnGroundCourseByLabel(val, list) {
+  const raw = String(val || "").trim();
+  if (!raw) return null;
+  const code = raw.split("—")[0].trim().toUpperCase();
+  return list.find(c => String(c.code || "").trim().toUpperCase() === code) || null;
+}
+
 /* Render a single change block into the dialog list. */
 function renderChangeBlock(idx, ch) {
   const modality = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
@@ -9162,20 +9202,37 @@ function renderChangeBlock(idx, ch) {
           const sec = String(siblings.findIndex(x => x.id === o.id) + 1).padStart(2, "0");
           return (siblings.length > 1 || alwaysShowSec) ? `${code} ${sec} — ${title}` : `${code} — ${title}`;
         });
-        const offeringOpts = offeringLabels
+        // On-Ground: source the picker from the rotation sheet instead of offerings.
+        const ogList = isOnGround ? onGroundCoursesForTerm(curTerm) : [];
+        const ogLabels = ogList.map(c => onGroundCourseLabel(c, curTerm));
+
+        const offeringOpts = (isOnGround ? ogLabels : offeringLabels)
           .map(label => `<option value="${escapeHtml(label)}">`)
           .join("");
 
-        // Pre-populate the input from the currently-selected offering (if any).
+        // Pre-populate the input from the current selection (offering, or — on-ground —
+        // the catalog course recorded on the request's prefix/number).
         const selOff = curOfferingId ? filteredOff.find(o => o.id === curOfferingId) : null;
-        const selCourse = selOff ? state.courses.find(c => c.id === selOff.courseId) : null;
-        const curInputVal = selOff ? (offeringLabels[filteredOff.indexOf(selOff)] || "") : "";
-        const offeringTitle = selCourse ? (selCourse.title || "Untitled course")
-          : (curOfferingId ? "Course not found" : "Select a semester and subterm, then start typing…");
-        const offeringTitleCls = selCourse ? "has-match" : (curOfferingId ? "no-match" : "");
+        let selCourse = selOff ? state.courses.find(c => c.id === selOff.courseId) : null;
+        let curInputVal = selOff ? (offeringLabels[filteredOff.indexOf(selOff)] || "") : "";
+        if (isOnGround) {
+          const _p = document.getElementById("rfld_prefix").value || "";
+          const _n = document.getElementById("rfld_number").value || "";
+          const _code = [_p, _n].filter(Boolean).join(" ").toUpperCase();
+          selCourse = _code ? ogList.find(c => String(c.code || "").toUpperCase() === _code) || null : null;
+          curInputVal = selCourse ? onGroundCourseLabel(selCourse, curTerm) : "";
+        }
+        const _hasSel = !!selCourse;
+        const _rawSel = isOnGround ? !!(document.getElementById("rfld_prefix").value) : !!curOfferingId;
+        const offeringTitle = _hasSel ? (selCourse.title || "Untitled course")
+          : (_rawSel ? "Course not found" : "Select a semester, then start typing…");
+        const offeringTitleCls = _hasSel ? "has-match" : (_rawSel ? "no-match" : "");
 
-        const emptyHint = filteredOff.length === 0
-          ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">No courses found in ${escapeHtml(curTerm)} ${escapeHtml(curSubterm)} — try a different semester or subterm.</div>`
+        const _listLen = isOnGround ? ogList.length : filteredOff.length;
+        const emptyHint = _listLen === 0
+          ? (isOnGround
+              ? `<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">No on-ground courses rotate in ${escapeHtml(curTerm)} — on-ground runs Fall and Spring only.</div>`
+              : `<div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">No courses found in ${escapeHtml(curTerm)} ${escapeHtml(curSubterm)} — try a different semester or subterm.</div>`)
           : "";
 
         contextHtml += `
@@ -9364,6 +9421,22 @@ function syncContextFieldToHidden(el) {
     const subtermLbl  = document.getElementById("rfld_subterm").value || "Semester";
     const { subterm: subtermCode } = reqSubtermToSlot(subtermLbl);
     const acadYear    = Number(document.getElementById("rfld_year").value) || state.termFilter.year || 2026;
+    // On-Ground picks come from the rotation sheet, not from term assignments, so
+    // there is no offering to link — record prefix/number and clear offeringId.
+    const _mod = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
+    if (_mod === "On-Ground") {
+      const ogList = onGroundCoursesForTerm(semester);
+      const ogMatch = findOnGroundCourseByLabel(val, ogList);
+      const ogParts = ogMatch ? String(ogMatch.code || "").split(/\s+/) : [];
+      document.getElementById("rfld_prefix").value = ogMatch ? (ogParts[0] || "") : "";
+      document.getElementById("rfld_number").value = ogMatch ? ogParts.slice(1).join(" ") : "";
+      document.getElementById("rfld_sectionNumber").value = "";
+      document.getElementById("rfld_offeringId").value = "";
+      if (ogMatch && ogMatch.section) {
+        document.getElementById("rfld_section").value = ogMatch.section === "graduate" ? "Grad" : "Undergrad";
+      }
+      return;
+    }
     const filteredOff = (state.offerings || []).filter(o =>
       o.semester === semester && o.subterm === subtermCode && o.year === acadYear && !o.canceled
     );
@@ -10015,6 +10088,11 @@ function bindRequestEvents() {
   // Keep hidden rfld_modality in sync with the visible select.
   document.getElementById("rfld_modality_select").addEventListener("change", (e) => {
     document.getElementById("rfld_modality").value = e.target.value;
+    // Modality decides BOTH which change types are offered and where the course
+    // picker sources from (On-Ground = rotation sheet, Online = term assignments),
+    // so the blocks have to be rebuilt. Sync first so typed input isn't lost.
+    syncChangeListFromDom();
+    renderChangeList();
     _updateReqSaveBtn();
   });
   document.getElementById("reqModal").addEventListener("click", (e) => {
@@ -10116,10 +10194,17 @@ function bindRequestEvents() {
         titleEl.className = "cb-ctx-title";
       }
     } else {
-      // Offering input: show title from the matched offering.
+      // Offering input: show title from the matched offering — or, for On-Ground,
+      // from the catalog course recorded on prefix/number (there is no offering).
+      const _mod2 = (document.getElementById("rfld_modality") || {}).value || "On-Ground";
       const oid = document.getElementById("rfld_offeringId").value;
       const o   = oid ? state.offerings.find(x => x.id === oid) : null;
-      const c   = o   ? state.courses.find(x => x.id === o.courseId) : null;
+      let   c   = o   ? state.courses.find(x => x.id === o.courseId) : null;
+      if (!c && _mod2 === "On-Ground") {
+        const _code = [document.getElementById("rfld_prefix").value || "",
+                       document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ").toUpperCase();
+        if (_code) c = state.courses.find(x => String(x.code || "").toUpperCase() === _code) || null;
+      }
       const raw = (e.target.value || "").trim();
       if (c) {
         titleEl.textContent = c.title || "Untitled course";
