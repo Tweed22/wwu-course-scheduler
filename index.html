@@ -4236,6 +4236,43 @@ function _canonRow(row) {
 }
 function _baseOffering(o) { const r = offeringToRow(o); if (r && r.id) _syncBaseOfferings.set(r.id, _canonRow(r)); }
 function _baseRequest(r0) { const r = requestToRow(r0); if (r && r.id) _syncBaseRequests.set(r.id, _canonRow(r)); }
+
+/* ── Instructor-assignment protection ────────────────────────────────────────
+   A browser must never blank an instructor it did not deliberately clear.
+
+   How assignments were being lost: handleRealtimeOffering records the incoming
+   server row as this browser's sync baseline BEFORE merging, but then skips
+   merging any field the user is actively editing (fieldRecentlyEdited). A browser
+   sitting on the instructor cell therefore keeps its stale blank while its
+   baseline advances to the server's newer name — so the next change-scoped flush
+   sees a diff and pushes the blank back over the assignment. The audit entry in
+   data.fieldHistory rides along with whichever browser flushes last, which is how
+   ART 110 ended up logging 'Instructor changed from (blank) to "LISA"' while the
+   instructor column read NULL.
+
+   Guard: if an outgoing row has no instructor but the last known server state
+   did, and THIS browser never cleared it, restore the server's value — and heal
+   the local object too (row.data is that same object, and rowToOffering reads
+   instructor from the blob, so both must agree). Deliberate clears still work:
+   the inline editor records them in _instructorClearedLocally and they pass through. */
+const _instructorClearedLocally = new Set();
+function _guardInstructorBlank(row) {
+  if (!row || !row.id) return row;
+  if (String(row.instructor || "").trim()) return row;   // we have a name — nothing to protect
+  if (_instructorClearedLocally.has(row.id)) return row; // the user really cleared it here
+  const baseRaw = _syncBaseOfferings.get(row.id);
+  if (!baseRaw) return row;                              // no known server value to protect
+  let baseInstr = "";
+  try { baseInstr = String((JSON.parse(baseRaw) || {}).instructor || "").trim(); } catch (e) { return row; }
+  if (!baseInstr) return row;
+  row.instructor = baseInstr;
+  const local = (state.offerings || []).find(o => o.id === row.id);
+  if (local && !String(local.instructor || "").trim()) {
+    local.instructor = baseInstr;                        // also fixes row.data (same object)
+    scheduleReRender();
+  }
+  return row;
+}
 function snapshotAllBaselines() {
   _syncBaseOfferings.clear(); _syncBaseRequests.clear();
   (state.offerings || []).forEach(_baseOffering);
@@ -4281,7 +4318,11 @@ async function flushToSupabase() {
     // course_code make it in. If course_code can't be resolved, we keep the
     // offering locally but skip pushing it to the DB until it can.
     // Only push rows that differ from the last-known server value (change-scoped).
+    // _guardInstructorBlank runs BEFORE the change-scoped diff: if the only thing
+    // that "changed" was an instructor this browser accidentally blanked, the row
+    // now matches its baseline and is dropped from the push entirely.
     const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code)
+      .map(_guardInstructorBlank)
       .filter(r => _syncBaseOfferings.get(r.id) !== _canonRow(r));
     const rRows = allRequests.map(requestToRow).filter(r => r.id)
       .filter(r => _syncBaseRequests.get(r.id) !== _canonRow(r));
@@ -4305,6 +4346,8 @@ async function flushToSupabase() {
         }
       } else {
         oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r)));
+        // Deliberate clears have now reached the server — stop exempting them.
+        oRows.forEach(r => _instructorClearedLocally.delete(r.id));
       }
     }
     if (rRows.length) {
@@ -8431,6 +8474,14 @@ function bindTermEvents() {
     // OR finalized by them (DONE) — a row can reach DONE without ever being SENT.
     if (f === "instructor" && (o.submitted || o.registrarCompleted)) { inp.value = o.instructor || ""; return; }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
+    // Emptying the instructor HERE is a deliberate clear — exempt it from
+    // _guardInstructorBlank so it reaches the server. Typing a name again lifts
+    // the exemption. (Everything else that arrives at a blank instructor is an
+    // accident and must not wipe another user's assignment.)
+    if (f === "instructor") {
+      if (String(inp.value || "").trim()) _instructorClearedLocally.delete(o.id);
+      else _instructorClearedLocally.add(o.id);
+    }
     // Record which specific field is being edited so the realtime handler can
     // suppress echoes for just that field without blocking updates to other
     // fields on the same row from other browsers.
