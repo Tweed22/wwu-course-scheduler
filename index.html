@@ -4250,26 +4250,46 @@ function _baseRequest(r0) { const r = requestToRow(r0); if (r && r.id) _syncBase
    ART 110 ended up logging 'Instructor changed from (blank) to "LISA"' while the
    instructor column read NULL.
 
-   Guard: if an outgoing row has no instructor but the last known server state
-   did, and THIS browser never cleared it, restore the server's value — and heal
-   the local object too (row.data is that same object, and rowToOffering reads
-   instructor from the blob, so both must agree). Deliberate clears still work:
-   the inline editor records them in _instructorClearedLocally and they pass through. */
-const _instructorClearedLocally = new Set();
-function _guardInstructorBlank(row) {
+   Guard: if an outgoing row has blanked a protected field but the last known
+   server state had a value, and THIS browser never cleared it, restore the
+   server's value — and heal the local object too (row.data is that same object,
+   and rowToOffering reads these from the blob, so both must agree). Deliberate
+   clears still work: the inline editor records them in _clearedLocally.
+
+   Scope = the free-text fields a HUMAN types into a row (instructor, notes).
+   Derived fields (dean, programManager, deadline) are deliberately NOT protected:
+   they are recomputed from the course mapping / TERM_DATES, so freezing a stale
+   value would be its own bug. */
+const _PROTECTED_BLANK_FIELDS = [
+  { col: "instructor", local: "instructor" },
+  { col: "notes",      local: "notes" },
+];
+const _clearedLocally = new Map(); // offering id -> Set of fields the user really cleared here
+function _markClearedLocally(id, field, isEmpty) {
+  let s = _clearedLocally.get(id);
+  if (isEmpty) { if (!s) { s = new Set(); _clearedLocally.set(id, s); } s.add(field); }
+  else if (s) { s.delete(field); if (!s.size) _clearedLocally.delete(id); }
+}
+function _guardBlankedFields(row) {
   if (!row || !row.id) return row;
-  if (String(row.instructor || "").trim()) return row;   // we have a name — nothing to protect
-  if (_instructorClearedLocally.has(row.id)) return row; // the user really cleared it here
-  const baseRaw = _syncBaseOfferings.get(row.id);
-  if (!baseRaw) return row;                              // no known server value to protect
-  let baseInstr = "";
-  try { baseInstr = String((JSON.parse(baseRaw) || {}).instructor || "").trim(); } catch (e) { return row; }
-  if (!baseInstr) return row;
-  row.instructor = baseInstr;
-  const local = (state.offerings || []).find(o => o.id === row.id);
-  if (local && !String(local.instructor || "").trim()) {
-    local.instructor = baseInstr;                        // also fixes row.data (same object)
-    scheduleReRender();
+  const cleared = _clearedLocally.get(row.id);
+  let baseObj = null;
+  for (const f of _PROTECTED_BLANK_FIELDS) {
+    if (String(row[f.col] || "").trim()) continue;        // still has a value — nothing to protect
+    if (cleared && cleared.has(f.local)) continue;        // the user really cleared it here
+    if (baseObj === null) {
+      const raw = _syncBaseOfferings.get(row.id);
+      if (!raw) return row;                               // no known server state to protect
+      try { baseObj = JSON.parse(raw) || {}; } catch (e) { return row; }
+    }
+    const prev = String(baseObj[f.col] || "").trim();
+    if (!prev) continue;                                  // server had nothing either
+    row[f.col] = prev;
+    const local = (state.offerings || []).find(o => o.id === row.id);
+    if (local && !String(local[f.local] || "").trim()) {
+      local[f.local] = prev;                              // also fixes row.data (same object)
+      scheduleReRender();
+    }
   }
   return row;
 }
@@ -4318,11 +4338,11 @@ async function flushToSupabase() {
     // course_code make it in. If course_code can't be resolved, we keep the
     // offering locally but skip pushing it to the DB until it can.
     // Only push rows that differ from the last-known server value (change-scoped).
-    // _guardInstructorBlank runs BEFORE the change-scoped diff: if the only thing
-    // that "changed" was an instructor this browser accidentally blanked, the row
-    // now matches its baseline and is dropped from the push entirely.
+    // _guardBlankedFields runs BEFORE the change-scoped diff: if the only thing
+    // that "changed" was a field this browser accidentally blanked, the row now
+    // matches its baseline and is dropped from the push entirely.
     const oRows = allOfferings.map(offeringToRow).filter(r => r.id && r.course_code)
-      .map(_guardInstructorBlank)
+      .map(_guardBlankedFields)
       .filter(r => _syncBaseOfferings.get(r.id) !== _canonRow(r));
     const rRows = allRequests.map(requestToRow).filter(r => r.id)
       .filter(r => _syncBaseRequests.get(r.id) !== _canonRow(r));
@@ -4347,7 +4367,7 @@ async function flushToSupabase() {
       } else {
         oRows.forEach(r => _syncBaseOfferings.set(r.id, _canonRow(r)));
         // Deliberate clears have now reached the server — stop exempting them.
-        oRows.forEach(r => _instructorClearedLocally.delete(r.id));
+        oRows.forEach(r => _clearedLocally.delete(r.id));
       }
     }
     if (rRows.length) {
@@ -5304,6 +5324,10 @@ function syncOfferingsFromRotation(defaultYear, semesterFilter) {
     if (VALID_SLOTS.has(o.rotationSlot)) return true;  // keep valid slots
     if (o.submitted || o.registrarCompleted) return true; // always keep submitted
     if (o.isNewSection) return true;            // keep user-added extra sections
+    // Never silently discard a row someone has already worked: an assigned
+    // instructor (or a typed note) means this isn't a stale parser artefact.
+    if (String(o.instructor || "").trim()) return true;
+    if (String(o.notes || "").trim()) return true;
     markOfferingDeleted(o.id);                  // drop stale invalid-slot artefact
     return false;
   });
@@ -8474,13 +8498,12 @@ function bindTermEvents() {
     // OR finalized by them (DONE) — a row can reach DONE without ever being SENT.
     if (f === "instructor" && (o.submitted || o.registrarCompleted)) { inp.value = o.instructor || ""; return; }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
-    // Emptying the instructor HERE is a deliberate clear — exempt it from
-    // _guardInstructorBlank so it reaches the server. Typing a name again lifts
-    // the exemption. (Everything else that arrives at a blank instructor is an
-    // accident and must not wipe another user's assignment.)
-    if (f === "instructor") {
-      if (String(inp.value || "").trim()) _instructorClearedLocally.delete(o.id);
-      else _instructorClearedLocally.add(o.id);
+    // Emptying a protected field HERE is a deliberate clear — exempt it from
+    // _guardBlankedFields so it reaches the server. Typing a value again lifts
+    // the exemption. (Any OTHER route to a blank is an accident and must not
+    // wipe another user's work.)
+    if (f === "instructor" || f === "notes") {
+      _markClearedLocally(o.id, f, !String(inp.value || "").trim());
     }
     // Record which specific field is being edited so the realtime handler can
     // suppress echoes for just that field without blocking updates to other
@@ -9114,13 +9137,12 @@ function onGroundCoursesForTerm(semester) {
     .filter(c => String(c[key] || "").trim())
     .sort((a, b) => String(a.code || "").localeCompare(String(b.code || "")));
 }
-/* Label form for an on-ground catalog course. Mirrors the offering label shape
-   ("CODE — Title") so both branches parse identically, with the rotation cadence
-   appended so the advisor can see Every/Even/Odd at a glance. */
-function onGroundCourseLabel(c, semester) {
-  const cad = semester === "Fall" ? (c.ogFall || "") : semester === "Spring" ? (c.ogSpring || "") : "";
-  const base = `${c.code || ""} — ${c.title || ""}`.trim();
-  return cad ? `${base} (${cad})` : base;
+/* Label form for an on-ground catalog course — same shape as the offering label
+   ("CODE — Title") so both branches parse identically. The rotation cadence is
+   deliberately NOT shown: it decides whether the course appears for this
+   semester, but it isn't part of choosing which course you mean. */
+function onGroundCourseLabel(c) {
+  return `${c.code || ""} — ${c.title || ""}`.trim();
 }
 /* Resolve a typed on-ground label back to its catalog course by leading code. */
 function findOnGroundCourseByLabel(val, list) {
@@ -9255,7 +9277,7 @@ function renderChangeBlock(idx, ch) {
         });
         // On-Ground: source the picker from the rotation sheet instead of offerings.
         const ogList = isOnGround ? onGroundCoursesForTerm(curTerm) : [];
-        const ogLabels = ogList.map(c => onGroundCourseLabel(c, curTerm));
+        const ogLabels = ogList.map(c => onGroundCourseLabel(c));
 
         const offeringOpts = (isOnGround ? ogLabels : offeringLabels)
           .map(label => `<option value="${escapeHtml(label)}">`)
@@ -9271,7 +9293,7 @@ function renderChangeBlock(idx, ch) {
           const _n = document.getElementById("rfld_number").value || "";
           const _code = [_p, _n].filter(Boolean).join(" ").toUpperCase();
           selCourse = _code ? ogList.find(c => String(c.code || "").toUpperCase() === _code) || null : null;
-          curInputVal = selCourse ? onGroundCourseLabel(selCourse, curTerm) : "";
+          curInputVal = selCourse ? onGroundCourseLabel(selCourse) : "";
         }
         const _hasSel = !!selCourse;
         const _rawSel = isOnGround ? !!(document.getElementById("rfld_prefix").value) : !!curOfferingId;
