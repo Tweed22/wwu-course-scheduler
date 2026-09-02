@@ -4679,6 +4679,47 @@ function canEditAssignments() {
   return ["program_manager","dean","registrar","admin"].includes(currentRole());
 }
 
+// ---- Course-level scoping (who may edit THIS row's instructor) ------------
+// canEditAssignments() is a role gate only — it says nothing about WHICH
+// courses you may touch. Program managers and deans are additionally scoped to
+// the courses they're attached to: a PM to the courses the CSV mapping names
+// them on, a dean to every course whose resolved dean is them (an explicit CSV
+// dean where one exists, otherwise the dean of the school implied by the course
+// prefix). Registrars and admins stay unscoped.
+//
+// Display name is the only join key we have — user_app_access carries
+// display_name while course_program_managers stores plain text names — so
+// compare them loosely and tolerate "Last, First".
+function normPersonName(s) {
+  const t = String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!t) return "";
+  const m = t.match(/^([^,]+),\s*(.+)$/);
+  return m ? `${m[2]} ${m[1]}` : t;
+}
+function myDisplayName() {
+  return (window.AUTH && window.AUTH.user && window.AUTH.user.displayName) || "";
+}
+function isMyCourseAsPM(o) {
+  const me = normPersonName(myDisplayName());
+  return !!me && normPersonName(pmForOffering(o)) === me;
+}
+function isMyCourseAsDean(o) {
+  const me = normPersonName(myDisplayName());
+  return !!me && normPersonName(deanForOffering(o)) === me;
+}
+// Whether the current user may edit the instructor on this specific offering.
+// Role gate first, then course attachment. A dean who is also listed as the PM
+// on a course still qualifies.
+function canEditInstructorFor(o) {
+  if (!canEditAssignments()) return false;
+  if (isRegistrar()) return true;               // registrar + admin: any course
+  if (!o) return false;
+  const role = currentRole();
+  if (role === "dean")            return isMyCourseAsDean(o) || isMyCourseAsPM(o);
+  if (role === "program_manager") return isMyCourseAsPM(o);
+  return false;
+}
+
 /* ============================================================
    Effective term dates (Phase 4)
    ────────────────────────────────────────────────────────────
@@ -5774,8 +5815,16 @@ function renderTermTable(list) {
     // direct edits. registrarCompleted is checked independently of `submitted`: a row
     // can reach DONE without ever being SENT (e.g. a reinstate/change-request finalize
     // sets registrar_completed directly), and those rows were still editable.
-    const isLocked = o.submitted || o.registrarCompleted || o.canceled || (!!pendingInstr && !o.instructor);
-    const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
+    // ...and when the course isn't one this user is attached to. PMs are scoped
+    // to their mapped courses, deans to their school; registrars/admins are not.
+    const notMine = !canEditInstructorFor(o);
+    const isLocked = o.submitted || o.registrarCompleted || o.canceled || notMine || (!!pendingInstr && !o.instructor);
+    // Only explain the scoping lock when scoping is the ONLY reason the cell is
+    // locked — otherwise the SENT/DONE/Canceled state is the more useful message,
+    // and a second title= would collide with pendingInstrTitle below.
+    const scopeTitle = (notMine && !o.submitted && !o.registrarCompleted && !o.canceled && !(pendingInstr && !o.instructor))
+      ? ' title="You can only assign instructors for courses you are attached to"' : "";
+    const instructorAttrs = isLocked ? ' readonly tabindex="-1"' + scopeTitle : "";
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
     const pendingInstrTitle = (pendingInstr && !o.instructor)
       ? ` title="Pending (${pendingInstrResult.status})"` : "";
@@ -8443,6 +8492,9 @@ function bindTermEvents() {
     if (!row) return;
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o || o.submitted || o.canceled) return;
+    // Don't let Enter commit-and-submit a course this user isn't attached to,
+    // even if a stale row somehow escaped the readonly check above.
+    if (!canEditInstructorFor(o)) return;
     e.preventDefault();
     // Commit whatever is currently typed before any submit logic runs.
     o.instructor = inp.value;
@@ -8494,9 +8546,21 @@ function bindTermEvents() {
     const o = state.offerings.find(x => x.id === row.dataset.oid);
     if (!o) return;
     const f = inp.dataset.field;
-    // Guard: instructor is locked once a section has been submitted to the Registrar
-    // OR finalized by them (DONE) — a row can reach DONE without ever being SENT.
-    if (f === "instructor" && (o.submitted || o.registrarCompleted)) { inp.value = o.instructor || ""; return; }
+    // Guard: instructor is locked once a section has been submitted to the Registrar,
+    // finalized by them (DONE) — a row can reach DONE without ever being SENT — or
+    // canceled. The render path already marks these inputs readonly, but a row can
+    // reach a locked state without a re-render of its cell (a cancel arriving over
+    // realtime from another browser, or a Cancel Course request being finalized),
+    // which would otherwise leave a stale editable box behind.
+    // The same guard also enforces course scoping: a PM or dean editing a course
+    // they aren't attached to gets their keystrokes reverted.
+    if (f === "instructor" && (o.submitted || o.registrarCompleted || o.canceled || !canEditInstructorFor(o))) {
+      // Mirror the render layer: canceled rows display "Canceled", not the
+      // preserved historical instructor name.
+      inp.value = o.canceled ? "Canceled" : (o.instructor || "");
+      inp.readOnly = true;
+      return;
+    }
     o[f] = inp.type === "checkbox" ? inp.checked : inp.value;
     // Emptying a protected field HERE is a deliberate clear — exempt it from
     // _guardBlankedFields so it reaches the server. Typing a value again lifts
