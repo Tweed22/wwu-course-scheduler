@@ -699,7 +699,8 @@
   .term-table th[data-tsort="code"]                  { width: 140px; }
   .term-table td.code                                { white-space: nowrap; overflow: hidden; }
   .term-table th[data-tsort="instructor"]            { width: 250px; padding-left: 18px; }
-  .term-table td:has(input[data-field="instructor"]) { padding-left: 18px; white-space: nowrap; overflow: hidden; }
+  .term-table td:has(input[data-field="instructor"]),
+  .term-table td.instr-cell                          { padding-left: 18px; white-space: nowrap; overflow: hidden; }
   .term-table th.no-sort:nth-child(7)                { width: 250px; padding-left: 18px; }
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
@@ -1094,6 +1095,21 @@
     cursor: not-allowed;
     border-color: transparent;
   }
+  /* Instructor rendered as plain text — no input at all — on courses the
+     current user isn't attached to (see canEditInstructorFor). Padding matches
+     .term-table input so the column stays aligned across scoped/unscoped rows. */
+  .term-table .instr-plain {
+    display: block;
+    padding: 4px 6px;
+    /* .term-table input carries a 1px transparent border; match it or the text
+       in this column sits 1px left of every editable row. */
+    border: 1px solid transparent;
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .term-table .instr-plain.is-empty { color: var(--border-strong); }
   .term-table input.pending-instr {
     font-style: italic;
     color: var(--text-muted);
@@ -5818,16 +5834,19 @@ function renderTermTable(list) {
     // ...and when the course isn't one this user is attached to. PMs are scoped
     // to their mapped courses, deans to their school; registrars/admins are not.
     const notMine = !canEditInstructorFor(o);
-    const isLocked = o.submitted || o.registrarCompleted || o.canceled || notMine || (!!pendingInstr && !o.instructor);
-    // Only explain the scoping lock when scoping is the ONLY reason the cell is
-    // locked — otherwise the SENT/DONE/Canceled state is the more useful message,
-    // and a second title= would collide with pendingInstrTitle below.
-    const scopeTitle = (notMine && !o.submitted && !o.registrarCompleted && !o.canceled && !(pendingInstr && !o.instructor))
-      ? ' title="You can only assign instructors for courses you are attached to"' : "";
-    const instructorAttrs = isLocked ? ' readonly tabindex="-1"' + scopeTitle : "";
+    const isLocked = o.submitted || o.registrarCompleted || o.canceled || (!!pendingInstr && !o.instructor);
+    const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
     const pendingInstrTitle = (pendingInstr && !o.instructor)
       ? ` title="Pending (${pendingInstrResult.status})"` : "";
+    // Courses this user isn't attached to render the instructor as plain text
+    // rather than a readonly input — there's then nothing to click into or
+    // focus, which reads more clearly than a box that silently ignores typing.
+    // The value still shows: seeing who teaches another program's section is
+    // the point of the shared table; changing it is not.
+    const instructorCell = notMine
+      ? `<td class="instr-cell"><span class="instr-plain${instructorValue ? "" : " is-empty"}" title="You can only assign instructors for courses you are attached to">${escapeHtml(instructorValue || "—")}</span></td>`
+      : `<td class="instr-cell"><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}${pendingInstrTitle}${pendingInstr && !o.instructor ? ' class="pending-instr"' : ''}></td>`;
     // Action button: single dynamic button per Tony's spec (May 2026).
     //   • Canceled section: Re-instate
     //   • Submitted section: Request Change
@@ -5892,6 +5911,11 @@ function renderTermTable(list) {
     } else {
       actionBtn = `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
+    // Courses this user isn't attached to get no row actions at all. Every
+    // button above (Submit, Cancel, Request Change, Recall, Re-instate) drives
+    // the state of the section itself, and a PM or dean shouldn't be steering
+    // another program's course. Registrars and admins are never notMine.
+    if (notMine) actionBtn = "";
     // Badge: DONE (purple) once registrar completes, SENT (green) while in queue.
     const submittedBadge = o.registrarCompleted
       ? `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`
@@ -5910,7 +5934,11 @@ function renderTermTable(list) {
     // so the only inline action is the "+" on the first section.
     const sectionIdx = parseInt(sectionNum, 10) || 1;
     let sectionActionBtn = "";
-    if (o.isNewSection && !o.submitted && !o.canceled && (isOwner(o) || isRegistrar())) {
+    if (notMine) {
+      // No add/remove-section control on another program's course either —
+      // adding a section is as much an edit as assigning its instructor.
+      sectionActionBtn = "";
+    } else if (o.isNewSection && !o.submitted && !o.canceled && (isOwner(o) || isRegistrar())) {
       // Unsubmitted new sections show "−" so their creator (or a registrar/admin)
       // can remove them. Non-owners fall through to the normal "+" add control.
       sectionActionBtn = `<button type="button" class="add-section-btn remove-section-btn" data-tact="removesection" data-oid="${escapeHtml(o.id)}" title="Remove this added section">−</button>`;
@@ -5934,7 +5962,7 @@ function renderTermTable(list) {
         <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
-        <td><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}${pendingInstrTitle}${pendingInstr && !o.instructor ? ' class="pending-instr"' : ''}></td>
+        ${instructorCell}
         <td class="actions">${actionBtn}</td>
         <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
       </tr>
@@ -8638,6 +8666,15 @@ function bindTermEvents() {
     const btn = e.target.closest("button[data-tact]");
     if (!btn) return;
     const act = btn.dataset.tact;
+    // Backstop for the render-time suppression above: a stale row (one left in
+    // the DOM from before a PM mapping changed, say) must not be able to drive
+    // a section on a course this user isn't attached to.
+    const _btnRow = btn.closest("tr[data-oid]");
+    const _btnOff = _btnRow && state.offerings.find(x => x.id === _btnRow.dataset.oid);
+    if (_btnOff && !canEditInstructorFor(_btnOff)) {
+      toast("You can only act on courses you are attached to", "error");
+      return;
+    }
     if (act === "request") {
       const cid = btn.dataset.cid;
       if (cid) openRequestForCourse(cid, btn.dataset.oid || null);
