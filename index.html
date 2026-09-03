@@ -2141,12 +2141,12 @@
     <table class="term-table">
       <thead>
         <tr>
+          <th data-rgsort="submitter" style="width:140px;">Submitter</th>
           <th data-rgsort="code" style="width:140px;">Course</th>
           <th data-rgsort="term" style="width:120px;">Term</th>
           <th data-rgsort="changeType" style="width:140px;">Type of Change</th>
           <th data-rgsort="explanation">Explanation</th>
           <th class="no-sort" style="width:200px;">Notes</th>
-          <th data-rgsort="submitter" style="width:140px;">Submitter</th>
           <th data-rgsort="approver" style="width:140px;">Approver</th>
           <th data-rgsort="submittedAt" style="width:130px;">Date Received</th>
           <th class="no-sort" style="width:140px;">Action</th>
@@ -7248,6 +7248,24 @@ function regNoteFor(item) {
   return (target && target.registrarNotes) || "";
 }
 
+/* Who may undo a queue item: the person who submitted it, or an admin.
+   Deliberately NOT registrars — undo returns a section to Term Assignments as
+   unsubmitted with no instructor, which is the submitter's call to make, not
+   the processor's. A registrar who submitted something themselves still
+   qualifies, as the submitter. Falls back to a name match because submittedBy /
+   submitter are stored as display-name text; the uid checks are authoritative
+   where a uid was stamped. */
+function canUndoRegistrarItem(item) {
+  if (isAdmin()) return true;
+  const me = normPersonName(myDisplayName());
+  if (item.kind === "section") {
+    const o = item.offering;
+    return isMySubmission(o) || (!!me && normPersonName(o.submittedBy) === me);
+  }
+  const r = item.request;
+  return isOwner(r) || (!!me && normPersonName(r.submitter) === me);
+}
+
 function regItemSortFields(item) {
   const term = regTermLabel(item);
   if (item.kind === "section") {
@@ -7373,10 +7391,11 @@ function renderRegTable(list) {
       ? `<td><input type="text" data-rnote="${escapeHtml(item.id)}" value="${escapeHtml(val)}" placeholder="Notes…"></td>`
       : `<td style="color:var(--text-muted);">${escapeHtml(val || "—")}</td>`;
   };
-  const undoBtn = (regId) =>
-    `<button type="button" data-ract="undo" data-regid="${escapeHtml(regId)}"
+  const undoBtn = (item) => canUndoRegistrarItem(item)
+    ? `<button type="button" data-ract="undo" data-regid="${escapeHtml(item.id)}"
       style="margin-left:6px;padding:2px 7px;font-size:11px;border:1px solid var(--border-strong);background:transparent;color:var(--text-muted);border-radius:4px;cursor:pointer;"
-      title="Undo — return this item to its previous state">↩ Undo</button>`;
+      title="Undo — return this item to its previous state">↩ Undo</button>`
+    : "";
 
   tbody.innerHTML = list.map(item => {
     if (item.kind === "section") {
@@ -7389,16 +7408,16 @@ function renderRegTable(list) {
       const submitter = o.submittedBy || "—";
       const approver = dean;
       const actionCell = canComplete
-        ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark as processed by Registrar">Completed</button>${undoBtn(item.id)}`
-        : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
+        ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark as processed by Registrar">Completed</button>${undoBtn(item)}`
+        : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item)}`;
       return `
         <tr data-regid="${escapeHtml(item.id)}">
+          <td>${escapeHtml(submitter)}</td>
           <td class="code">${escapeHtml(c.code||"")}</td>
           <td>${escapeHtml(regTermLabel(item))}</td>
           <td>${escapeHtml(changeType)}</td>
           <td>${escapeHtml(explanation)}</td>
           ${noteCell(item)}
-          <td>${escapeHtml(submitter)}</td>
           <td>${escapeHtml(approver)}</td>
           <td>${received}</td>
           <td style="white-space:nowrap;">${actionCell}</td>
@@ -7410,16 +7429,16 @@ function renderRegTable(list) {
     const received = r.sentDate ? escapeHtml(fmtDateShort(r.sentDate)) : (r.date ? escapeHtml(fmtDateShort(r.date)) : "—");
     const approver = r.approvedBy || "—";
     const actionCell = canComplete
-      ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark request as Finalized">Completed</button>${undoBtn(item.id)}`
-      : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
+      ? `<button type="button" class="btn-submit" data-ract="complete" data-regid="${escapeHtml(item.id)}" title="Mark request as Finalized">Completed</button>${undoBtn(item)}`
+      : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item)}`;
     return `
       <tr data-regid="${escapeHtml(item.id)}">
+        <td>${escapeHtml(r.submitter||"—")}</td>
         <td class="code">${escapeHtml(code)}</td>
         <td>${escapeHtml(regTermLabel(item))}</td>
         <td>${escapeHtml(r.changeType||"Change")}</td>
         <td>${escapeHtml(r.explanation || "—")}</td>
         ${noteCell(item)}
-        <td>${escapeHtml(r.submitter||"—")}</td>
         <td>${escapeHtml(approver)}</td>
         <td>${received}</td>
         <td style="white-space:nowrap;">${actionCell}</td>
@@ -7806,6 +7825,13 @@ function bindRegistrarEvents() {
       // handles accidental completions.
       markRegistrarItemComplete(id);
     } else if (btn.dataset.ract === "undo") {
+      // Backstop for the render-time gate: only the submitter (or an admin)
+      // may undo, so a stale row can't drive someone else's submission back.
+      const item = buildRegistrarQueue().find(it => it.id === id);
+      if (item && !canUndoRegistrarItem(item)) {
+        toast("Only the person who submitted this (or an admin) can undo it.", "error");
+        return;
+      }
       undoRegistrarItem(id);
     }
   });
