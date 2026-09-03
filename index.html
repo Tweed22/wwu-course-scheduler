@@ -3654,16 +3654,20 @@ const state = {
 // into any subterm — the user can add those manually if/when an instance is offered.
 // Internal subterm ids stay as "1A"/"2B"/"3C" so older saved data keeps working;
 // the user-facing label is just the letter (Fall A, Fall B, Fall C, etc.).
+// A course that spans several subterms belongs to the FIRST one it touches, and
+// appears in that tab only: 15W/16W span A-B-C and show in A, F spans A-B and
+// shows in A, L spans B-C and shows in B. Each slot therefore has exactly one
+// home tab, so no offering is listed twice across the subterm tabs.
 const SUBTERMS = [
   { semester: "Fall",   subterm: "1A", label: "Fall A",   includes: ["A", "F", "15W", "16W"] },
-  { semester: "Fall",   subterm: "2B", label: "Fall B",   includes: ["B", "F", "L"] },
-  { semester: "Fall",   subterm: "3C", label: "Fall C",   includes: ["C", "L"] },
+  { semester: "Fall",   subterm: "2B", label: "Fall B",   includes: ["B", "L"] },
+  { semester: "Fall",   subterm: "3C", label: "Fall C",   includes: ["C"] },
   { semester: "Spring", subterm: "1A", label: "Spring A", includes: ["A", "F", "15W", "16W"] },
-  { semester: "Spring", subterm: "2B", label: "Spring B", includes: ["B", "F", "L"] },
-  { semester: "Spring", subterm: "3C", label: "Spring C", includes: ["C", "L"] },
+  { semester: "Spring", subterm: "2B", label: "Spring B", includes: ["B", "L"] },
+  { semester: "Spring", subterm: "3C", label: "Spring C", includes: ["C"] },
   { semester: "Summer", subterm: "1A", label: "Summer A", includes: ["A", "F", "15W", "16W"] },
-  { semester: "Summer", subterm: "2B", label: "Summer B", includes: ["B", "F", "L"] },
-  { semester: "Summer", subterm: "3C", label: "Summer C", includes: ["C", "L"] },
+  { semester: "Summer", subterm: "2B", label: "Summer B", includes: ["B", "L"] },
+  { semester: "Summer", subterm: "3C", label: "Summer C", includes: ["C"] },
 ];
 
 /* ======== Academic-year start/end dates ========
@@ -5313,6 +5317,13 @@ const SLOT_LENGTH = { A: "5 Weeks", B: "5 Weeks", C: "5 Weeks", F: "10 Weeks", L
 // Each raw slot belongs to one or more subterm grids within its semester.
 // "AN" (As Needed) doesn't auto-populate any subterm — it only gets an offering when
 // the user explicitly schedules it. 15W/16W are anchored to the start of the semester (1A).
+/* The single subterm tab a slot is listed under — the first one it spans.
+   Returns "" only for a slot with no home tab at all (currently just "AN",
+   As Needed, which is never auto-scheduled into a subterm). */
+function homeSubtermForSlot(slot) {
+  return (subtermsForSlot(slot) || [])[0] || "";
+}
+
 function subtermsForSlot(slot) {
   if (slot === "A")  return ["1A"];
   if (slot === "B")  return ["2B"];
@@ -5581,14 +5592,17 @@ function offeringsForSubterm(semester, subterm) {
   return state.offerings.filter(o => {
     if (o.semester !== semester) return false;
     if (o.year !== state.termFilter.year) return false;
-    // Normally a row belongs to this tab because its rotation slot is native to
-    // it. An explicitly placed section also belongs here when it was created
-    // FOR this subterm, even if its slot says otherwise — that's how sections
-    // added before the slot fix (5-week adds all landed in "A") are stored, and
-    // it keeps a deliberate placement visible instead of silently dropping it.
-    // For rotation-generated rows this second test is redundant: their subterm
-    // is always the primary subterm of their slot, which is always in includes.
-    if (!def.includes.includes(o.rotationSlot) && o.subterm !== subterm) return false;
+    if (!def.includes.includes(o.rotationSlot)) {
+      // Not native to this tab. Every real slot has exactly one home tab and
+      // the row is already listed there, so showing it here too would list the
+      // same section twice — a multi-subterm course belongs to the first
+      // subterm it touches, and only that one.
+      // The exception is a slot with no home tab at all ("AN", As Needed):
+      // fall back to wherever it was explicitly placed, so a hand-added
+      // section isn't dropped from every tab.
+      if (homeSubtermForSlot(o.rotationSlot)) return false;
+      if (o.subterm !== subterm) return false;
+    }
     // Exclude NUR courses from term assignments display.
     const c = state.courses.find(x => x.id === o.courseId);
     if (isNurCode((c && c.code) || o.courseCode || "")) return false;
@@ -5614,11 +5628,13 @@ function repairSubtermSlotMismatch() {
     if (!def) continue;
     if (def.includes.includes(o.rotationSlot)) continue;   // already native to its subterm
     const slot = rotationSlotForLength(o.length, o.subterm);
-    // Only rewrite when the recomputed slot genuinely belongs to this subterm.
-    // A 15W/16W section parked in B or C has no valid slot there, and an
-    // unknown length resolves to "AN" — leave both alone and let the subterm
-    // fallback keep them visible rather than inventing a slot.
-    if (!def.includes.includes(slot) || slot === o.rotationSlot) continue;
+    if (slot === o.rotationSlot) continue;
+    // The recomputed slot need NOT be native to o.subterm — a 10-week section
+    // recorded against C is an L (which spans B-C and lists under B), and
+    // correcting the slot is still the right move even though it lands the row
+    // in a different tab. What we must not do is let an unrecognised length,
+    // which resolves to "AN", demote a real section to As Needed.
+    if (slot === "AN" && o.length !== "As Needed") continue;
     o.rotationSlot = slot;
     fixed++;
     if (persist) { o.lastModified = new Date().toISOString(); markLocallyTouched(o.id); }
