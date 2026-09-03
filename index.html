@@ -7585,6 +7585,13 @@ function undoRegistrarItem(regId) {
     o.submittedAt    = "";
     o.submittedBy    = "";
     o.instructor     = "";
+    // Same two steps as the Recall Submission path (see the undosubmit
+    // handler): drop any pending instructor assignment for this offering, or
+    // the render refills the cleared cell from it and re-locks the row; and
+    // flag the blank as a deliberate clear so _guardBlankedFields lets it
+    // reach the server instead of treating it as an accidental wipe.
+    withdrawPendingInstructorFor(o);
+    _markClearedLocally(o.id, "instructor", true);
     markLocallyTouched(o.id);
     setDirty(true);
     renderRegistrar();
