@@ -2141,10 +2141,11 @@
     <table class="term-table">
       <thead>
         <tr>
-          <th data-rgsort="source" style="width:110px;">Source</th>
           <th data-rgsort="code" style="width:140px;">Course</th>
+          <th data-rgsort="term" style="width:120px;">Term</th>
           <th data-rgsort="changeType" style="width:140px;">Type of Change</th>
           <th data-rgsort="explanation">Explanation</th>
+          <th class="no-sort" style="width:200px;">Notes</th>
           <th data-rgsort="submitter" style="width:140px;">Submitter</th>
           <th data-rgsort="approver" style="width:140px;">Approver</th>
           <th data-rgsort="submittedAt" style="width:130px;">Date Received</th>
@@ -4463,6 +4464,7 @@ const _OFFERING_MERGE_FIELDS = [
   'registrarCompleted', 'registrarCompletedAt', 'registrarCompletedBy',
   'canceled', 'canceledAt', 'canceledBy', 'submittedByUid',
   'pendingReinstate', 'reinstateRequestId',
+  'registrarNotes',
 ];
 function handleRealtimeOffering(payload) {
   const event = payload.eventType || payload.type;
@@ -7226,15 +7228,35 @@ function applyRegFilters(list) {
     return true;
   });
 }
+/* Term label for a queue row — "Fall A" where the term/subterm pair is a known
+   SUBTERMS entry, otherwise whatever the item carries ("Fall Semester" and the
+   other free-text subterms the change-request form allows). */
+function regTermLabel(item) {
+  const [term, sub] = item.kind === "section"
+    ? [item.offering.semester, item.offering.subterm]
+    : [item.request.term, item.request.subterm];
+  const def = SUBTERMS.find(s => s.semester === term && s.subterm === sub);
+  if (def) return def.label;
+  return `${term || ""} ${sub || ""}`.trim() || "—";
+}
+
+/* Registrar's own note on a queue row. Stored on the offering or the request,
+   both of which persist their whole object in the `data` blob, so no schema
+   change is needed. */
+function regNoteFor(item) {
+  const target = item.kind === "section" ? item.offering : item.request;
+  return (target && target.registrarNotes) || "";
+}
+
 function regItemSortFields(item) {
+  const term = regTermLabel(item);
   if (item.kind === "section") {
     const o = item.offering;
     const c = state.courses.find(x => x.id === o.courseId) || {};
-    const prefix = (c.code||"").split(" ")[0];
     const dean = deanForOffering(o) || "";
     return {
-      source: "1-section",
       code: c.code || "",
+      term,
       changeType: "Assign Instructor",
       explanation: c.title || "",
       submitter: o.submittedBy || "",
@@ -7244,8 +7266,8 @@ function regItemSortFields(item) {
   }
   const r = item.request;
   return {
-    source: "2-request",
     code: `${r.prefix||""} ${r.number||""}`.trim(),
+    term,
     changeType: r.changeType || "",
     explanation: r.explanation || "",
     submitter: r.submitter || "",
@@ -7338,11 +7360,19 @@ function renderRegTable(list) {
   const tbody = document.getElementById("rgtbody");
   if (!tbody) return;
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">Registrar queue is clear for this subterm.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:30px;">Registrar queue is clear for this subterm.</td></tr>`;
     return;
   }
   // Only admins and registrars can mark items completed; PMs and deans see "In Progress".
   const canComplete = isAdmin() || currentRole() === "registrar";
+  // The Notes column is the registrar's own scratch space: editable for them,
+  // read-only for everyone else so a PM or dean can see it without changing it.
+  const noteCell = (item) => {
+    const val = regNoteFor(item);
+    return canComplete
+      ? `<td><input type="text" data-rnote="${escapeHtml(item.id)}" value="${escapeHtml(val)}" placeholder="Notes…"></td>`
+      : `<td style="color:var(--text-muted);">${escapeHtml(val || "—")}</td>`;
+  };
   const undoBtn = (regId) =>
     `<button type="button" data-ract="undo" data-regid="${escapeHtml(regId)}"
       style="margin-left:6px;padding:2px 7px;font-size:11px;border:1px solid var(--border-strong);background:transparent;color:var(--text-muted);border-radius:4px;cursor:pointer;"
@@ -7353,7 +7383,6 @@ function renderRegTable(list) {
       const o = item.offering;
       const c = state.courses.find(x => x.id === o.courseId) || {};
       const dean = deanForOffering(o) || "—";
-      const sectionNum = sectionNumberFor(o);
       const received = o.submittedAt ? escapeHtml(fmtDateShort(o.submittedAt)) : "—";
       const changeType = "Assign Instructor";
       const explanation = o.instructor ? `Assign to ${o.instructor}` : (c.title || "");
@@ -7364,10 +7393,11 @@ function renderRegTable(list) {
         : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
       return `
         <tr data-regid="${escapeHtml(item.id)}">
-          <td><span class="status-pill st-sent" title="Section submitted to Registrar">Section</span></td>
-          <td class="code">${escapeHtml(c.code||"")} <span class="section-num">${sectionNum}</span></td>
+          <td class="code">${escapeHtml(c.code||"")}</td>
+          <td>${escapeHtml(regTermLabel(item))}</td>
           <td>${escapeHtml(changeType)}</td>
           <td>${escapeHtml(explanation)}</td>
+          ${noteCell(item)}
           <td>${escapeHtml(submitter)}</td>
           <td>${escapeHtml(approver)}</td>
           <td>${received}</td>
@@ -7384,10 +7414,11 @@ function renderRegTable(list) {
       : `<span style="color:var(--text-muted);font-size:12.5px;font-style:italic;">In Progress</span>${undoBtn(item.id)}`;
     return `
       <tr data-regid="${escapeHtml(item.id)}">
-        <td><span class="status-pill st-pending" style="background:#7a4ea0;color:white;" title="Change request sent to Registrar">Request</span></td>
         <td class="code">${escapeHtml(code)}</td>
+        <td>${escapeHtml(regTermLabel(item))}</td>
         <td>${escapeHtml(r.changeType||"Change")}</td>
         <td>${escapeHtml(r.explanation || "—")}</td>
+        ${noteCell(item)}
         <td>${escapeHtml(r.submitter||"—")}</td>
         <td>${escapeHtml(approver)}</td>
         <td>${received}</td>
@@ -7777,6 +7808,22 @@ function bindRegistrarEvents() {
     } else if (btn.dataset.ract === "undo") {
       undoRegistrarItem(id);
     }
+  });
+  // Registrar Notes — write straight into the offering/request and let the
+  // normal flush persist it via the `data` blob. Deliberately no re-render on
+  // input: rebuilding the table would pull focus out of the field mid-word.
+  $("rgtbody").addEventListener("input", (e) => {
+    const inp = e.target.closest("input[data-rnote]");
+    if (!inp) return;
+    const [kind, id] = String(inp.dataset.rnote).split(":");
+    const target = kind === "sec"
+      ? state.offerings.find(x => x.id === id)
+      : state.requests.find(x => x.id === id);
+    if (!target) return;
+    target.registrarNotes = inp.value;
+    target.lastModified = new Date().toISOString();
+    markLocallyTouched(target.id);
+    setDirty(true);
   });
   document.querySelectorAll('#viewRegistrar th[data-rgsort]').forEach(th => {
     th.addEventListener("click", () => {
