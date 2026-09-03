@@ -4169,6 +4169,8 @@ async function loadFromSupabase() {
     state.offerings = rows.map(rowToOffering).filter(Boolean);
     state.requests  = (rRes.data || []).map(rowToRequest).filter(Boolean);
     snapshotAllBaselines(); // record the server state so flushes push only real changes
+    // After the baselines, so a genuine repair reads as a change worth flushing.
+    repairSubtermSlotMismatch();
     // Phase 4 lookups
     state.pmByCourse   = {};
     state.deanByCourse = {};
@@ -5108,6 +5110,7 @@ function loadFromText(text, name) {
     state.offerings = Array.isArray(d.offerings) ? d.offerings : [];
     state.termDeadlines = (d.termDeadlines && typeof d.termDeadlines === "object") ? d.termDeadlines : {};
     if (!state.offerings.length) syncOfferingsFromRotation();
+    repairSubtermSlotMismatch();   // imported files can carry the same mismatch
     renderRequests();
     renderTerms();
   } catch (e) { alert("Parse failed: " + e.message); }
@@ -5578,12 +5581,50 @@ function offeringsForSubterm(semester, subterm) {
   return state.offerings.filter(o => {
     if (o.semester !== semester) return false;
     if (o.year !== state.termFilter.year) return false;
-    if (!def.includes.includes(o.rotationSlot)) return false;
+    // Normally a row belongs to this tab because its rotation slot is native to
+    // it. An explicitly placed section also belongs here when it was created
+    // FOR this subterm, even if its slot says otherwise — that's how sections
+    // added before the slot fix (5-week adds all landed in "A") are stored, and
+    // it keeps a deliberate placement visible instead of silently dropping it.
+    // For rotation-generated rows this second test is redundant: their subterm
+    // is always the primary subterm of their slot, which is always in includes.
+    if (!def.includes.includes(o.rotationSlot) && o.subterm !== subterm) return false;
     // Exclude NUR courses from term assignments display.
     const c = state.courses.find(x => x.id === o.courseId);
     if (isNurCode((c && c.code) || o.courseCode || "")) return false;
     return true;
   });
+}
+
+/* Repair for sections saved before rotationSlotForLength took the subterm into
+   account. Those landed with a slot that doesn't belong to the subterm they
+   were created for (5-week always "A", 10-week always "F"), so they surface
+   only via the o.subterm fallback in offeringsForSubterm and their Length
+   column reads against the wrong slot — which also flows into the CSV export.
+
+   Realign the slot wherever that can be done unambiguously. Runs in memory for
+   everyone so the display and export are right immediately; only registrars
+   and admins write it back, so a room full of PMs doesn't retry updates that
+   RLS will refuse on rows they don't own. */
+function repairSubtermSlotMismatch() {
+  const persist = isRegistrar();
+  let fixed = 0;
+  for (const o of state.offerings) {
+    const def = SUBTERMS.find(s => s.semester === o.semester && s.subterm === o.subterm);
+    if (!def) continue;
+    if (def.includes.includes(o.rotationSlot)) continue;   // already native to its subterm
+    const slot = rotationSlotForLength(o.length, o.subterm);
+    // Only rewrite when the recomputed slot genuinely belongs to this subterm.
+    // A 15W/16W section parked in B or C has no valid slot there, and an
+    // unknown length resolves to "AN" — leave both alone and let the subterm
+    // fallback keep them visible rather than inventing a slot.
+    if (!def.includes.includes(slot) || slot === o.rotationSlot) continue;
+    o.rotationSlot = slot;
+    fixed++;
+    if (persist) { o.lastModified = new Date().toISOString(); markLocallyTouched(o.id); }
+  }
+  if (fixed && persist) setDirty(true);
+  if (fixed) console.info(`Realigned rotationSlot on ${fixed} section(s) to match their subterm${persist ? " (saving)" : " (display only)"}`);
 }
 
 function deadlineKeyFor(o) {
@@ -8290,12 +8331,18 @@ async function saveTermDateOverrides() {
 }
 
 /* ======== Add Section modal ======== */
-function rotationSlotForLength(length) {
-  return length === "5 Weeks"  ? "A"
-       : length === "10 Weeks" ? "F"
-       : length === "15 Weeks" ? "15W"
-       : length === "16 Weeks" ? "16W"
-       : "AN";
+/* Map a chosen length to its rotation slot WITHIN a given subterm.
+   The subterm grid filters on rotationSlot (SUBTERMS[].includes), not on
+   o.subterm, so the slot has to depend on WHERE the section is being placed
+   and not just how long it is: a 5-week section added to Fall C is a "C", not
+   an "A". Deriving it from length alone put every added 5-week section in the
+   A slot, which made it invisible in the B and C tabs. */
+function rotationSlotForLength(length, subterm) {
+  if (length === "5 Weeks")  return primarySlotForSubterm(subterm);  // 1A→A, 2B→B, 3C→C
+  if (length === "10 Weeks") return subterm === "1A" ? "F" : "L";    // F spans 1A+2B, L spans 2B+3C
+  if (length === "15 Weeks") return "15W";                           // full semester, anchored to 1A
+  if (length === "16 Weeks") return "16W";
+  return "AN";
 }
 
 function refreshSectionCourseList() {
@@ -8414,7 +8461,7 @@ function saveSectionFromModal() {
     subterm,
     year,
     length:         length,
-    rotationSlot:   rotationSlotForLength(length),
+    rotationSlot:   rotationSlotForLength(length, subterm),
     dean:           deanForCourse(c),
     programManager: document.getElementById("sfld_pm").value.trim(),
     instructor:     document.getElementById("sfld_instructor").value.trim(),
