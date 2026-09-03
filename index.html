@@ -1358,7 +1358,10 @@
      because var(--danger) is theme-aware. */
   tr.canceled td,
   tr.canceled td.code,
-  tr.canceled td input { color: var(--danger) !important; }
+  tr.canceled td input,
+  /* .instr-plain sets its own muted colour, which would otherwise beat the
+     inherited red on a canceled row's "Canceled" text. */
+  tr.canceled td .instr-plain { color: var(--danger) !important; }
   tr.canceled td input { border-color: var(--danger); }
   tr.canceled .section-num { color: var(--danger); }
 
@@ -5907,8 +5910,15 @@ function renderTermTable(list) {
     // focus, which reads more clearly than a box that silently ignores typing.
     // The value still shows: seeing who teaches another program's section is
     // the point of the shared table; changing it is not.
-    const instructorCell = notMine
-      ? `<td class="instr-cell"><span class="instr-plain${instructorValue ? "" : " is-empty"}" title="You can only assign instructors for courses you are attached to">${escapeHtml(instructorValue || "—")}</span></td>`
+    // A canceled section shows the word "Canceled" and can never be assigned an
+    // instructor again without being reinstated, so it gets the same plain-text
+    // treatment: no box to click into at all.
+    const plainInstructor = o.canceled || notMine;
+    const plainInstructorTitle = o.canceled
+      ? "This section is canceled — reinstate it to assign an instructor"
+      : "You can only assign instructors for courses you are attached to";
+    const instructorCell = plainInstructor
+      ? `<td class="instr-cell"><span class="instr-plain${instructorValue ? "" : " is-empty"}" title="${escapeHtml(plainInstructorTitle)}">${escapeHtml(instructorValue || "—")}</span></td>`
       : `<td class="instr-cell"><input type="text" data-field="instructor" value="${escapeHtml(instructorValue)}" placeholder="Instructor…"${instructorAttrs}${pendingInstrTitle}${pendingInstr && !o.instructor ? ' class="pending-instr"' : ''}></td>`;
     // Action button: single dynamic button per Tony's spec (May 2026).
     //   • Canceled section: Re-instate
