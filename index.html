@@ -4678,8 +4678,14 @@ function myUid() { return (window.AUTH && window.AUTH.user && window.AUTH.user.i
 function isOwner(row) { const u = myUid(); return !!(u && row && row.createdBy && row.createdBy === u); }
 function isMySubmission(o) { const u = myUid(); return !!(u && o && o.submittedByUid && o.submittedByUid === u); }
 // Who may recall an offering's submission: its creator, whoever submitted it,
-// or a registrar/admin.
-function canRecallOffering(o) { return isOwner(o) || isMySubmission(o) || isRegistrar(); }
+// a registrar/admin, or whoever is responsible for the course's assignments.
+// That last case is the program manager (or dean) attached to the course: they
+// submit the assignment, so they get to pull it back while it is still sitting
+// in the queue. Only applies while the row is SENT — the render checks
+// registrarCompleted first, so a DONE row still offers Request Change instead.
+function canRecallOffering(o) {
+  return isOwner(o) || isMySubmission(o) || isRegistrar() || canEditInstructorFor(o);
+}
 // Who may withdraw a change request via its linked offering (undocancel /
 // undoreinstate delete the linked request): the request's creator or an admin.
 function ownsLinkedRequest(reqId) {
@@ -5968,11 +5974,17 @@ function renderTermTable(list) {
     } else {
       actionBtn = `<button type="button" class="btn-cancel-course" data-tact="cancel" data-oid="${escapeHtml(o.id)}" title="Cancel this course — locks the section and sends a cancellation request">Cancel Course</button>`;
     }
-    // Courses this user isn't attached to get no row actions at all. Every
-    // button above (Submit, Cancel, Request Change, Recall, Re-instate) drives
-    // the state of the section itself, and a PM or dean shouldn't be steering
-    // another program's course. Registrars and admins are never notMine.
-    if (notMine) actionBtn = "";
+    // Courses this user isn't attached to get no row actions — every button
+    // above (Submit, Cancel, Request Change, Re-instate) drives the state of
+    // the section, and a PM or dean shouldn't be steering another program's
+    // course. Registrars and admins are never notMine.
+    // The one exception is recalling an in-flight submission of their own:
+    // that undoes their own action rather than steering someone else's course,
+    // and matters when a PM mapping changed after they submitted.
+    if (notMine) {
+      const keepRecall = o.submitted && !o.registrarCompleted && !o.canceled && canRecallOffering(o);
+      if (!keepRecall) actionBtn = "";
+    }
     // Badge: DONE (purple) once registrar completes, SENT (green) while in queue.
     const submittedBadge = o.registrarCompleted
       ? `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`
@@ -6307,6 +6319,7 @@ function submitNewSectionChange(o) {
       o.submitted   = true;
       o.submittedAt = new Date().toISOString();
       o.submittedBy = who;
+      o.submittedByUid = myUid();   // recall rights — matches submitSectionToRegistrar
       markLocallyTouched(o.id);
       setDirty(true);
       renderTerms();
@@ -6332,6 +6345,7 @@ function submitNewSectionChange(o) {
   o.submitted   = true;
   o.submittedAt = new Date().toISOString();
   o.submittedBy = who;
+  o.submittedByUid = myUid();     // recall rights — matches submitSectionToRegistrar
   markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
@@ -8732,9 +8746,14 @@ function bindTermEvents() {
     // Backstop for the render-time suppression above: a stale row (one left in
     // the DOM from before a PM mapping changed, say) must not be able to drive
     // a section on a course this user isn't attached to.
+    // Recalls are exempt: they undo the user's OWN submission and carry their
+    // own ownership checks (canRecallOffering / ownsLinkedRequest) below, so
+    // someone who submitted a section can still pull it back even if they were
+    // since detached from the course.
+    const _RECALL_ACTS = new Set(["undosubmit", "undocancel", "undoreinstate"]);
     const _btnRow = btn.closest("tr[data-oid]");
     const _btnOff = _btnRow && state.offerings.find(x => x.id === _btnRow.dataset.oid);
-    if (_btnOff && !canEditInstructorFor(_btnOff)) {
+    if (_btnOff && !_RECALL_ACTS.has(act) && !canEditInstructorFor(_btnOff)) {
       toast("You can only act on courses you are attached to", "error");
       return;
     }
