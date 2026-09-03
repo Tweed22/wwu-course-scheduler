@@ -7012,15 +7012,52 @@ function refreshTermDatalists() {
 // onto the offering; "Rejected"/"Draft" mean nothing was approved.
 const PENDING_INSTR_STATUSES = new Set(["Pending Approval", "Approved", "Sent to Registrar"]);
 
+/* Withdraw any still-pending instructor assignment bound to this offering.
+   Recalling a submission means the assignment is no longer in flight, so a
+   leftover Assign/Change Instructor block must not keep pendingInstructorFor-
+   Offering() returning a name — that would refill the cleared cell with the old
+   instructor AND re-lock it, leaving the row un-editable after a recall.
+   Only touches requests bound to THIS offering by id, so a separate request
+   someone else filed for another section is left alone. */
+function withdrawPendingInstructorFor(o) {
+  const who = state.userName || "(unknown)";
+  for (let i = state.requests.length - 1; i >= 0; i--) {
+    const r = state.requests[i];
+    if (r.archived) continue;
+    if (!PENDING_INSTR_STATUSES.has(r.status)) continue;
+    if (r.offeringId !== o.id) continue;
+    const before = requestChanges(r);
+    const kept   = before.filter(ch => ch.type !== "Assign Instructor" && ch.type !== "Change Instructor");
+    if (kept.length === before.length) continue;      // no instructor block to strip
+    if (!kept.length) {
+      // The request existed only to assign the instructor — withdraw it whole.
+      markRequestDeleted(r.id);
+      state.requests.splice(i, 1);
+      continue;
+    }
+    r.changes     = kept;
+    r.changeType  = kept[0].type;
+    r.explanation = composeExplanation(kept);
+    markLocallyTouched(r.id);
+    logRequestEvent(r, `Instructor assignment withdrawn by ${who} (submission recalled)`);
+  }
+}
+
 function pendingInstructorForOffering(o) {
   const c = (state.courses || []).find(x => x.id === o.courseId) || {};
   const parts = (c.code || "").split(/\s+/);
   for (const r of (state.requests || [])) {
     if (r.archived) continue;
     if (!PENDING_INSTR_STATUSES.has(r.status)) continue;
+    // The property fallback exists because offeringId isn't always persisted,
+    // but course+term alone matches every section of that course — a pending
+    // request for section 01 would show (and lock) a pending instructor on 02.
+    // Narrow it by section number, treating a request that carries none as
+    // matching any, which is how the Cancel Course lookup already does it.
     const linked = r.offeringId === o.id ||
       (r.prefix === (parts[0] || "") && r.number === (parts[1] || "") &&
-       r.term === o.semester && r.subterm === o.subterm && r.year === o.year);
+       r.term === o.semester && r.subterm === o.subterm && r.year === o.year &&
+       (!r.sectionNumber || r.sectionNumber === sectionNumberFor(o)));
     if (!linked) continue;
     for (const ch of requestChanges(r)) {
       if ((ch.type === "Assign Instructor" || ch.type === "Change Instructor") &&
@@ -8907,6 +8944,14 @@ function bindTermEvents() {
       }
       if (_reqIdx !== -1) { markRequestDeleted(state.requests[_reqIdx].id); state.requests.splice(_reqIdx, 1); }
       o.addRequestId = "";
+      // Drop any remaining pending instructor assignment for this offering, so
+      // the cleared cell stays cleared and editable instead of being refilled
+      // and re-locked by a leftover request.
+      withdrawPendingInstructorFor(o);
+      // A deliberate clear: exempt it from the blank-guard so the empty
+      // instructor actually reaches the server rather than being treated as an
+      // accidental wipe of someone else's value.
+      _markClearedLocally(o.id, "instructor", true);
       markLocallyTouched(o.id);
       setDirty(true);
       renderTerms();
