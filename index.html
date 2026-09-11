@@ -3459,10 +3459,10 @@ function missingPmCourses() {
   return missing.sort();
 }
 
-async function syncRotationFromSheet() {
+async function syncRotationFromSheet(opts) {
   const fresh = await fetchRotationFromSheet();
   reconcileCourses(fresh);
-  syncOfferingsFromRotation();
+  syncOfferingsFromRotation(undefined, undefined, opts);
   recordRotationSync();           // ISO string in localStorage + module var
   setDirty(true);
   if (typeof renderTerms === "function") renderTerms();
@@ -3545,7 +3545,7 @@ function showRotationBanner() {
   const retry = document.getElementById("btnRotationRetry");
   if (retry) retry.onclick = async () => {
     retry.disabled = true; retry.textContent = "Syncing…";
-    try { await syncRotationFromSheet(); toast("Rotation re-synced"); }
+    try { await syncRotationFromSheet({ force: true }); toast("Rotation re-synced"); }
     catch (e) { toast("Sync failed: " + (e && e.message || e)); }
     finally { if (retry) { retry.disabled = false; retry.textContent = "Re-sync now"; } }
   };
@@ -5374,7 +5374,11 @@ function offeringKey(courseId, semester, slot, year) {
 // huge duplicate piles in the DB, and other browsers seeing "new rows" rather
 // than updates because the IDs didn't line up. The fix is to dedupe by stable
 // course CODE — that string survives any local id reshuffling.
-function syncOfferingsFromRotation(defaultYear, semesterFilter) {
+function syncOfferingsFromRotation(defaultYear, semesterFilter, opts) {
+  // force: the user explicitly asked for a re-sync, so a bulk create is
+  // intentional rather than the symptom of a schedule we failed to read.
+  const force = !!(opts && opts.force);
+  const startedEmpty = state.offerings.length === 0;
   const year = defaultYear || state.termFilter.year || 2026;
   // Pass 1: re-resolve courseId for any offering whose courseId no longer
   // points at a real course. This relies on courseCode having been stamped
@@ -5464,6 +5468,22 @@ function syncOfferingsFromRotation(defaultYear, semesterFilter) {
     }
   }
   // Existing offerings (including extra sections like 02/03 and submitted ones) are preserved.
+  // Guard against rebuilding the whole schedule on top of one we simply
+  // couldn't read. An RLS-filtered SELECT returns zero rows WITHOUT an error,
+  // so an empty state.offerings means either "the schedule really is empty" or
+  // "I'm not allowed to see any of it" — and we cannot tell them apart here.
+  // On 2026-09-10 the second case regenerated the entire rotation from a stale
+  // tab and inserted 1,159 duplicate offerings the moment its user's role was
+  // fixed. A first-time setup can still populate via Re-sync now on the
+  // rotation banner, which passes force.
+  const BULK_CREATE_GUARD = 100;
+  if (!force && startedEmpty && toAdd.length > BULK_CREATE_GUARD) {
+    console.warn(`Rotation sync skipped: would have created ${toAdd.length} offerings into an empty schedule.`);
+    try {
+      toast(`Schedule looks empty — skipped creating ${toAdd.length} sections in case it just failed to load. Reload; if it is genuinely empty, use "Re-sync now".`, "error");
+    } catch (e) {}
+    return;
+  }
   state.offerings = state.offerings.concat(toAdd);
 }
 
