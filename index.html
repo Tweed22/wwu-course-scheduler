@@ -2093,8 +2093,9 @@
     <div>
       <label for="rgYear">Year</label>
       <select id="rgYear">
+        <option value="" selected>All years</option>
         <option value="2025">2025</option>
-        <option value="2026" selected>2026</option>
+        <option value="2026">2026</option>
         <option value="2027">2027</option>
         <option value="2028">2028</option>
       </select>
@@ -2143,7 +2144,7 @@
         <tr>
           <th data-rgsort="submitter" style="width:140px;">Submitter</th>
           <th data-rgsort="code" style="width:140px;">Course</th>
-          <th data-rgsort="term" style="width:120px;">Term</th>
+          <th data-rgsort="term" style="width:150px;">Term</th>
           <th data-rgsort="changeType" style="width:140px;">Type of Change</th>
           <th data-rgsort="explanation">Explanation</th>
           <th class="no-sort" style="width:200px;">Notes</th>
@@ -3634,7 +3635,7 @@ const state = {
   // semesterFilter can be "" (show all), "Fall", "Spring", or "Summer". When
   // non-empty it restricts the queue to that semester (and its subterm chips).
   // When empty, every subterm in every semester is shown together.
-  regFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", level: "", source: "", school: "", semesterFilter: "" },
+  regFilter: { semester: "Fall", subterm: "1A", year: "", search: "", level: "", source: "", school: "", semesterFilter: "" },
   regSortKey: "submittedAt",
   regSortDir: 1,
   clFilter: { search: "", type: "", range: "" },
@@ -7138,13 +7139,13 @@ function regSubtermMatches(item, semester, subterm) {
   if (item.kind === "section") {
     const o = item.offering;
     return o.semester === semester
-      && o.year === state.regFilter.year
+      && (!state.regFilter.year || Number(o.year) === Number(state.regFilter.year))
       && def.includes.includes(o.rotationSlot);
   }
   // Change request — match by term + year, and try to map subterm/subterm-letter if present.
   const r = item.request;
   if (r.term !== semester) return false;
-  if (Number(r.year) !== Number(state.regFilter.year)) return false;
+  if (state.regFilter.year && Number(r.year) !== Number(state.regFilter.year)) return false;
   // r.subterm can be "Semester", "1A", "2B", etc — if it's a real subterm, only match its own column.
   if (r.subterm && /^[1-3][ABC]$/.test(r.subterm)) {
     return r.subterm === subterm;
@@ -7232,12 +7233,26 @@ function applyRegFilters(list) {
    SUBTERMS entry, otherwise whatever the item carries ("Fall Semester" and the
    other free-text subterms the change-request form allows). */
 function regTermLabel(item) {
-  const [term, sub] = item.kind === "section"
-    ? [item.offering.semester, item.offering.subterm]
-    : [item.request.term, item.request.subterm];
+  const [term, sub, yr] = item.kind === "section"
+    ? [item.offering.semester, item.offering.subterm, item.offering.year]
+    : [item.request.term, item.request.subterm, item.request.year];
   const def = SUBTERMS.find(s => s.semester === term && s.subterm === sub);
-  if (def) return def.label;
-  return `${term || ""} ${sub || ""}`.trim() || "—";
+  const label = def ? def.label : `${term || ""} ${sub || ""}`.trim();
+  if (!label) return "—";
+  // The queue spans academic years (Fall ends in December while Spring changes
+  // are already in flight), so the year has to be on the row — "Fall A" alone
+  // is ambiguous once 2026 and 2027 items sit side by side.
+  return yr ? `${label} ${yr}` : label;
+}
+
+/* Sort key for the Term column: year first so the queue reads chronologically
+   rather than alphabetically by semester name. */
+function regTermSortKey(item) {
+  const [term, sub, yr] = item.kind === "section"
+    ? [item.offering.semester, item.offering.subterm, item.offering.year]
+    : [item.request.term, item.request.subterm, item.request.year];
+  const def = SUBTERMS.find(s => s.semester === term && s.subterm === sub);
+  return `${yr || ""}|${def ? def.label : `${term || ""} ${sub || ""}`.trim()}`;
 }
 
 /* Registrar's own note on a queue row. Stored on the offering or the request,
@@ -7267,7 +7282,7 @@ function canUndoRegistrarItem(item) {
 }
 
 function regItemSortFields(item) {
-  const term = regTermLabel(item);
+  const term = regTermSortKey(item);
   if (item.kind === "section") {
     const o = item.offering;
     const c = state.courses.find(x => x.id === o.courseId) || {};
@@ -7336,7 +7351,7 @@ function semesterMatchesItem(item, semester) {
   const sem = item.kind === "section" ? item.offering.semester
                                        : item.request.term;
   const yr  = item.kind === "section" ? item.offering.year     : item.request.year;
-  if (Number(yr) !== Number(state.regFilter.year)) return false;
+  if (state.regFilter.year && Number(yr) !== Number(state.regFilter.year)) return false;
   if (!semester) return true;
   return sem === semester;
 }
@@ -7368,7 +7383,7 @@ function renderRegStats(list) {
   const el = document.getElementById("regStats");
   if (!el) return;
   el.innerHTML = `
-    <div class="item"><strong>${def.label}</strong><span class="label">${state.regFilter.year}</span></div>
+    <div class="item"><strong>${def.label}</strong><span class="label">${state.regFilter.year || "All years"}</span></div>
     <div class="item"><strong>${list.length}</strong><span class="label">in queue</span></div>
     <div class="item"><strong>${sections}</strong><span class="label">submitted sections</span></div>
     <div class="item"><strong>${requests}</strong><span class="label">change requests</span></div>
@@ -7778,21 +7793,22 @@ function exportRegistrarCsv() {
       item.kind === "section" ? "Section" : "Request",
       course, f.changeType, f.explanation, f.submitter, f.approver,
       f.submittedAt ? f.submittedAt.slice(0,10) : "",
-      state.regFilter.year, `${def.semester} ${def.subterm}`
+      (item.kind === "section" ? item.offering.year : item.request.year) || "",
+      `${def.semester} ${def.subterm}`
     ].map(v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; });
     rows.push(cells.join(","));
   }
   const blob = new Blob([rows.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `wwu-registrar-${def.semester.toLowerCase()}-${def.subterm}-${state.regFilter.year}.csv`; a.click();
+  a.href = url; a.download = `wwu-registrar-${def.semester.toLowerCase()}-${def.subterm}-${state.regFilter.year || "all-years"}.csv`; a.click();
   URL.revokeObjectURL(url);
   toast("Exported Registrar CSV for " + def.label);
 }
 function bindRegistrarEvents() {
   const $ = id => document.getElementById(id);
   $("rgSearch").addEventListener("input",  (e) => { state.regFilter.search = e.target.value; renderRegistrar(); });
-  $("rgYear")  .addEventListener("change", (e) => { state.regFilter.year   = Number(e.target.value); renderRegistrar(); });
+  $("rgYear")  .addEventListener("change", (e) => { state.regFilter.year   = e.target.value ? Number(e.target.value) : ""; renderRegistrar(); });
   $("rgLevel") .addEventListener("change", (e) => { state.regFilter.level  = e.target.value; renderRegistrar(); });
   $("rgSource").addEventListener("change", (e) => { state.regFilter.source = e.target.value; renderRegistrar(); });
   $("rgSchool").addEventListener("change", (e) => { state.regFilter.school = e.target.value; renderRegistrar(); });
