@@ -9417,13 +9417,13 @@ const CONTEXT_FIELD_CONFIG = {
   "Add Course":                     { sectionNum: true,  modality: true,  term: true,  termFirst: false },
   "Add Section":                    { sectionNum: false, modality: true,  term: true,  termFirst: true  },
   "Add Section & Split Enrollment": { sectionNum: false, modality: false, term: true,  termFirst: true  },
-  "Cancel Course":                  { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Cancel Course":                  { sectionNum: true,  modality: false, term: true,  termFirst: true  },
   "Re-instate Course":              { sectionNum: true,  modality: false, term: true,  termFirst: false },
-  "Assign Instructor":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
-  "Change Instructor":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
-  "Modify Time/Day":                { sectionNum: false, modality: false, term: true,  termFirst: true  },
-  "Modify Location":                { sectionNum: false, modality: false, term: true,  termFirst: true  },
-  "Change Course Cap":              { sectionNum: false, modality: false, term: true,  termFirst: true  },
+  "Assign Instructor":              { sectionNum: true,  modality: false, term: true,  termFirst: true  },
+  "Change Instructor":              { sectionNum: true,  modality: false, term: true,  termFirst: true  },
+  "Modify Time/Day":                { sectionNum: true,  modality: false, term: true,  termFirst: true  },
+  "Modify Location":                { sectionNum: true,  modality: false, term: true,  termFirst: true  },
+  "Change Course Cap":              { sectionNum: true,  modality: false, term: true,  termFirst: true  },
   "Other":                          { sectionNum: true,  modality: false, term: true,  termFirst: false },
 };
 
@@ -9675,6 +9675,22 @@ function renderChangeBlock(idx, ch) {
           <div class="cb-ctx-title ${offeringTitleCls}" id="cb${idx}_title">${escapeHtml(offeringTitle)}</div>
         </div>`;
 
+        // Which of the course's sections this change applies to. On-Ground picks
+        // come from the rotation sheet, which has no per-section rows, so the
+        // picker cannot resolve one and it has to be typed. Online picks prefill
+        // it from the chosen offering but stay editable, so a request can be
+        // retargeted to a sibling section. Rendered AFTER the picker so that
+        // syncChangeListFromDom writes it last and a typed value wins.
+        if (cfg.sectionNum) {
+          contextHtml += `
+          <div>
+            <label>Section #</label>
+            <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
+                   value="${escapeHtml(curSec)}">
+            <div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">Which section this applies to — leave blank for all.</div>
+          </div>`;
+        }
+
         contextHtml += renderDetailFields();
 
       } else {
@@ -9820,6 +9836,13 @@ function syncChangeListFromDom() {
 }
 
 /* Write a single context field element's value to the corresponding rfld_* hidden input. */
+/* True when the open change block renders its own Section # input. The offering
+   picker must not clear rfld_sectionNumber in that case — for On-Ground there is
+   no offering to derive a section from, so the typed value is the only source. */
+function _hasManualSectionField() {
+  return !!document.querySelector('#rfld_changeList [data-rf="sectionNumber"]');
+}
+
 function syncContextFieldToHidden(el) {
   const key = el.dataset.rf;
   if (key === "course") {
@@ -9857,7 +9880,7 @@ function syncContextFieldToHidden(el) {
       const ogParts = ogMatch ? String(ogMatch.code || "").split(/\s+/) : [];
       document.getElementById("rfld_prefix").value = ogMatch ? (ogParts[0] || "") : "";
       document.getElementById("rfld_number").value = ogMatch ? ogParts.slice(1).join(" ") : "";
-      document.getElementById("rfld_sectionNumber").value = "";
+      if (!_hasManualSectionField()) document.getElementById("rfld_sectionNumber").value = "";
       document.getElementById("rfld_offeringId").value = "";
       if (ogMatch && ogMatch.section) {
         document.getElementById("rfld_section").value = ogMatch.section === "graduate" ? "Grad" : "Undergrad";
@@ -9884,7 +9907,7 @@ function syncContextFieldToHidden(el) {
     } else {
       document.getElementById("rfld_prefix").value = "";
       document.getElementById("rfld_number").value = "";
-      document.getElementById("rfld_sectionNumber").value = "";
+      if (!_hasManualSectionField()) document.getElementById("rfld_sectionNumber").value = "";
       document.getElementById("rfld_offeringId").value = "";
     }
   } else if (key === "term") {
