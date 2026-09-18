@@ -3867,6 +3867,13 @@ function deanForCourse(c) {
 
 const LS_KEY = "wwu-rotation-v2";
 const REQ_STATUSES = ["Draft","Pending Approval","Approved","Rejected","Sent to Registrar","Finalized"];
+/* Statuses the Change Requests queue is responsible for showing: everything
+   that is still live but has not reached the registrar. "Sent to Registrar"
+   belongs to the Registrar page; "Finalized"/"Rejected" to the Changelog.
+   "Draft" and "Approved" are not produced by current code, but four requests
+   were stranded in "Approved" by an older undo that returned them there — a
+   state with no screen — so they are listed here rather than nowhere. */
+const REQ_QUEUE_STATUSES = new Set(["Pending Approval", "Approved", "Draft"]);
 const STATUS_ORDER = { "Draft":0, "Pending Approval":1, "Approved":2, "Rejected":2, "Sent to Registrar":3, "Finalized":4 };
 const STATUS_CLASS = { "Draft":"st-draft", "Pending Approval":"st-pending", "Approved":"st-approved", "Rejected":"st-rejected", "Sent to Registrar":"st-sent", "Finalized":"st-finalized" };
 const CHANGE_TYPE_CLASS = {
@@ -9215,10 +9222,11 @@ function logOfferingFieldChange(o, fieldLabel, before, after) {
 function applyRequestFilters(rows) {
   const f = state.reqFilters;
   return rows.filter(r => {
-    // Queue is only currently-pending requests. Approved/Sent/Finalized appear
-    // on the Registrar page; Rejected/Deleted (archived) appear in the Changelog.
+    // Sent to Registrar appears on the Registrar page; Rejected/Finalized and
+    // anything archived appear in the Changelog. Everything else lives here, so
+    // that no live request can be invisible on every screen.
     if (r.archived) return false;
-    if (r.status !== "Pending Approval") return false;
+    if (!REQ_QUEUE_STATUSES.has(r.status)) return false;
     if (f.type && r.changeType !== f.type) return false;
     if (f.termYear && `${r.term} ${r.year}` !== f.termYear) return false;
     if (f.submitter && (r.submitter || "").toLowerCase() !== f.submitter.toLowerCase()) return false;
@@ -9295,7 +9303,10 @@ function renderRequestTable(filtered) {
         <td>${escapeHtml(r.term || "")} ${escapeHtml(String(r.year || ""))}</td>
         <td>${escapeHtml(r.subterm || "")}</td>
         <td class="code">${escapeHtml(code)}</td>
-        <td><span class="ct-pill ${ctClass}">${escapeHtml(r.changeType || "")}</span></td>
+        <td><span class="ct-pill ${ctClass}">${escapeHtml(r.changeType || "")}</span>${
+          r.status && r.status !== "Pending Approval"
+            ? ` <span class="status-pill ${STATUS_CLASS[r.status] || ""}" title="Unusual state — this request is not waiting on a normal approval">${escapeHtml(r.status)}</span>`
+            : ""}</td>
         <td class="req-explanation">${escapeHtml(r.explanation || "")}</td>
         <td class="req-notes">${escapeHtml(r.rationale || "")}</td>
         <td class="actions">${renderRequestActions(r)}</td>
