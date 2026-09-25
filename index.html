@@ -9973,7 +9973,7 @@ function renderRequestHeader(editable) {
   // Locked variant — read-only pills.
   wrap.innerHTML = `
     <div class="rs-course">
-      <div class="rs-code">${escapeHtml(codeStr || "— —")}${sectionNumberVal ? ` <span style="font-weight:600;color:var(--wwu-green-dark);">${escapeHtml(sectionNumberVal)}</span>` : ""}</div>
+      <div class="rs-code">${escapeHtml(codeStr || "— —")} <input type="text" id="rfld_sectionNumberVisible" value="${escapeHtml(sectionNumberVal)}" placeholder="Sec#" inputmode="numeric" maxlength="4" title="Section number — edit to change this request's section" oninput="document.getElementById('rfld_sectionNumber').value = this.value.trim();" style="width:54px;font:inherit;font-weight:600;color:var(--wwu-green-dark);background:transparent;border:1px solid rgba(128,128,128,.4);border-radius:4px;padding:1px 5px;margin-left:3px;"></div>
       <div class="rs-title">${escapeHtml(course ? (course.title || "Untitled course") : "No course selected")}</div>
     </div>
     <div class="rs-meta">
@@ -10220,12 +10220,24 @@ function saveRequestFromModal() {
   draft.year = Number(document.getElementById("rfld_year").value) || 2026;
   draft.prefix = document.getElementById("rfld_prefix").value.trim().toUpperCase();
   draft.number = document.getElementById("rfld_number").value.trim();
-  draft.sectionNumber = document.getElementById("rfld_sectionNumber").value.trim();
+  { const _rawSec = document.getElementById("rfld_sectionNumber").value.trim();
+    draft.sectionNumber = /^\d{1,2}$/.test(_rawSec) ? _rawSec.padStart(2, "0") : _rawSec; }
   draft.offeringId    = document.getElementById("rfld_offeringId").value.trim() || "";
   // Sync per-block field values from the DOM, then persist the multi-change
   // list. The first change's type becomes the canonical changeType for legacy
   // readers; the explanation is a composite of all block summaries.
   syncChangeListFromDom();
+  // Every request must be attached to a course. Re-read the code from the hidden
+  // mirrors (just synced from the change-block course field) and block if empty
+  // so change requests can't be submitted with no course attached.
+  draft.prefix = document.getElementById("rfld_prefix").value.trim().toUpperCase();
+  draft.number = document.getElementById("rfld_number").value.trim();
+  if (!draft.prefix || !draft.number) {
+    toast("Please enter a course for this request");
+    const _cf = document.querySelector('#rfld_changeList [data-rf="course"]');
+    if (_cf) _cf.focus();
+    return;
+  }
   const buf = (state.editingChanges || []).filter(ch => ch && ch.type);
   if (!buf.length) { toast("Add at least one change"); return; }
   draft.changes = buf.map(ch => ({ type: ch.type, fields: Object.assign({}, ch.fields || {}) }));
