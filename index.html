@@ -9888,9 +9888,11 @@ function syncContextFieldToHidden(el) {
     if (_mod === "On-Ground") {
       const ogList = onGroundCoursesForTerm(semester);
       const ogMatch = findOnGroundCourseByLabel(val, ogList);
-      const ogParts = ogMatch ? String(ogMatch.code || "").split(/\s+/) : [];
-      document.getElementById("rfld_prefix").value = ogMatch ? (ogParts[0] || "") : "";
-      document.getElementById("rfld_number").value = ogMatch ? ogParts.slice(1).join(" ") : "";
+      // No term match: keep the typed value (parse it into prefix/number) rather
+      // than discarding it, so an off-rotation course is respected on the request.
+      const ogParts = ogMatch ? String(ogMatch.code || "").split(/\s+/) : val.split(/\s+/);
+      document.getElementById("rfld_prefix").value = (ogParts[0] || "").toUpperCase();
+      document.getElementById("rfld_number").value = ogParts.slice(1).join(" ");
       if (!_hasManualSectionField()) document.getElementById("rfld_sectionNumber").value = "";
       document.getElementById("rfld_offeringId").value = "";
       if (ogMatch && ogMatch.section) {
@@ -9916,8 +9918,11 @@ function syncContextFieldToHidden(el) {
         document.getElementById("rfld_section").value = c.section === "graduate" ? "Grad" : "Undergrad";
       }
     } else {
-      document.getElementById("rfld_prefix").value = "";
-      document.getElementById("rfld_number").value = "";
+      // No term match: keep the typed value rather than discarding it, so an
+      // off-rotation / not-yet-scheduled course is respected on the request.
+      const typedParts = val.split(/\s+/);
+      document.getElementById("rfld_prefix").value = (typedParts[0] || "").toUpperCase();
+      document.getElementById("rfld_number").value = typedParts.slice(1).join(" ");
       if (!_hasManualSectionField()) document.getElementById("rfld_sectionNumber").value = "";
       document.getElementById("rfld_offeringId").value = "";
     }
@@ -10232,7 +10237,7 @@ function saveRequestFromModal() {
   // so change requests can't be submitted with no course attached.
   draft.prefix = document.getElementById("rfld_prefix").value.trim().toUpperCase();
   draft.number = document.getElementById("rfld_number").value.trim();
-  if (!draft.prefix || !draft.number) {
+  if (!draft.prefix && !draft.number) {
     toast("Please enter a course for this request");
     const _cf = document.querySelector('#rfld_changeList [data-rf="course"]');
     if (_cf) _cf.focus();
