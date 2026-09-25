@@ -10232,15 +10232,25 @@ function saveRequestFromModal() {
   // list. The first change's type becomes the canonical changeType for legacy
   // readers; the explanation is a composite of all block summaries.
   syncChangeListFromDom();
-  // Every request must be attached to a course. Re-read the code from the hidden
-  // mirrors (just synced from the change-block course field) and block if empty
-  // so change requests can't be submitted with no course attached.
+  // Every request must be attached to a course. The VISIBLE course field is the
+  // source of truth: if it has any text we keep it — even when it matches no
+  // rotation/term offering — deriving prefix/number from exactly what was typed.
   draft.prefix = document.getElementById("rfld_prefix").value.trim().toUpperCase();
   draft.number = document.getElementById("rfld_number").value.trim();
-  if (!draft.prefix && !draft.number) {
+  const _courseField = document.querySelector('#rfld_changeList [data-rf="course"], #rfld_changeList [data-rf="offering-select"]');
+  const _courseText  = _courseField ? _courseField.value.trim() : "";
+  if (!draft.prefix && !draft.number && _courseText) {
+    // Field has text but the sync left the code empty (no term/rotation match) —
+    // parse whatever was typed so the course is still recorded on the request.
+    const _p = _courseText.split(/\s+/);
+    draft.prefix = (_p[0] || "").toUpperCase();
+    draft.number = _p.slice(1).join(" ");
+    document.getElementById("rfld_prefix").value = draft.prefix;
+    document.getElementById("rfld_number").value = draft.number;
+  }
+  if (!draft.prefix && !draft.number && !_courseText) {
     toast("Please enter a course for this request");
-    const _cf = document.querySelector('#rfld_changeList [data-rf="course"]');
-    if (_cf) _cf.focus();
+    if (_courseField) _courseField.focus();
     return;
   }
   const buf = (state.editingChanges || []).filter(ch => ch && ch.type);
