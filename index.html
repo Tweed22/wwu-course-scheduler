@@ -2145,6 +2145,7 @@
           <th data-rgsort="submitter" style="width:140px;">Submitter</th>
           <th data-rgsort="code" style="width:140px;">Course</th>
           <th data-rgsort="term" style="width:150px;">Term</th>
+          <th data-rgsort="modality" style="width:110px;">Modality</th>
           <th data-rgsort="changeType" style="width:140px;">Type of Change</th>
           <th data-rgsort="explanation">Explanation</th>
           <th class="no-sort" style="width:200px;">Notes</th>
@@ -7268,8 +7269,10 @@ function regTermLabel(item) {
   if (!label) return "—";
   // The queue spans academic years (Fall ends in December while Spring changes
   // are already in flight), so the year has to be on the row — "Fall A" alone
-  // is ambiguous once 2026 and 2027 items sit side by side.
-  return yr ? `${label} ${yr}` : label;
+  // is ambiguous once two years sit side by side.
+  // year is the ACADEMIC year (the year Fall starts); Spring and Summer belong
+  // to the next calendar year, so academic 2026 must read "Spring 2027".
+  return yr ? `${label} ${calendarYearFor(term, Number(yr))}` : label;
 }
 
 /* Sort key for the Term column: year first so the queue reads chronologically
@@ -7279,7 +7282,21 @@ function regTermSortKey(item) {
     ? [item.offering.semester, item.offering.subterm, item.offering.year]
     : [item.request.term, item.request.subterm, item.request.year];
   const def = SUBTERMS.find(s => s.semester === term && s.subterm === sub);
-  return `${yr || ""}|${def ? def.label : `${term || ""} ${sub || ""}`.trim()}`;
+  const calYr = yr ? calendarYearFor(term, Number(yr)) : "";
+  return `${calYr}|${def ? def.label : `${term || ""} ${sub || ""}`.trim()}`;
+}
+
+/* Modality for a queue row. Change requests carry it explicitly. Sections do
+   not — but offerings are generated only from a course's online rotation
+   (syncOfferingsFromRotation reads onlineFall/onlineSpring/onlineSummer), so a
+   section is Online whenever its course has any online chunk, and On-Ground is
+   the honest answer when it does not. */
+function regModality(item) {
+  if (item.kind === "request") return item.request.modality || "—";
+  const o = item.offering;
+  const c = (state.courses || []).find(x => x.id === o.courseId) || {};
+  const online = !!((c.onlineFall||[]).length || (c.onlineSpring||[]).length || (c.onlineSummer||[]).length);
+  return online ? "Online" : "On-Ground";
 }
 
 /* Registrar's own note on a queue row. Stored on the offering or the request,
@@ -7317,6 +7334,7 @@ function regItemSortFields(item) {
     return {
       code: c.code || "",
       term,
+      modality: regModality(item),
       changeType: "Assign Instructor",
       explanation: c.title || "",
       submitter: o.submittedBy || "",
@@ -7328,6 +7346,7 @@ function regItemSortFields(item) {
   return {
     code: `${r.prefix||""} ${r.number||""}`.trim(),
     term,
+    modality: regModality(item),
     changeType: r.changeType || "",
     explanation: r.explanation || "",
     submitter: r.submitter || "",
@@ -7420,7 +7439,7 @@ function renderRegTable(list) {
   const tbody = document.getElementById("rgtbody");
   if (!tbody) return;
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:30px;">Registrar queue is clear for this subterm.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:30px;">Registrar queue is clear for this subterm.</td></tr>`;
     return;
   }
   // Only admins and registrars can mark items completed; PMs and deans see "In Progress".
@@ -7457,6 +7476,7 @@ function renderRegTable(list) {
           <td>${escapeHtml(submitter)}</td>
           <td class="code">${escapeHtml(c.code||"")}</td>
           <td>${escapeHtml(regTermLabel(item))}</td>
+          <td>${escapeHtml(regModality(item))}</td>
           <td>${escapeHtml(changeType)}</td>
           <td>${escapeHtml(explanation)}</td>
           ${noteCell(item)}
@@ -7478,6 +7498,7 @@ function renderRegTable(list) {
         <td>${escapeHtml(r.submitter||"—")}</td>
         <td class="code">${escapeHtml(code)}</td>
         <td>${escapeHtml(regTermLabel(item))}</td>
+        <td>${escapeHtml(regModality(item))}</td>
         <td>${escapeHtml(r.changeType||"Change")}</td>
         <td>${escapeHtml(r.explanation || "—")}</td>
         ${noteCell(item)}
@@ -9300,7 +9321,7 @@ function renderRequestTable(filtered) {
         <td>${escapeHtml(r.date ? fmtDateShort(r.date) : "")}</td>
         <td>${escapeHtml(sectionLongForm(r.section))}</td>
         <td>${escapeHtml(r.modality || "")}</td>
-        <td>${escapeHtml(r.term || "")} ${escapeHtml(String(r.year || ""))}</td>
+        <td>${escapeHtml(r.term || "")} ${escapeHtml(String(r.year ? calendarYearFor(r.term, Number(r.year)) : ""))}</td>
         <td>${escapeHtml(r.subterm || "")}</td>
         <td class="code">${escapeHtml(code)}</td>
         <td><span class="ct-pill ${ctClass}">${escapeHtml(r.changeType || "")}</span>${
@@ -9985,7 +10006,7 @@ function renderRequestHeader(editable) {
       <div class="rs-meta-row">
         <span class="rs-pill">${escapeHtml(sectionLongForm(sectionVal) || "Undergraduate")}</span>
         <span class="rs-pill">${escapeHtml(modalityVal)}</span>
-        <span class="rs-pill">${escapeHtml(termVal)} ${escapeHtml(String(yearVal))}</span>
+        <span class="rs-pill">${escapeHtml(termVal)} ${escapeHtml(String(calendarYearFor(termVal, Number(yearVal))))}</span>
         <span class="rs-pill">${escapeHtml(subtermVal)}</span>
       </div>
       <div class="rs-meta-row rs-submitter">
