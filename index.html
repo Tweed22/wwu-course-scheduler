@@ -2318,8 +2318,8 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:18px;">
     <h3 style="margin:0 0 6px 0;font-size:15px;color:var(--wwu-green-dark);">Program Managers (CSV upload)</h3>
     <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
-      Upload the master course list CSV. The parser auto-detects columns: <code>Course Number &amp; Prefix</code> (course code), <code>Program Manager</code>, and optionally <code>Dean</code> (overrides the school-based Dean assignment). A simple 2- or 3-column CSV (<code>Course Code</code>, <code>Program Manager</code>, <code>Dean</code>) also works.
-      A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM and Dean columns on the Term Assignments page read from this list automatically. <strong>Note:</strong> the <code>Dean</code> column requires running <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS dean text;</code> in Supabase once.
+      Upload the master course list CSV. The parser auto-detects columns: <code>Course Number &amp; Prefix</code> (course code), <code>Program Manager</code>, optionally a second PM (<code>Co-PM</code> or <code>Program Manager 2</code>), and optionally <code>Dean</code> (overrides the school-based Dean assignment). A simple CSV (<code>Course Code</code>, <code>Program Manager</code>, <code>Co-PM</code>, <code>Dean</code>) also works. A co-PM has the exact same access as the primary PM.
+      A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM and Dean columns on the Term Assignments page read from this list automatically. <strong>Note:</strong> the <code>Dean</code> column requires running <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS dean text;</code> and the second PM requires <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS program_manager_2 text;</code> in Supabase once.
     </p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
@@ -2334,12 +2334,13 @@
           <tr>
             <th style="width:160px;">Course Code</th>
             <th>Program Manager</th>
+            <th>Co-PM</th>
             <th>Dean (override)</th>
             <th style="width:90px;">Actions</th>
           </tr>
         </thead>
         <tbody id="admPmTbody">
-          <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
+          <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
         </tbody>
       </table>
     </div>
@@ -3437,6 +3438,13 @@ function pmForCode(code) {
       || state.pmByCourse[canonicalCourseCode(code)]
       || "";
 }
+// Second (co-)program manager for a course code, from the CSV mapping.
+function pm2ForCode(code) {
+  if (!state.pm2ByCourse) return "";
+  return state.pm2ByCourse[code]
+      || state.pm2ByCourse[canonicalCourseCode(code)]
+      || "";
+}
 
 /* Return the sorted list of unique canonical course codes that have no
    program manager assigned via the CSV mapping.  Returns null when no
@@ -4190,11 +4198,13 @@ async function loadFromSupabase() {
     repairSubtermSlotMismatch();
     // Phase 4 lookups
     state.pmByCourse   = {};
+    state.pm2ByCourse  = {};
     state.deanByCourse = {};
     for (const row of (pmRes.data || [])) {
       if (row && row.course_code) {
         const key = canonicalCourseCode(row.course_code);   // normalize to "PREFIX NUMBER" uppercase
         if (!state.pmByCourse[key]) state.pmByCourse[key] = row.program_manager || "";
+        if (!state.pm2ByCourse[key]) state.pm2ByCourse[key] = row.program_manager_2 || "";
         if (row.dean && !state.deanByCourse[key]) state.deanByCourse[key] = row.dean;
       }
     }
@@ -4595,13 +4605,16 @@ function handleRealtimePM(payload) {
     if (rawKey) {
       const key = canonicalCourseCode(rawKey);
       if (state.pmByCourse)   delete state.pmByCourse[key];
+      if (state.pm2ByCourse)  delete state.pm2ByCourse[key];
       if (state.deanByCourse) delete state.deanByCourse[key];
     }
   } else if (payload.new && payload.new.course_code) {
     const key = canonicalCourseCode(payload.new.course_code);
     state.pmByCourse   = state.pmByCourse   || {};
+    state.pm2ByCourse  = state.pm2ByCourse  || {};
     state.deanByCourse = state.deanByCourse || {};
     state.pmByCourse[key] = payload.new.program_manager || "";
+    state.pm2ByCourse[key] = payload.new.program_manager_2 || "";
     if (payload.new.dean) state.deanByCourse[key] = payload.new.dean;
     else delete state.deanByCourse[key];
   }
@@ -4743,7 +4756,9 @@ function myDisplayName() {
 }
 function isMyCourseAsPM(o) {
   const me = normPersonName(myDisplayName());
-  return !!me && normPersonName(pmForOffering(o)) === me;
+  if (!me) return false;
+  // Primary PM OR co-PM both count — the co-PM gets the same course scope.
+  return pmsForOffering(o).some(pm => normPersonName(pm) === me);
 }
 function isMyCourseAsDean(o) {
   const me = normPersonName(myDisplayName());
@@ -4792,6 +4807,23 @@ function pmForOffering(o) {
     if (pm) return pm;
   }
   return o.programManager || "";
+}
+// Second (co-)program manager for an offering: CSV mapping first, then any
+// value recorded on the offering itself.
+function pm2ForOffering(o) {
+  if (!o) return "";
+  const course = (state.courses || []).find(c => c.id === o.courseId);
+  const code = (course && course.code) || o.courseCode || "";
+  return pm2ForCode(code) || o.programManager2 || "";
+}
+// Every program manager attached to an offering (primary + co-PM), de-duped.
+function pmsForOffering(o) {
+  const out = [];
+  const p1 = pmForOffering(o);
+  const p2 = pm2ForOffering(o);
+  if (p1) out.push(p1);
+  if (p2 && normPersonName(p2) !== normPersonName(p1)) out.push(p2);
+  return out;
 }
 
 function toast(msg) {
@@ -5716,8 +5748,8 @@ function applyTermFilters(list) {
     // dean or program manager.  Skipped when myName is empty (no name set yet).
     if (myName) {
       const dean = (deanForOffering(o) || "").trim().toLowerCase();
-      const pm   = (pmForOffering(o)  || "").trim().toLowerCase();
-      if (dean !== myName && pm !== myName) return false;
+      const pms  = pmsForOffering(o).map(p => p.trim().toLowerCase());
+      if (dean !== myName && !pms.includes(myName)) return false;
     }
     if (lvl) {
       const courseLvl = c.level || courseLevel(c.code);
@@ -5732,7 +5764,7 @@ function applyTermFilters(list) {
       }
     }
     if (s) {
-      const hay = `${c.code} ${c.title} ${o.instructor} ${deanForOffering(o)} ${pmForOffering(o)} ${o.notes}`.toLowerCase();
+      const hay = `${c.code} ${c.title} ${o.instructor} ${deanForOffering(o)} ${pmsForOffering(o).join(" ")} ${o.notes}`.toLowerCase();
       if (!hay.includes(s)) return false;
     }
     if (so === "unassigned" && o.instructor) return false;
@@ -5753,7 +5785,7 @@ function applyTermSort(list) {
         case "length":   return o.length || "";
         case "school":   return SCHOOL_BY_PREFIX[(co.code||"").split(" ")[0]] || "";
         case "dean":     return deanForOffering(o) || "";
-        case "pm":       return pmForOffering(o) || "";
+        case "pm":       return pmsForOffering(o).join(", ") || "";
         case "deadline": return o.deadline || "9999";
         case "ftNeeded": return o.fullTimeNeeded || "";
         case "instructor": return o.instructor || "";
@@ -6071,7 +6103,7 @@ function renderTermTable(list) {
         <td class="title-cell">${escapeHtml(c.title || "")}</td>
         <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
-        <td class="pm-cell" style="padding-left:18px;" title="Program Manager — set on the Admin page via CSV upload">${escapeHtml(pmForOffering(o) || "—")}</td>
+        <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
         ${instructorCell}
         <td class="actions">${actionBtn}</td>
         <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
@@ -7032,8 +7064,7 @@ function refreshTermDatalists() {
   const deans = new Set(), pms = new Set(), instrs = new Set();
   for (const o of state.offerings) {
     if (o.dean) deans.add(o.dean);
-    const pm = pmForOffering(o);
-    if (pm) pms.add(pm);
+    for (const pm of pmsForOffering(o)) pms.add(pm);
     if (o.instructor) instrs.add(o.instructor);
   }
   const set = (id, vals) => {
@@ -7143,7 +7174,7 @@ function exportTermCsv() {
   for (const o of list) {
     const c = state.courses.find(x => x.id === o.courseId) || {};
     const prefix = (c.code||"").split(" ")[0];
-    const cells = [c.code||"", sectionNumberFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), pmForOffering(o)||"", deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
+    const cells = [c.code||"", sectionNumberFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), pmsForOffering(o).join(", "), deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
       .map(v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; });
     rows.push(cells.join(","));
   }
@@ -7222,7 +7253,7 @@ function applyRegFilters(list) {
       const school = SCHOOL_BY_PREFIX[prefix] || "";
       if (f.school && school !== f.school) return false;
       if (s) {
-        const hay = `${c.code} ${c.title} ${o.instructor||""} ${deanForOffering(o)} ${pmForOffering(o)||""} ${o.notes||""}`.toLowerCase();
+        const hay = `${c.code} ${c.title} ${o.instructor||""} ${deanForOffering(o)} ${pmsForOffering(o).join(" ")} ${o.notes||""}`.toLowerCase();
         if (!hay.includes(s)) return false;
       }
     } else {
@@ -8139,7 +8170,7 @@ function exportScheduleBackup() {
       c.code||"", sectionNumberFor(o), c.title||"",
       o.semester||"", o.subterm||"", o.year||"",
       o.length||"", SCHOOL_BY_PREFIX[prefix]||"",
-      deanForOffering(o), pmForOffering(o)||"", deadlineForOffering(o),
+      deanForOffering(o), pmsForOffering(o).join(", "), deadlineForOffering(o),
       o.instructor||"",
       o.submitted ? "Yes" : "No",
       o.submittedAt ? o.submittedAt.slice(0,10) : "",
@@ -8259,15 +8290,17 @@ function renderAdminPmTable() {
   const entries = Object.entries(state.pmByCourse || {})
     .sort(([a], [b]) => a.localeCompare(b));
   if (!entries.length) {
-    tb.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
     return;
   }
   tb.innerHTML = entries.map(([code, pm]) => {
+    const pm2  = (state.pm2ByCourse  || {})[code] || "";
     const dean = (state.deanByCourse || {})[code] || "";
     return `
     <tr data-pmcode="${escapeHtml(code)}">
       <td><strong>${escapeHtml(code)}</strong></td>
       <td>${escapeHtml(pm)}</td>
+      <td style="color:${pm2 ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(pm2 || "—")}</td>
       <td style="color:${dean ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(dean || "—")}</td>
       <td><button type="button" class="btn-pm-del" style="font-size:11px;padding:3px 8px;color:var(--danger);background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;">Remove</button></td>
     </tr>`;
@@ -8363,20 +8396,24 @@ async function uploadProgramManagersCsv() {
   // Supports the simple 2-column format (Course Code, Program Manager) and the
   // full master-list format (School, Course Number & Prefix, Credits, Title,
   // Program Manager, Dean).  The Dean column is optional.
-  let codeCol = 0, pmCol = 1, deanCol = -1;
+  let codeCol = 0, pmCol = 1, pm2Col = -1, deanCol = -1;
   const headerLike = /course|code|program|manager|pm|school|prefix|credit|title|dean/i;
   const firstRow = rows[0] || [];
   if (firstRow.length >= 2 && firstRow.some(cell => headerLike.test(cell))) {
     const hdrs = firstRow.map(h => String(h).trim().toLowerCase());
     const detectedCode = hdrs.findIndex(h => /course\s*(number|code|prefix)|number\s*&?\s*prefix/.test(h));
-    const detectedPm   = hdrs.findIndex(h => /program\s*(manager|mgr)|^pm$/.test(h));
+    // Detect the co-PM column first so the primary PM detector can skip it.
+    const detectedPm2  = hdrs.findIndex(h => /co.?pm|program\s*(manager|mgr)\s*2|^pm\s*2$|second\s*(program\s*)?(manager|mgr|pm)/.test(h));
+    const detectedPm   = hdrs.findIndex((h, i) => i !== detectedPm2 && /program\s*(manager|mgr)|^pm$/.test(h));
     const detectedDean = hdrs.findIndex(h => /^dean$|^dean\s/.test(h));
     if (detectedCode >= 0) codeCol  = detectedCode;
     if (detectedPm   >= 0) pmCol    = detectedPm;
+    if (detectedPm2  >= 0) pm2Col   = detectedPm2;
     if (detectedDean >= 0) deanCol  = detectedDean;
     rows.shift();
   }
   const pmMapping   = {};
+  const pm2Mapping  = {};
   const deanMapping = {};
   const skipped = [];
   for (const r of rows) {
@@ -8389,6 +8426,10 @@ async function uploadProgramManagersCsv() {
     // case-insensitive and section numbers are stripped (e.g. "acc 240 01" → "ACC 240").
     const normCode = canonicalCourseCode(code);
     pmMapping[normCode] = pm;
+    if (pm2Col >= 0) {
+      const pm2 = (r[pm2Col] || "").trim();
+      if (pm2) pm2Mapping[normCode] = pm2;
+    }
     if (deanCol >= 0) {
       const dean = (r[deanCol] || "").trim();
       if (dean) deanMapping[normCode] = dean;
@@ -8403,27 +8444,31 @@ async function uploadProgramManagersCsv() {
   // The .neq filter is needed because Supabase rejects a bare DELETE-all.
   const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
   if (delRes.error) { _err("Clear existing PM mapping failed", delRes.error); return; }
+  const hasPm2 = Object.keys(pm2Mapping).length > 0;
   const rowsToInsert = codes.map(code => {
     const row = { course_code: code, program_manager: pmMapping[code] };
+    if (hasPm2)  row.program_manager_2 = pm2Mapping[code] || null;
     if (hasDean) row.dean = deanMapping[code] || null;
     return row;
   });
-  const insRes = await sb.from("course_program_managers").insert(rowsToInsert);
-  if (insRes.error) {
-    // If the error is a missing `dean` column, retry without it and surface a
-    // note so the admin knows to run the migration SQL.
-    if (/column.*dean.*does not exist/i.test(insRes.error.message || "")) {
-      const retryRows = rowsToInsert.map(({ dean, ...rest }) => rest);
-      const r2 = await sb.from("course_program_managers").insert(retryRows);
-      if (r2.error) { _err("Insert PM mapping failed", r2.error); return; }
-      toast("PM mapping uploaded (dean column not found — run migration SQL to enable dean overrides).");
-    } else {
-      _err("Insert PM mapping failed", insRes.error);
-      return;
-    }
+  // Insert, retrying without any optional column the DB hasn't had migrated yet
+  // (co-PM and/or dean), so an un-migrated database still stores the primary PM.
+  const _missingCol = (err, col) => new RegExp("column.*" + col + ".*does not exist", "i").test((err && err.message) || "");
+  let insRes = await sb.from("course_program_managers").insert(rowsToInsert);
+  if (insRes.error && _missingCol(insRes.error, "program_manager_2")) {
+    rowsToInsert.forEach(r => { delete r.program_manager_2; });
+    insRes = await sb.from("course_program_managers").insert(rowsToInsert);
+    if (hasPm2) toast("PM mapping uploaded, but the co-PM column isn't in the database yet — run the ALTER TABLE SQL to store a second PM.");
   }
+  if (insRes.error && _missingCol(insRes.error, "dean")) {
+    rowsToInsert.forEach(r => { delete r.dean; });
+    insRes = await sb.from("course_program_managers").insert(rowsToInsert);
+    if (hasDean) toast("PM mapping uploaded (dean column not found — run migration SQL to enable dean overrides).");
+  }
+  if (insRes.error) { _err("Insert PM mapping failed", insRes.error); return; }
   // Update local state (realtime will also push the same rows, harmlessly).
   state.pmByCourse   = { ...pmMapping };
+  state.pm2ByCourse  = { ...pm2Mapping };
   state.deanByCourse = { ...deanMapping };
   renderAdminPmTable();
   reRenderAll();
@@ -8440,10 +8485,18 @@ async function uploadProgramManagersCsv() {
 function downloadProgramManagersCsv() {
   const safe = (s) => { s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const hasDeans = Object.keys(state.deanByCourse || {}).length > 0;
-  const lines = [hasDeans ? "Course Code,Program Manager,Dean" : "Course Code,Program Manager"];
+  const hasPm2s  = Object.keys(state.pm2ByCourse  || {}).some(k => (state.pm2ByCourse[k] || "").trim());
+  const header = ["Course Code", "Program Manager"];
+  if (hasPm2s)  header.push("Co-PM");
+  if (hasDeans) header.push("Dean");
+  const lines = [header.join(",")];
   for (const [code, pm] of Object.entries(state.pmByCourse || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const pm2  = (state.pm2ByCourse  || {})[code] || "";
     const dean = (state.deanByCourse || {})[code] || "";
-    lines.push(hasDeans ? `${safe(code)},${safe(pm)},${safe(dean)}` : `${safe(code)},${safe(pm)}`);
+    const cells = [safe(code), safe(pm)];
+    if (hasPm2s)  cells.push(safe(pm2));
+    if (hasDeans) cells.push(safe(dean));
+    lines.push(cells.join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -9155,9 +9208,10 @@ function bindTermEvents() {
       hint.textContent = `✓ ${c.code} — ${c.title || ""}`;
       hint.style.color = "var(--ok)";
       if (deanDisp) deanDisp.textContent = deanForCourse(c) || "—";
-      // PM is now auto-derived from the admin-uploaded CSV mapping.
-      const pm = pmForCode(c.code);
-      if (pmDisp) pmDisp.textContent = pm || "—";
+      // PM is now auto-derived from the admin-uploaded CSV mapping (primary + co-PM).
+      const pm  = pmForCode(c.code);
+      const pm2 = pm2ForCode(c.code);
+      if (pmDisp) pmDisp.textContent = [pm, pm2].filter(Boolean).join(", ") || "—";
       if (pmHidden) pmHidden.value = pm;
     } else {
       hint.textContent = "No course matches that yet";
