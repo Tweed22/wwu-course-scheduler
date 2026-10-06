@@ -9929,6 +9929,45 @@ function _hasManualSectionField() {
   return !!document.querySelector('#rfld_changeList [data-rf="sectionNumber"]');
 }
 
+/* Semester or subterm changed on an editable request. Keep the course and
+   section the user already chose rather than blanking them, and re-point
+   rfld_offeringId at the same course in the newly selected term.
+
+   If that course doesn't run in the new term the code stays on screen — the
+   user's selection is preserved — but the link is dropped, because an
+   offeringId left over from the previous term would quietly aim the request at
+   a section in the wrong semester.
+
+   The offering list and the positional section numbering mirror
+   syncContextFieldToHidden's offering-select branch so a re-point lands on the
+   same row the picker would have produced. */
+function retargetOfferingToCurrentTerm() {
+  const oidEl = document.getElementById("rfld_offeringId");
+  const code = [document.getElementById("rfld_prefix").value || "",
+                document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ").trim();
+  if (!code) { oidEl.value = ""; return; }
+
+  const semester = document.getElementById("rfld_term").value || "Fall";
+  const { subterm: subtermCode } = reqSubtermToSlot(document.getElementById("rfld_subterm").value || "Semester");
+  const acadYear = Number(document.getElementById("rfld_year").value) || state.termFilter.year || 2026;
+
+  const course = (state.courses || []).find(c => (c.code || "").trim().toUpperCase() === code.toUpperCase());
+  if (!course) { oidEl.value = ""; return; }
+
+  const filteredOff = (state.offerings || []).filter(o =>
+    o.semester === semester && o.subterm === subtermCode && o.year === acadYear && !o.canceled
+  );
+  const siblings = filteredOff.filter(o => o.courseId === course.id);
+  if (!siblings.length) { oidEl.value = ""; return; }   // course doesn't run in this term
+
+  // Prefer the same section number the request already names.
+  const wantSec = (document.getElementById("rfld_sectionNumber").value || "").trim();
+  const bySec = wantSec
+    ? siblings.find((o, i) => String(i + 1).padStart(2, "0") === wantSec)
+    : null;
+  oidEl.value = (bySec || siblings[0]).id;
+}
+
 function syncContextFieldToHidden(el) {
   const key = el.dataset.rf;
   if (key === "course") {
@@ -10698,16 +10737,11 @@ function bindRequestEvents() {
       const rf = e.target.dataset.rf;
       // Re-render to update filtered picker or show/hide fields.
       if (rf === "modality" || rf === "term" || rf === "subterm") {
-        // Clear the offering selection when semester/subterm changes so a
-        // stale course from the previous term doesn't carry over.
+        // Semester/subterm changed: keep the course the user already picked and
+        // re-point the offering link at the same course in the new term.
         if ((rf === "term" || rf === "subterm") && state.requestHeaderEditable) {
           const cfg = CONTEXT_FIELD_CONFIG[(state.editingChanges && state.editingChanges[0] && state.editingChanges[0].type) || ""] || {};
-          if (cfg.termFirst) {
-            document.getElementById("rfld_offeringId").value = "";
-            document.getElementById("rfld_prefix").value = "";
-            document.getElementById("rfld_number").value = "";
-            document.getElementById("rfld_sectionNumber").value = "";
-          }
+          if (cfg.termFirst) retargetOfferingToCurrentTerm();
         }
         syncChangeListFromDom();
         renderChangeList();
