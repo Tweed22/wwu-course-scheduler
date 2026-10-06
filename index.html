@@ -3155,6 +3155,25 @@ const WWU_ROTATION = [];
 
 const SEED_COURSES = WWU_ROTATION;
 
+/* Courses whose credit hours are not the 3 the rotation sheet implies.
+   The sheet carries no credits column, so any course first seen there lands at 3 and
+   stays there unless someone edits it by hand — and that edit lives in one browser's
+   localStorage, so it never reaches anyone else or any contract generated elsewhere.
+   Listing the exceptions here makes them authoritative for every user and every
+   contract, and they survive a cleared cache. Add new ones as they come up. */
+const COURSE_CREDITS = {
+  "EQE 587": 6,
+};
+/* Credit hours for a course — the override wins, then whatever the record carries,
+   then the 3-credit default. Used by the contract generators and the rotation merge
+   so the schedule and the contract can never disagree. */
+function creditsForCourse(course) {
+  if (!course) return 3;
+  const code = (course.code || "").trim().toUpperCase();
+  if (COURSE_CREDITS[code] != null) return COURSE_CREDITS[code];
+  return course.credits ?? 3;
+}
+
 /* ======== Rotation source: Google Sheet ========
    We fetch the "Course Rotation" tab via the `gviz` endpoint rather than the
    `pub?output=csv` published URL. The published URL returns a cross-origin
@@ -3338,7 +3357,7 @@ function rowToCourse(row, existingByCode) {
     id:           existing ? existing.id : ("c-" + Math.random().toString(36).slice(2, 9)),
     code,
     title:        (row[1] || "").trim(),
-    credits:      existing ? existing.credits : 3,
+    credits:      COURSE_CREDITS[code] ?? (existing ? existing.credits : 3),
     program:      existing ? existing.program : "",
     section,
     level,
@@ -3749,6 +3768,23 @@ function termEndDate(semester, subterm, year) {
     return effectiveTermDates(semester, subterm, year).end || "";
   }
   return (TERM_DATES[termKey(semester, subterm, year)] || {}).end || "";
+}
+/* A section runs to the end of the LAST subterm it spans, not the one it starts in.
+   `subterm` records only where a section BEGINS, so a 10-week F section (1A+2B) and a
+   5-week A section both carry subterm "1A" — asking termEndDate for "1A" handed the
+   10-week section the 5-week end date. The rotation slot already carries the true span
+   (see subtermsForSlot), so resolve the end subterm from that:
+     F  1A → 2B       L  2B → 3C       15W / 16W → 3C (the whole semester) */
+function endSubtermForSlot(slot, subterm) {
+  if (slot === "15W" || slot === "16W") return "3C";
+  const spans = subtermsForSlot(slot) || [];
+  return spans.length ? spans[spans.length - 1] : (subterm || "1A");
+}
+/* Contract end date for a section. The offering's own rotationSlot wins; older rows
+   without one fall back to deriving the slot from length + starting subterm. */
+function termEndDateForSection(semester, subterm, year, slot, length) {
+  const s = slot || rotationSlotForLength(length || "5 Weeks", subterm);
+  return termEndDate(semester, endSubtermForSlot(s, subterm), year);
 }
 /* Assignment deadline = 6 weeks (42 days) before the subterm start date. */
 function termAssignmentDeadline(semester, subterm, year) {
@@ -6472,9 +6508,9 @@ async function generateOnlineContractPDF(offeringIdOrData) {
     const secNum  = sectionNumberFor(o);
     courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
     courseTitle   = (c.title || "").trim();
-    credits       = c.credits ?? 3;
+    credits       = creditsForCourse(c);
     startDate     = isoSlash(termStartDate(o.semester, o.subterm, o.year));
-    endDate       = isoSlash(termEndDate(o.semester, o.subterm, o.year));
+    endDate       = isoSlash(termEndDateForSection(o.semester, o.subterm, o.year, o.rotationSlot, o.length));
   }
 
   /* --- Lazy-load pdf-lib from CDN --- */
@@ -6999,7 +7035,8 @@ function contractDataFromRequestModal() {
   const term        = document.getElementById("rfld_term").value || "";
   const subtermLbl  = document.getElementById("rfld_subterm").value || "";
   const year        = Number(document.getElementById("rfld_year").value) || 2026;
-  const { subterm } = reqSubtermToSlot(subtermLbl);
+  // `slot` carries the span (F/L/16W); `subterm` is only where the section starts.
+  const { slot, subterm } = reqSubtermToSlot(subtermLbl);
   const instrEl = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
   const instructor = instrEl ? instrEl.value.trim() : "";
   if (!instructor) return null;
@@ -7014,9 +7051,9 @@ function contractDataFromRequestModal() {
     instructor,
     courseCodeFull: [code, secNum].filter(Boolean).join(" "),
     courseTitle:    course ? (course.title || "") : "",
-    credits:        course ? (course.credits ?? 3) : 3,
+    credits:        creditsForCourse(course),
     startDate:      isoSlash(termStartDate(term, subterm, year)),
-    endDate:        isoSlash(termEndDate(term, subterm, year)),
+    endDate:        isoSlash(termEndDateForSection(term, subterm, year, slot, SLOT_LENGTH[slot])),
   };
 }
 
