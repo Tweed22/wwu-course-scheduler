@@ -10072,7 +10072,7 @@ function renderRequestHeader(editable) {
   `;
 }
 
-function openRequestModal(r) {
+function openRequestModal(r, opts) {
   state.editingRequestId = r.id;
   document.getElementById("reqModalTitle").textContent = !r.prefix
     ? "New Change Request"
@@ -10108,17 +10108,26 @@ function openRequestModal(r) {
   document.getElementById("rfld_rationale").value = r.rationale || "";
 
   // Decide which header variant to show. New requests with no course context
-  // get the editable variant; everything else gets the locked one.
-  const editable = !r.prefix && !r.number && !r.courseId;
+  // get the editable variant; everything else gets the locked one — except when
+  // the caller explicitly asks for editable. Editing from the Change Requests
+  // page does: the locked variant renders the course, section, modality, term
+  // and subterm as read-only pills, so a filed request could not be corrected
+  // without deleting and re-raising it.
+  const editable = !!(opts && opts.editable) || (!r.prefix && !r.number && !r.courseId);
+  // Is this an already-filed request, or one being composed? Decides whether
+  // stored values may be reseeded from the current filters below.
+  const isExistingRequest = !!state.requests.find(x => x.id === r.id);
   state.requestHeaderEditable = editable;
   renderRequestHeader(editable);
   // Submitter is auto-locked to the logged-in user; stored in a hidden field.
   const subEl = document.getElementById("rfld_submitter");
   if (subEl) subEl.value = r.submitter || state.userName || "";
   // Year is no longer shown in the form — auto-seed from the current academic
-  // year filter so saveRequestFromModal() always reads a valid value.
+  // year filter so saveRequestFromModal() always reads a valid value. Only for
+  // a request being composed: reseeding one already filed would silently move
+  // it to whatever year the filter happens to be on.
   const yearEl = document.getElementById("rfld_year");
-  if (yearEl && editable) yearEl.value = String(state.termFilter.year || 2026);
+  if (yearEl && editable && !isExistingRequest) yearEl.value = String(state.termFilter.year || 2026);
 
   // Seed the editing buffer from the request's existing changes (or legacy
   // single-change shape). Deep-copy so cancel doesn't mutate the saved state.
@@ -10130,8 +10139,7 @@ function openRequestModal(r) {
   // Timeline is no longer rendered (status is always Pending Approval until acted on).
   const tl = document.getElementById("reqTimeline");
   if (tl) tl.innerHTML = "";
-  const isExisting = state.requests.find(x => x.id === r.id);
-  document.getElementById("btnReqDelete").style.display = isExisting ? "" : "none";
+  document.getElementById("btnReqDelete").style.display = isExistingRequest ? "" : "none";
   document.getElementById("reqModal").classList.add("open");
   _updateReqSaveBtn(); // reset button label whenever the modal opens
 }
@@ -10159,7 +10167,8 @@ function openNewRequest(prefill = {}) {
 }
 function openEditRequest(id) {
   const r = state.requests.find(x => x.id === id);
-  if (r) openRequestModal(r);
+  // Edit means edit everything — modality, term, subterm and course included.
+  if (r) openRequestModal(r, { editable: true });
 }
 
 /* Open a pre-filled "Re-instate Course" request for a canceled offering.
