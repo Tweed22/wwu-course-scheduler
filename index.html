@@ -3725,25 +3725,30 @@ function termKey(semester, subterm, year) {
    e.g. academic year 2026 → Fall 2026 (key year 2026),
                               Spring 2027 (key year 2027),
                               Summer 2027 (key year 2027). */
-function calendarYearFor(semester, academicYear) {
-  return (semester === "Spring" || semester === "Summer") ? academicYear + 1 : academicYear;
+function storedYearFor(semester, academicYear) {
+  return (semester === "Spring" || semester === "Summer") ? Number(academicYear) + 1 : Number(academicYear);
+}
+/* Inverse: which academic year a stored term belongs to. */
+function academicYearFor(semester, storedYear) {
+  return (semester === "Spring" || semester === "Summer") ? Number(storedYear) - 1 : Number(storedYear);
 }
 function termStartDate(semester, subterm, year) {
   // Phase 4: admin overrides win. effectiveTermDates() falls back to the
   // hard-coded TERM_DATES bracket if there's no override for this key, so
   // existing code keeps working.
-  const calYear = calendarYearFor(semester, year);
+  // `year` is the term's own (true) year — what offerings store and the UI
+  // shows. TERM_DATES is keyed that way, so nothing is converted here; callers
+  // holding an ACADEMIC year convert with storedYearFor() first.
   if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, calYear).start || "";
+    return effectiveTermDates(semester, subterm, year).start || "";
   }
-  return (TERM_DATES[termKey(semester, subterm, calYear)] || {}).start || "";
+  return (TERM_DATES[termKey(semester, subterm, year)] || {}).start || "";
 }
 function termEndDate(semester, subterm, year) {
-  const calYear = calendarYearFor(semester, year);
   if (state && state.termDateOverrides) {
-    return effectiveTermDates(semester, subterm, calYear).end || "";
+    return effectiveTermDates(semester, subterm, year).end || "";
   }
-  return (TERM_DATES[termKey(semester, subterm, calYear)] || {}).end || "";
+  return (TERM_DATES[termKey(semester, subterm, year)] || {}).end || "";
 }
 /* Assignment deadline = 6 weeks (42 days) before the subterm start date. */
 function termAssignmentDeadline(semester, subterm, year) {
@@ -5484,19 +5489,22 @@ function syncOfferingsFromRotation(defaultYear, semesterFilter, opts) {
     ];
     for (const [semester, slots] of pairs) {
       if (semesterFilter && semester !== semesterFilter) continue;
+      // `year` is the academic year being generated; each semester stores its
+      // own true year, so Spring/Summer land in the next calendar year.
+      const storedYear = storedYearFor(semester, year);
       for (const slot of slots) {
         if (slot === "AN") continue; // As Needed: don't auto-schedule
-        const k = `${c.code}|${semester}|${slot}|${year}`;
+        const k = `${c.code}|${semester}|${slot}|${storedYear}`;
         if (haveCombo.has(k)) continue;
         // Also skip if this slot's primary subterm is already covered for
         // this course — prevents duplicate rows in the same Term tab.
         const primarySubterm = (subtermsForSlot(slot) || [])[0];
-        const sk = primarySubterm ? `${c.code}|${semester}|${primarySubterm}|${year}` : null;
+        const sk = primarySubterm ? `${c.code}|${semester}|${primarySubterm}|${storedYear}` : null;
         if (sk && haveSubterm.has(sk)) continue;
         const offering = newOffering({
           courseId: c.id,
           courseCode: c.code,
-          semester, year,
+          semester, year: storedYear,
           rotationSlot: slot,
           subterm: primarySubterm || "1A",
           length: SLOT_LENGTH[slot] || "5 Weeks",
@@ -5651,7 +5659,7 @@ function offeringsForSubterm(semester, subterm) {
     const seen = new Set();
     return state.offerings.filter(o => {
       if (o.semester !== semester) return false;
-      if (o.year !== state.termFilter.year) return false;
+      if (o.year !== storedYearFor(semester, state.termFilter.year)) return false;
       if (seen.has(o.id)) return false;
       const c = state.courses.find(x => x.id === o.courseId);
       if (isNurCode((c && c.code) || o.courseCode || "")) return false;
@@ -5663,7 +5671,7 @@ function offeringsForSubterm(semester, subterm) {
   if (!def) return [];
   return state.offerings.filter(o => {
     if (o.semester !== semester) return false;
-    if (o.year !== state.termFilter.year) return false;
+    if (o.year !== storedYearFor(semester, state.termFilter.year)) return false;
     if (!def.includes.includes(o.rotationSlot)) {
       // Not native to this tab. Every real slot has exactly one home tab and
       // the row is already listed there, so showing it here too would list the
@@ -5810,9 +5818,9 @@ function renderTermSubtermChips() {
   }).join("");
   const subRow = SUBTERMS.map(st => {
     const active = (state.termFilter.semester === st.semester && state.termFilter.subterm === st.subterm) ? " active" : "";
-    const calYear = calendarYearFor(st.semester, year);
-    const startISO = termStartDate(st.semester, st.subterm, year);
-    const deadlineISO = termAssignmentDeadline(st.semester, st.subterm, year);
+    const calYear = storedYearFor(st.semester, year);
+    const startISO = termStartDate(st.semester, st.subterm, calYear);
+    const deadlineISO = termAssignmentDeadline(st.semester, st.subterm, calYear);
     const tooltip = startISO
       ? `Starts ${fmtDateShort(startISO)} • Deadline ${fmtDateShort(deadlineISO)}`
       : `${st.label} ${calYear}`;
@@ -5825,9 +5833,9 @@ function renderTermStats(list) {
   const allMode = state.termFilter.subterm === "ALL";
   const def = activeSubtermDef();
   const year = state.termFilter.year;
-  const calYear = calendarYearFor(def.semester, year);
-  const startISO = allMode ? null : termStartDate(def.semester, def.subterm, year);
-  const deadlineISO = allMode ? null : termAssignmentDeadline(def.semester, def.subterm, year);
+  const calYear = storedYearFor(def.semester, year);
+  const startISO = allMode ? null : termStartDate(def.semester, def.subterm, calYear);
+  const deadlineISO = allMode ? null : termAssignmentDeadline(def.semester, def.subterm, calYear);
   // Toggle button: "Show All Courses" ↔ "Hide Others". Always visible so the
   // user can flip the filter in either direction without hunting for a control.
   const filterOn = state.termFilter.myCoursesOnly;
@@ -5874,7 +5882,7 @@ function renderTermStats(list) {
   // Wire up the Clear button. We do this here rather than in bindTermEvents
   // because the button is recreated on every renderTermStats.
   const cb = document.getElementById("btnClearTerm");
-  if (cb) cb.addEventListener("click", () => clearTermAssignments(def.semester, year));
+  if (cb) cb.addEventListener("click", () => clearTermAssignments(def.semester, storedYearFor(def.semester, year)));
 }
 
 // Admin action: nuke a term back to factory defaults. Per Tony's spec
@@ -5910,7 +5918,9 @@ function clearTermAssignments(semester, year) {
   });
   // Rebuild from the rotation sheet defaults — pass the semester so only
   // the cleared semester is rebuilt, not all three.
-  try { syncOfferingsFromRotation(year, semester); } catch (e) { _err("Rebuild after Clear Term failed", e); }
+  // syncOfferingsFromRotation takes the ACADEMIC year, while `year` here is
+  // this semester's stored year — convert back before rebuilding.
+  try { syncOfferingsFromRotation(academicYearFor(semester, year), semester); } catch (e) { _err("Rebuild after Clear Term failed", e); }
   setDirty(true);
   reRenderAll();
   toast(`Reset ${semester} ${year} — removed ${removedCount} section${removedCount === 1 ? "" : "s"} and rebuilt from rotation.`);
@@ -7303,7 +7313,7 @@ function regTermLabel(item) {
   // is ambiguous once two years sit side by side.
   // year is the ACADEMIC year (the year Fall starts); Spring and Summer belong
   // to the next calendar year, so academic 2026 must read "Spring 2027".
-  return yr ? `${label} ${calendarYearFor(term, Number(yr))}` : label;
+  return yr ? `${label} ${yr}` : label;
 }
 
 /* Sort key for the Term column: year first so the queue reads chronologically
@@ -7313,7 +7323,7 @@ function regTermSortKey(item) {
     ? [item.offering.semester, item.offering.subterm, item.offering.year]
     : [item.request.term, item.request.subterm, item.request.year];
   const def = SUBTERMS.find(s => s.semester === term && s.subterm === sub);
-  const calYr = yr ? calendarYearFor(term, Number(yr)) : "";
+  const calYr = yr || "";
   return `${calYr}|${def ? def.label : `${term || ""} ${sub || ""}`.trim()}`;
 }
 
@@ -8686,7 +8696,7 @@ function openSectionModal() {
   // Prefill from current Term Assignments view
   document.getElementById("sfld_semester").value = state.termFilter.semester || "Fall";
   document.getElementById("sfld_subterm").value  = state.termFilter.subterm  || "1A";
-  document.getElementById("sfld_year").value     = String(state.termFilter.year || 2026);
+  document.getElementById("sfld_year").value     = String(storedYearFor(state.termFilter.semester || "Fall", state.termFilter.year || 2026));
   // Reasonable length default based on current subterm (5-week subterms are 5W by default)
   document.getElementById("sfld_length").value   = "5 Weeks";
   document.getElementById("sfld_deanDisplay").textContent = "—";
@@ -8753,7 +8763,7 @@ function saveSectionFromModal() {
   // Jump the Term Assignments view to the subterm/year where the section was added
   state.termFilter.semester = o.semester;
   state.termFilter.subterm  = o.subterm;
-  state.termFilter.year     = o.year;
+  state.termFilter.year     = academicYearFor(o.semester, o.year);
   renderTerms();
   if (typeof renderRequests === "function") renderRequests();
   if (typeof renderChangelog === "function") renderChangelog();
@@ -9375,7 +9385,7 @@ function renderRequestTable(filtered) {
         <td>${escapeHtml(r.date ? fmtDateShort(r.date) : "")}</td>
         <td>${escapeHtml(sectionLongForm(r.section))}</td>
         <td>${escapeHtml(r.modality || "")}</td>
-        <td>${escapeHtml(r.term || "")} ${escapeHtml(String(r.year ? calendarYearFor(r.term, Number(r.year)) : ""))}</td>
+        <td>${escapeHtml(r.term || "")} ${escapeHtml(String(r.year || ""))}</td>
         <td>${escapeHtml(r.subterm || "")}</td>
         <td class="code">${escapeHtml(code)}</td>
         <td><span class="ct-pill ${ctClass}">${escapeHtml(r.changeType || "")}</span>${
@@ -10042,8 +10052,8 @@ function syncContextFieldToHidden(el) {
     }
   } else if (key === "term") {
     document.getElementById("rfld_term").value = el.value;
-    // Year is hidden but must stay in sync — always the current academic year.
-    document.getElementById("rfld_year").value = String(state.termFilter.year || 2026);
+    // Year is hidden but must stay in sync — the chosen term's own true year.
+    document.getElementById("rfld_year").value = String(storedYearFor(el.value, state.termFilter.year || 2026));
   } else if (key === "subterm") {
     document.getElementById("rfld_subterm").value = el.value;
   } else if (key === "year") {
@@ -10099,7 +10109,7 @@ function renderRequestHeader(editable) {
       <div class="rs-meta-row">
         <span class="rs-pill">${escapeHtml(sectionLongForm(sectionVal) || "Undergraduate")}</span>
         <span class="rs-pill">${escapeHtml(modalityVal)}</span>
-        <span class="rs-pill">${escapeHtml(termVal)} ${escapeHtml(String(calendarYearFor(termVal, Number(yearVal))))}</span>
+        <span class="rs-pill">${escapeHtml(termVal)} ${escapeHtml(String(yearVal))}</span>
         <span class="rs-pill">${escapeHtml(subtermVal)}</span>
       </div>
       <div class="rs-meta-row rs-submitter">
@@ -10166,7 +10176,7 @@ function openRequestModal(r, opts) {
   // a request being composed: reseeding one already filed would silently move
   // it to whatever year the filter happens to be on.
   const yearEl = document.getElementById("rfld_year");
-  if (yearEl && editable && !isExistingRequest) yearEl.value = String(state.termFilter.year || 2026);
+  if (yearEl && editable && !isExistingRequest) yearEl.value = String(storedYearFor(r.term || "Fall", state.termFilter.year || 2026));
 
   // Seed the editing buffer from the request's existing changes (or legacy
   // single-change shape). Deep-copy so cancel doesn't mutate the saved state.
@@ -11128,7 +11138,7 @@ async function init() {
   if (_bestSub) {
     state.termFilter.semester = _bestSub.semester;
     state.termFilter.subterm  = _bestSub.subterm;
-    state.termFilter.year     = _bestSub.year;
+    state.termFilter.year     = academicYearFor(_bestSub.semester, _bestSub.year);
     const _yrEl = document.getElementById("tfYear");
     if (_yrEl) _yrEl.value = String(_bestSub.year);
   }
