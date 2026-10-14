@@ -1666,6 +1666,9 @@
   }
   .cb-ctx-title.has-match  { color: var(--ok); background: var(--ok-bg, #eef6ee); border-color: var(--ok); font-style: normal; font-weight: 600; }
   .cb-ctx-title.no-match   { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); font-style: normal; }
+  /* Not in the rotation sheet is normal — a course can be offered out of
+     rotation — so it is stated plainly rather than flagged as an error. */
+  .cb-ctx-title.off-rotation { color: var(--text-muted); font-style: normal; }
   html.dark .cb-ctx-title.has-match { background: rgba(90,181,125,0.12); }
   html.dark .cb-ctx-title.no-match  { background: rgba(215,117,117,0.12); }
 
@@ -6224,7 +6227,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
     section:       c.section === "graduate" ? "Grad" : "Undergrad",
     modality,
     term:          o.semester,
-    subterm:       o.subterm,
+    subterm:       reqSubtermLabelForOffering(o),
     year:          o.year,
     prefix:        parts[0] || "",
     number:        parts[1] || "",
@@ -6380,7 +6383,7 @@ function cancelCourseOffering(offeringId) {
     section:     c.section === "graduate" ? "Grad" : "Undergrad",
     modality:    (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
     term:        o.semester,
-    subterm:     o.subterm,
+    subterm:     reqSubtermLabelForOffering(o),
     year:        o.year,
     prefix:      parts[0] || "",
     number:      parts[1] || "",
@@ -9697,8 +9700,8 @@ function renderChangeBlock(idx, ch) {
       : null;
     const titleText = exactMatch
       ? exactMatch.title || "Untitled course"
-      : (curCourse ? "Course not in rotation" : "Start typing to find a course…");
-    const titleClass = exactMatch ? "has-match" : (curCourse ? "no-match" : "");
+      : (curCourse ? "Not in rotation — will be used as typed" : "Start typing to find a course…");
+    const titleClass = exactMatch ? "has-match" : (curCourse ? "off-rotation" : "");
 
     // Shared helper to render type-specific detail fields (instructor, days…).
     const renderDetailFields = () => {
@@ -9730,8 +9733,8 @@ function renderChangeBlock(idx, ch) {
       <div>
         <label>Subterm</label>
         <select data-rf="subterm">
-          ${["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"]
-            .map(s => `<option${s === curSubterm ? " selected" : ""}>${s}</option>`).join("")}
+          ${REQ_SUBTERM_OPTIONS
+            .map(s => `<option${s === normalizeReqSubtermLabel(curSubterm) ? " selected" : ""}>${s}</option>`).join("")}
         </select>
       </div>`;
 
@@ -9801,8 +9804,8 @@ function renderChangeBlock(idx, ch) {
         const _hasSel = !!selCourse;
         const _rawSel = isOnGround ? !!(document.getElementById("rfld_prefix").value) : !!curOfferingId;
         const offeringTitle = _hasSel ? (selCourse.title || "Untitled course")
-          : (_rawSel ? "Course not found" : "Select a semester, then start typing…");
-        const offeringTitleCls = _hasSel ? "has-match" : (_rawSel ? "no-match" : "");
+          : (_rawSel ? "Not in rotation — will be used as typed" : "Select a semester, then start typing…");
+        const offeringTitleCls = _hasSel ? "has-match" : (_rawSel ? "off-rotation" : "");
 
         const _listLen = isOnGround ? ogList.length : filteredOff.length;
         const emptyHint = _listLen === 0
@@ -10140,7 +10143,7 @@ function renderRequestHeader(editable) {
   if (h2) h2.style.display = "";
   const codeStr = `${ document.getElementById("rfld_prefix").value || "" } ${ document.getElementById("rfld_number").value || "" }`.trim();
   const course = codeStr ? state.courses.find(c => (c.code || "").trim().toUpperCase() === codeStr.toUpperCase()) : null;
-  const title = course ? (course.title || "Untitled course") : (codeStr ? "Course not in current rotation" : "No course selected");
+  const title = course ? (course.title || "Untitled course") : (codeStr ? "Not in current rotation" : "No course selected");
   const sectionVal = document.getElementById("rfld_section").value || "Undergrad";
   const modalityVal = document.getElementById("rfld_modality").value || "On-Ground";
   const termVal = document.getElementById("rfld_term").value || "Fall";
@@ -10199,7 +10202,12 @@ function openRequestModal(r, opts) {
       : "";
   }
   document.getElementById("rfld_term").value = r.term || "Fall";
-  document.getElementById("rfld_subterm").value = r.subterm || "Semester";
+  // Prefer the linked offering's slot: it is authoritative, and it repairs
+  // older requests that stored a raw grid code and so lost their F/L identity.
+  const _linkedForSubterm = r.offeringId ? state.offerings.find(x => x.id === r.offeringId) : null;
+  document.getElementById("rfld_subterm").value = _linkedForSubterm
+    ? reqSubtermLabelForOffering(_linkedForSubterm)
+    : normalizeReqSubtermLabel(r.subterm || "Semester");
   document.getElementById("rfld_year").value = r.year || 2026;
   document.getElementById("rfld_prefix").value = r.prefix || "";
   document.getElementById("rfld_number").value = r.number || "";
@@ -10288,7 +10296,7 @@ function openReinstateRequest(offeringId) {
     section: c.section === "graduate" ? "Grad" : "Undergrad",
     modality: (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
     term: o.semester,
-    subterm: o.subterm,
+    subterm: reqSubtermLabelForOffering(o),
     year: o.year,
     courseId: c.id,
     changeType: "Re-instate Course",
@@ -10322,7 +10330,7 @@ function openRequestForCourse(courseId, offeringId) {
     offeringId:    offeringId || "",   // scopes instructor changes to this section
     sectionNumber: o ? sectionNumberFor(o) : "",
     term:          o ? o.semester : "",
-    subterm:       o ? o.subterm  : "",
+    subterm:       o ? reqSubtermLabelForOffering(o) : "",
     year:          o ? o.year     : "",
     changeType:    defaultChangeType,
     changes:       [{ type: defaultChangeType, fields: hasInstructor ? { instructor: o.instructor } : {} }],
@@ -10331,6 +10339,37 @@ function openRequestForCourse(courseId, offeringId) {
 
 /* Map the human-readable subterm string used in the change-request form
    to the internal rotationSlot letter and SUBTERMS subterm code. */
+const REQ_SUBTERM_OPTIONS = ["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"];
+
+/* Accept a raw grid code where a form label is expected. Older requests stored
+   "1A"/"2B"/"3C", which matches no <option>, so the dropdown could neither show
+   the real subterm nor let anyone change it. */
+function normalizeReqSubtermLabel(v) {
+  if (REQ_SUBTERM_OPTIONS.includes(v)) return v;
+  if (v === "1A") return "A (5-week)";
+  if (v === "2B") return "B (5-week)";
+  if (v === "3C") return "C (5-week)";
+  return "Semester";
+}
+
+/* The subterm label for a change request raised against an offering.
+
+   An offering carries BOTH a rotationSlot and a grid subterm — a 10-week first
+   half is slot "F" sitting in subterm "1A". Copying o.subterm alone flattened F
+   onto "A (5-week)", so a 10-week section arrived at the registrar looking like
+   a 5-week one. Derive from the slot, which is what actually distinguishes
+   them, and fall back to the grid code only when there is no usable slot. */
+function reqSubtermLabelForOffering(o) {
+  const slot = (o && o.rotationSlot) || "";
+  if (slot === "F") return "F (10-week First)";
+  if (slot === "L") return "L (10-week Last)";
+  if (slot === "15W" || slot === "16W") return "16-week";
+  if (slot === "A") return "A (5-week)";
+  if (slot === "B") return "B (5-week)";
+  if (slot === "C") return "C (5-week)";
+  return normalizeReqSubtermLabel((o && o.subterm) || "");
+}
+
 function reqSubtermToSlot(s) {
   if (!s || s === "Semester")           return { slot: "16W", subterm: "1A" };
   if (s === "A (5-week)")               return { slot: "A",   subterm: "1A" };
@@ -10824,8 +10863,8 @@ function bindRequestEvents() {
               titleEl.textContent = c.title || "Untitled course";
               titleEl.className = "cb-ctx-title has-match";
             } else if (raw) {
-              titleEl.textContent = "No match in this term";
-              titleEl.className = "cb-ctx-title no-match";
+              titleEl.textContent = "Not in this term's rotation — will be used as typed";
+              titleEl.className = "cb-ctx-title off-rotation";
             } else {
               titleEl.textContent = "Select a semester and subterm, then start typing…";
               titleEl.className = "cb-ctx-title";
@@ -10856,8 +10895,8 @@ function bindRequestEvents() {
         titleEl.textContent = match.title || "Untitled course";
         titleEl.className = "cb-ctx-title has-match";
       } else if (raw) {
-        titleEl.textContent = "Course not in rotation";
-        titleEl.className = "cb-ctx-title no-match";
+        titleEl.textContent = "Not in rotation — will be used as typed";
+        titleEl.className = "cb-ctx-title off-rotation";
       } else {
         titleEl.textContent = "Start typing to find a course…";
         titleEl.className = "cb-ctx-title";
@@ -10879,8 +10918,8 @@ function bindRequestEvents() {
         titleEl.textContent = c.title || "Untitled course";
         titleEl.className = "cb-ctx-title has-match";
       } else if (raw) {
-        titleEl.textContent = "No match in this term";
-        titleEl.className = "cb-ctx-title no-match";
+        titleEl.textContent = "Not in this term's rotation — will be used as typed";
+        titleEl.className = "cb-ctx-title off-rotation";
       } else {
         titleEl.textContent = "Select a semester and subterm, then start typing…";
         titleEl.className = "cb-ctx-title";
