@@ -4106,6 +4106,7 @@ function offeringToRow(o) {
     submitted_at: o.submittedAt || null,
     registrar_completed: !!o.registrarCompleted,
     registrar_completed_at: o.registrarCompletedAt || null,
+    modality: offeringModality(o),
   };
   if (_hasDataColumn) row.data = o;
   return row;
@@ -7369,17 +7370,53 @@ function regTermSortKey(item) {
   return `${calYr}|${def ? def.label : `${term || ""} ${sub || ""}`.trim()}`;
 }
 
-/* Modality for a queue row. Change requests carry it explicitly. Sections do
-   not — but offerings are generated only from a course's online rotation
-   (syncOfferingsFromRotation reads onlineFall/onlineSpring/onlineSummer), so a
-   section is Online whenever its course has any online chunk, and On-Ground is
-   the honest answer when it does not. */
+/* Modality of a section. Offerings are generated only from a course's online rotation
+   (syncOfferingsFromRotation reads onlineFall/onlineSpring/onlineSummer), so a section
+   is Online whenever its course has any online chunk — "AN" counts, it means offered
+   online as needed — and On-Ground is the honest answer when it does not.
+
+   This is written to offerings.modality as well as shown in the queue. The column has a
+   DEFAULT of 'Online' and nothing used to write it, so every row in the database claimed
+   to be online whether it was or not. The Degree Planner reads those rows to tell online
+   students what they can take, so an unwritten column there meant on-ground sections
+   being recommended to online students. */
+const ADD_TYPES = ["Add Course", "Add Section", "Add Section & Split Enrollment"];
+function offeringModality(o) {
+  // 1. What the offering itself was told, if anything set it.
+  if (o.modality === "Online" || o.modality === "On-Ground") return o.modality;
+
+  // 2. What the dean or program manager actually chose. On-ground sections reach the
+  //    schedule through a change request, and Modality is a required field on that form,
+  //    so the request is the only place the answer is stated rather than inferred.
+  //    Subterm wording differs between the request form ("Semester", "A (5-week)") and
+  //    the offering ("1A"), so the match is course + term + year, narrowed by section
+  //    number when both carry one.
+  const course = (state.courses || []).find((x) => x.id === o.courseId) || {};
+  const code = (course.code || o.courseCode || "").trim().toUpperCase();
+  const sect = String(sectionNumberFor(o) || "").replace(/^0+/, "");
+  const said = new Set();
+  for (const r of state.requests || []) {
+    if (!ADD_TYPES.includes(r.changeType)) continue;
+    if (!["Approved", "Finalized"].includes(r.status)) continue;
+    if (`${r.prefix || ""} ${r.number || ""}`.trim().toUpperCase() !== code) continue;
+    if ((r.term || "") !== (o.semester || "")) continue;
+    if (String(r.year || "") !== String(o.year || "")) continue;
+    const rs = String(r.sectionNumber || "").replace(/^0+/, "");
+    if (rs && sect && rs !== sect) continue;
+    if (r.modality) said.add(r.modality);
+  }
+  // One clear answer wins. A course delivered both ways in the same term (it happens)
+  // leaves it ambiguous, so fall through rather than guess which section this is.
+  if (said.size === 1) return [...said][0];
+
+  // 3. Nothing was requested: the row came from syncOfferingsFromRotation, which
+  //    generates only from the ONLINE rotation columns.
+  const online = !!((course.onlineFall || []).length || (course.onlineSpring || []).length || (course.onlineSummer || []).length);
+  return online ? "Online" : "On-Ground";
+}
 function regModality(item) {
   if (item.kind === "request") return item.request.modality || "—";
-  const o = item.offering;
-  const c = (state.courses || []).find(x => x.id === o.courseId) || {};
-  const online = !!((c.onlineFall||[]).length || (c.onlineSpring||[]).length || (c.onlineSummer||[]).length);
-  return online ? "Online" : "On-Ground";
+  return offeringModality(item.offering);
 }
 
 /* Registrar's own note on a queue row. Stored on the offering or the request,
