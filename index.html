@@ -282,8 +282,15 @@
      background (it was painting the whole row near-white). Force both the tr
      and the td cells to transparent so the row keeps the surrounding dark
      surface, and tint the text teal so the "submitted" state reads via color. */
-  html.dark .term-table tr.submitted { background: transparent !important; }
-  html.dark .term-table tr.submitted td { background: transparent !important; color: #5ab57d; }
+  html.dark .term-table tr.submitted,
+  html.dark .term-table tr.done { background: transparent !important; }
+  html.dark .term-table tr.submitted td,
+  html.dark .term-table tr.done td { background: transparent !important; color: #5ab57d; }
+  /* Muted cells inside a completed row follow the row, not their own colour. */
+  html.dark .term-table tr.submitted td .instr-plain,
+  html.dark .term-table tr.done td .instr-plain,
+  html.dark .term-table tr.submitted td .section-num,
+  html.dark .term-table tr.done td .section-num { color: #5ab57d; }
   html.dark .term-table tr.submitted input[data-field="instructor"],
   html.dark .term-table tr.done input[data-field="instructor"] {
     background: transparent !important;
@@ -316,7 +323,8 @@
     color: var(--text);
   }
   /* Submitted rows keep their state on hover. */
-  html.dark .term-table tbody tr.submitted:hover td { background: transparent !important; color: #5ab57d; }
+  html.dark .term-table tbody tr.submitted:hover td,
+  html.dark .term-table tbody tr.done:hover td { background: transparent !important; color: #5ab57d; }
   html.dark .req-table th { background: #232323; color: #909090; border-bottom-color: var(--border); }
   html.dark .req-table td { border-bottom-color: var(--border); }
   /* Subterm chips. */
@@ -1087,7 +1095,8 @@
   .term-table .add-section-btn:hover { background: var(--wwu-green); color: white; border-color: var(--wwu-green); }
   .term-table .add-section-btn.remove-section-btn { color: var(--danger); border-color: var(--danger); background: white; }
   .term-table .add-section-btn.remove-section-btn:hover { background: var(--danger); color: white; }
-  .term-table tr.submitted { background: #f4f7f5; }
+  .term-table tr.submitted,
+  .term-table tr.done { background: #f4f7f5; }
   .term-table tr.submitted input[data-field="instructor"],
   .term-table tr.done input[data-field="instructor"] {
     background: #eef0ef;
