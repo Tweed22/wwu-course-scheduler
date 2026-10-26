@@ -2584,7 +2584,7 @@
           <div>
             <div id="rfld_changeList" style="display:flex;flex-direction:column;gap:10px;"></div>
             <div style="margin-top:10px;display:flex;justify-content:flex-start;">
-              <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;">+ Add change</button>
+              <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;">+ Request additional Changes to this course</button>
             </div>
             <input id="rfld_changeType" type="hidden" value="Modify Time/Day">
           </div>
@@ -9876,8 +9876,24 @@ function renderChangeBlock(idx, ch) {
           selCourse = _code ? ogList.find(c => String(c.code || "").toUpperCase() === _code) || null : null;
           curInputVal = selCourse ? onGroundCourseLabel(selCourse) : "";
         }
+        // Editing an existing request: the picker resolves a row only when the
+        // course still has a matching offering in the chosen term. When it does
+        // not — out of rotation, or the offering has since moved — fall back to
+        // the code already stored on the request, so the field arrives filled in
+        // rather than blank and waiting to be re-typed.
+        if (!curInputVal) {
+          const _fp = document.getElementById("rfld_prefix").value || "";
+          const _fn = document.getElementById("rfld_number").value || "";
+          const _fcode = [_fp, _fn].filter(Boolean).join(" ").trim();
+          if (_fcode) {
+            const _fc = (state.courses || []).find(c =>
+              (c.code || "").trim().toUpperCase() === _fcode.toUpperCase());
+            if (_fc) { selCourse = selCourse || _fc; curInputVal = onGroundCourseLabel(_fc); }
+            else     { curInputVal = _fcode; }
+          }
+        }
         const _hasSel = !!selCourse;
-        const _rawSel = isOnGround ? !!(document.getElementById("rfld_prefix").value) : !!curOfferingId;
+        const _rawSel = !!curInputVal;
         const offeringTitle = _hasSel ? (selCourse.title || "Untitled course")
           : (_rawSel ? "Not in rotation — will be used as typed" : "Select a semester, then start typing…");
         const offeringTitleCls = _hasSel ? "has-match" : (_rawSel ? "off-rotation" : "");
@@ -9964,9 +9980,9 @@ function renderChangeBlock(idx, ch) {
     return `
       <div class="change-block" data-cb-idx="${idx}" style="border:none;padding:0;gap:12px;">
         <div>
-          <div class="cb-type-prompt">What would you like to request?</div>
+          <div class="cb-type-prompt">What would you like to request? <span style="color:var(--danger);font-weight:700;">*</span></div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <select data-cb-type class="cb-type-large">
+            <select data-cb-type class="cb-type-large" required>
               <option value="">— Select a change type —</option>
               ${opts}
             </select>
@@ -9998,7 +10014,7 @@ function renderChangeBlock(idx, ch) {
   return `
     <div class="change-block" data-cb-idx="${idx}">
       <div class="cb-header">
-        <select data-cb-type>${opts}</select>
+        <select data-cb-type required>${opts}</select>
         <button type="button" class="cb-remove" data-cb-remove title="Remove this change">×</button>
       </div>
       <div class="cb-fields">${fieldsHtml}</div>
@@ -10566,8 +10582,20 @@ function saveRequestFromModal() {
     if (_courseField) _courseField.focus();
     return;
   }
-  const buf = (state.editingChanges || []).filter(ch => ch && ch.type);
-  if (!buf.length) { toast("Add at least one change"); return; }
+  const _allChanges = state.editingChanges || [];
+  if (!_allChanges.length) { toast("Add at least one change"); return; }
+  // A block with no type used to be dropped silently, so a request could save
+  // with fewer changes than the user had filled in — or bounce with the vague
+  // "Add at least one change". Name the problem and focus the offending block.
+  const _untyped = _allChanges.findIndex(ch => !ch || !ch.type);
+  if (_untyped !== -1) {
+    toast("Choose a type of change before saving", "error");
+    const _sel = document.querySelector(
+      `#rfld_changeList .change-block[data-cb-idx="${_untyped}"] [data-cb-type]`);
+    if (_sel) _sel.focus();
+    return;
+  }
+  const buf = _allChanges;
   draft.changes = buf.map(ch => ({ type: ch.type, fields: Object.assign({}, ch.fields || {}) }));
   draft.changeType = buf[0].type;
   draft.explanation = composeExplanation(buf);
