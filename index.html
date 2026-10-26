@@ -2657,15 +2657,7 @@
               <option value="2028">2028</option>
             </select>
           </div>
-          <div>
-            <label>Dean <span style="color:var(--text-muted);font-weight:400;">(auto)</span></label>
-            <div id="sfld_deanDisplay" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-muted,#f5f5f5);color:var(--text-muted);min-height:18px;">—</div>
-          </div>
-          <div>
-            <label>Program Manager <span style="color:var(--text-muted);font-weight:400;">(auto)</span></label>
-            <div id="sfld_pmDisplay" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-muted,#f5f5f5);color:var(--text-muted);min-height:18px;">—</div>
-            <input type="hidden" id="sfld_pm">
-          </div>
+          <input type="hidden" id="sfld_pm">
           <div style="grid-column: 1 / -1;">
             <label for="sfld_instructor">Assigned Instructor <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
             <input type="text" id="sfld_instructor" list="instrList" placeholder="Instructor…">
@@ -8782,12 +8774,8 @@ function openSectionModal() {
   // Prefill from current Term Assignments view
   document.getElementById("sfld_semterm").value  = `${state.termFilter.semester || "Fall"} ${({"1A":"A","2B":"B","3C":"C"})[state.termFilter.subterm] || "A"}`;
   document.getElementById("sfld_year").value     = String(storedYearFor(state.termFilter.semester || "Fall", state.termFilter.year || 2026));
-  document.getElementById("sfld_deanDisplay").textContent = "—";
-  // PM is now auto-derived from state.pmByCourse — the visible field is a
-  // display-only div; the hidden input mirrors the same value for the form
-  // submit handler that reads sfld_pm.value.
-  const pmDisp = document.getElementById("sfld_pmDisplay");
-  if (pmDisp) pmDisp.textContent = "—";
+  // Dean and PM are auto-derived from the selected course on submit; no
+  // visible fields. The hidden sfld_pm input is reset here for safety.
   document.getElementById("sfld_pm").value = "";
   document.getElementById("sfld_instructor").value = "";
   document.getElementById("sfld_notes").value = "";
@@ -9299,31 +9287,21 @@ function bindTermEvents() {
   // Live validation hint as user types the course
   document.getElementById("sfld_course").addEventListener("input", (e) => {
     const hint = document.getElementById("sfld_courseHint");
-    const deanDisp = document.getElementById("sfld_deanDisplay");
-    const pmDisp = document.getElementById("sfld_pmDisplay");
     const pmHidden = document.getElementById("sfld_pm");
     const c = findCourseByInput(e.target.value);
     if (!e.target.value.trim()) {
       hint.textContent = "";
-      if (deanDisp) deanDisp.textContent = "—";
-      if (pmDisp) pmDisp.textContent = "—";
       if (pmHidden) pmHidden.value = "";
       return;
     }
     if (c) {
       hint.textContent = `✓ ${c.code} — ${c.title || ""}`;
       hint.style.color = "var(--ok)";
-      if (deanDisp) deanDisp.textContent = deanForCourse(c) || "—";
-      // PM is now auto-derived from the admin-uploaded CSV mapping (primary + co-PM).
-      const pm  = pmForCode(c.code);
-      const pm2 = pm2ForCode(c.code);
-      if (pmDisp) pmDisp.textContent = [pm, pm2].filter(Boolean).join(", ") || "—";
-      if (pmHidden) pmHidden.value = pm;
+      // Dean and PM are auto-derived on submit; only the hidden PM input is set.
+      if (pmHidden) pmHidden.value = pmForCode(c.code);
     } else {
       hint.textContent = "No course matches that yet";
       hint.style.color = "var(--text-muted)";
-      if (deanDisp) deanDisp.textContent = "—";
-      if (pmDisp) pmDisp.textContent = "—";
       if (pmHidden) pmHidden.value = "";
     }
   });
@@ -9805,9 +9783,18 @@ function renderChangeBlock(idx, ch) {
       </div>`;
 
     // Context section: course + contextual fields + type-specific fields.
+    // Only the first change block (idx 0) prompts for course / term / section /
+    // modality; additional changes are for the same course, so blocks after the
+    // first inherit that shared context from the hidden rfld_* fields and render
+    // only their own type-specific detail fields.
+    const showCtx = idx === 0;
     let contextHtml = "";
     if (ch.type) {
-      if (cfg.termFirst) {
+      if (!showCtx) {
+        contextHtml += `
+        <div class="full" style="font-size:12px;color:var(--text-muted);background:var(--bg-muted,#f5f5f5);border-radius:6px;padding:7px 10px;">↳ Same course, section &amp; term as the first change above.</div>`;
+        contextHtml += renderDetailFields();
+      } else if (cfg.termFirst) {
         // ── Term-first flow: Semester → Subterm → filtered offering picker ──────
         // Modality first if applicable (Add Section).
         if (cfg.modality) {
