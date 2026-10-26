@@ -6211,7 +6211,10 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const def = SUBTERMS.find(s => s.semester === o.semester && s.subterm === o.subterm);
   const who = state.userName || (opts.submitter || "(unknown)");
   const sectionLabel = `section ${sectionNumberFor(o)}`;
-  const termLabel = termPhraseForOffering(o);
+  // On-Ground sections are always full-semester — never a 5/10-week sub-term.
+  const termLabel = ((c.onlineFall||[]).length || (c.onlineSpring||[]).length || (c.onlineSummer||[]).length)
+    ? termPhraseForOffering(o)
+    : `${o.semester} Semester`;
   const instr = (o.instructor || "").trim();
 
   const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
@@ -6235,7 +6238,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
     section:       c.section === "graduate" ? "Grad" : "Undergrad",
     modality,
     term:          o.semester,
-    subterm:       reqSubtermLabelForOffering(o),
+    subterm:       isOnline ? reqSubtermLabelForOffering(o) : "Semester",
     year:          o.year,
     prefix:        parts[0] || "",
     number:        parts[1] || "",
@@ -9796,18 +9799,17 @@ function renderChangeBlock(idx, ch) {
       return html;
     };
 
+    const _curSemTerm = `${curTerm} ${SUBTERM_SHORT[normalizeReqSubtermLabel(curSubterm)] || "Semester"}`;
     const termSelectors = `
-      <div>
-        <label>Semester</label>
-        <select data-rf="term">
-          ${["Fall","Spring","Summer"].map(t => `<option${t === curTerm ? " selected" : ""}>${t}</option>`).join("")}
-        </select>
-      </div>
-      <div>
-        <label>Subterm</label>
-        <select data-rf="subterm">
-          ${REQ_SUBTERM_OPTIONS
-            .map(s => `<option${s === normalizeReqSubtermLabel(curSubterm) ? " selected" : ""}>${s}</option>`).join("")}
+      <div class="full">
+        <label>Semester &amp; Term</label>
+        <select data-rf="semesterTerm">
+          ${["Fall","Spring","Summer"].flatMap(sem =>
+             SEM_TERM_SHORTS.map(t => {
+               const val = `${sem} ${t}`;
+               return `<option${val === _curSemTerm ? " selected" : ""}>${val}</option>`;
+             })
+           ).join("")}
         </select>
       </div>`;
 
@@ -10200,6 +10202,14 @@ function syncContextFieldToHidden(el) {
     document.getElementById("rfld_year").value = String(storedYearFor(el.value, state.termFilter.year || 2026));
   } else if (key === "subterm") {
     document.getElementById("rfld_subterm").value = el.value;
+  } else if (key === "semesterTerm") {
+    // Combined "Fall A" / "Fall Semester" value → split into term + subterm.
+    const sp = String(el.value || "").indexOf(" ");
+    const sem = sp > 0 ? el.value.slice(0, sp) : (el.value || "Fall");
+    const short = sp > 0 ? el.value.slice(sp + 1) : "Semester";
+    document.getElementById("rfld_term").value = sem;
+    document.getElementById("rfld_subterm").value = SEM_TERM_TO_SUBTERM[short] || "Semester";
+    document.getElementById("rfld_year").value = String(storedYearFor(sem, state.termFilter.year || 2026));
   } else if (key === "year") {
     document.getElementById("rfld_year").value = el.value;
   }
@@ -10428,6 +10438,18 @@ function openRequestForCourse(courseId, offeringId) {
 /* Map the human-readable subterm string used in the change-request form
    to the internal rotationSlot letter and SUBTERMS subterm code. */
 const REQ_SUBTERM_OPTIONS = ["Semester","A (5-week)","B (5-week)","C (5-week)","F (10-week First)","L (10-week Last)","16-week"];
+// Combined "Semester & Term" dropdown: short term codes and the mappings between
+// them and the full subterm labels that reqSubtermToSlot understands.
+const SEM_TERM_SHORTS = ["Semester","A","B","C","F","L"];
+const SUBTERM_SHORT = {
+  "Semester":"Semester", "16-week":"Semester",
+  "A (5-week)":"A", "B (5-week)":"B", "C (5-week)":"C",
+  "F (10-week First)":"F", "L (10-week Last)":"L",
+};
+const SEM_TERM_TO_SUBTERM = {
+  "Semester":"Semester", "A":"A (5-week)", "B":"B (5-week)", "C":"C (5-week)",
+  "F":"F (10-week First)", "L":"L (10-week Last)",
+};
 
 /* Accept a raw grid code where a form label is expected. Older requests stored
    "1A"/"2B"/"3C", which matches no <option>, so the dropdown could neither show
@@ -10464,7 +10486,7 @@ function reqSubtermLabelForOffering(o) {
   const slot = (o && o.rotationSlot) || "";
   if (slot === "F") return "F (10-week First)";
   if (slot === "L") return "L (10-week Last)";
-  if (slot === "15W" || slot === "16W") return "16-week";
+  if (slot === "15W" || slot === "16W") return "Semester";
   if (slot === "A") return "A (5-week)";
   if (slot === "B") return "B (5-week)";
   if (slot === "C") return "C (5-week)";
@@ -10951,10 +10973,10 @@ function bindRequestEvents() {
       syncContextFieldToHidden(e.target);
       const rf = e.target.dataset.rf;
       // Re-render to update filtered picker or show/hide fields.
-      if (rf === "modality" || rf === "term" || rf === "subterm") {
+      if (rf === "modality" || rf === "term" || rf === "subterm" || rf === "semesterTerm") {
         // Semester/subterm changed: keep the course the user already picked and
         // re-point the offering link at the same course in the new term.
-        if ((rf === "term" || rf === "subterm") && state.requestHeaderEditable) {
+        if ((rf === "term" || rf === "subterm" || rf === "semesterTerm") && state.requestHeaderEditable) {
           const cfg = CONTEXT_FIELD_CONFIG[(state.editingChanges && state.editingChanges[0] && state.editingChanges[0].type) || ""] || {};
           if (cfg.termFirst) retargetOfferingToCurrentTerm();
         }
