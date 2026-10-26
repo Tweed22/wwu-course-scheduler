@@ -2583,9 +2583,6 @@
         <div class="row full" id="reqChangeSection">
           <div>
             <div id="rfld_changeList" style="display:flex;flex-direction:column;gap:10px;"></div>
-            <div style="margin-top:10px;display:flex;justify-content:flex-start;">
-              <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;">+ Request additional Changes to this course</button>
-            </div>
             <input id="rfld_changeType" type="hidden" value="Modify Time/Day">
           </div>
         </div>
@@ -2601,9 +2598,10 @@
       </div>
       <footer>
         <button type="button" class="danger" id="btnReqDelete" style="display:none;">Delete</button>
-        <div style="display:flex;gap:8px;margin-left:auto;">
+        <div style="display:flex;gap:8px;margin-left:auto;align-items:center;">
+          <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;white-space:nowrap;">+ Request additional Changes to this course</button>
           <button type="button" id="btnReqCancel">Cancel</button>
-          <button type="submit" class="primary" id="btnReqSave">Save</button>
+          <button type="submit" class="primary" id="btnReqSave">Submit for Approval</button>
         </div>
       </footer>
     </form>
@@ -7081,7 +7079,9 @@ function _updateReqSaveBtn() {
   const modality   = (document.getElementById("rfld_modality") || {}).value || "";
   const instrEl    = document.querySelector("#rfld_changeList [data-cb-key='instructor']");
   const hasInstr   = !!(instrEl && instrEl.value.trim());
-  if (btn) btn.textContent = (modality === "Online" && hasInstr) ? "Save & Generate Contract" : "Save";
+  if (btn) btn.textContent = (modality === "Online" && hasInstr)
+    ? "Submit for Approval & Generate Contract"
+    : "Submit for Approval";
   // Hide change section and rationale until modality is chosen.
   const hidden = !modality;
   const section = document.getElementById("reqChangeSection");
