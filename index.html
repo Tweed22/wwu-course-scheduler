@@ -2596,13 +2596,11 @@
              It's populated on save with a composite of the per-change details. -->
         <input id="rfld_explanation" type="hidden" value="">
       </div>
-      <footer>
+      <footer style="display:flex;gap:8px;align-items:center;">
         <button type="button" class="danger" id="btnReqDelete" style="display:none;">Delete</button>
-        <div style="display:flex;gap:8px;margin-left:auto;align-items:center;">
-          <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;white-space:nowrap;">+ Request additional Changes to this course</button>
-          <button type="button" id="btnReqCancel">Cancel</button>
-          <button type="submit" class="primary" id="btnReqSave">Submit for Approval</button>
-        </div>
+        <button type="button" id="btnReqAddChange" class="add-section-btn" title="Add another change to this request" style="padding:6px 14px;font-weight:600;white-space:nowrap;">Request Additional Changes to this Course</button>
+        <button type="submit" class="primary" id="btnReqSave" style="margin-left:auto;background:var(--wwu-green);border-color:var(--wwu-green);color:#fff;">Submit for Approval</button>
+        <button type="button" id="btnReqCancel">Cancel</button>
       </footer>
     </form>
   </div>
@@ -7608,7 +7606,7 @@ function renderRegTable(list) {
           <td class="code">${escapeHtml(c.code||"")}</td>
           <td>${escapeHtml(regTermLabel(item))}</td>
           <td>${escapeHtml(regModality(item))}</td>
-          <td>${escapeHtml(changeType)}</td>
+          <td><span class="ct-pill ${CHANGE_TYPE_CLASS[changeType]||'ct-pill'}">${escapeHtml(changeType)}</span></td>
           <td>${escapeHtml(explanation)}</td>
           ${noteCell(item)}
           <td>${escapeHtml(approver)}</td>
@@ -7630,8 +7628,8 @@ function renderRegTable(list) {
         <td class="code">${escapeHtml(code)}</td>
         <td>${escapeHtml(regTermLabel(item))}</td>
         <td>${escapeHtml(regModality(item))}</td>
-        <td>${escapeHtml(r.changeType||"Change")}</td>
-        <td>${escapeHtml(r.explanation || "—")}</td>
+        <td>${requestChanges(r).map(ch => `<span class="ct-pill ${CHANGE_TYPE_CLASS[ch.type]||'ct-pill'}">${escapeHtml(ch.type)}</span>`).join(" ") || `<span class="ct-pill">${escapeHtml(r.changeType||"Change")}</span>`}</td>
+        <td>${escapeHtml(r.explanation || "—")}${r.rationale ? `<div style="margin-top:3px;font-size:11.5px;color:var(--text-muted);"><em>Rationale:</em> ${escapeHtml(r.rationale)}</div>` : ""}</td>
         ${noteCell(item)}
         <td>${escapeHtml(approver)}</td>
         <td>${received}</td>
@@ -9926,11 +9924,10 @@ function renderChangeBlock(idx, ch) {
         // syncChangeListFromDom writes it last and a typed value wins.
         if (cfg.sectionNum) {
           contextHtml += `
-          <div>
+          <div class="full">
             <label>Section #</label>
             <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
-                   value="${escapeHtml(curSec)}">
-            <div style="font-size:11.5px;color:var(--text-muted);margin-top:3px;">Which section this applies to — leave blank for all.</div>
+                   value="${escapeHtml(curSec)}" style="max-width:90px;">
           </div>`;
         }
 
@@ -9939,25 +9936,25 @@ function renderChangeBlock(idx, ch) {
       } else {
         // ── Course-first flow (Add Course, Re-instate Course, Other) ─────────────
         contextHtml += `
-        <div class="full">
+        <div>
           <label>Course</label>
           <input type="text" id="cb${idx}_course" class="" list="cb_courseList"
                  placeholder="FLM 212 — start typing…" autocomplete="off"
                  data-rf="course" value="${escapeHtml(curCourse)}">
           <datalist id="cb_courseList"></datalist>
-        </div>
-        <div class="full">
-          <div class="cb-ctx-title ${titleClass}" id="cb${idx}_title">${escapeHtml(titleText)}</div>
         </div>`;
-
         if (cfg.sectionNum) {
           contextHtml += `
           <div>
             <label>Section #</label>
             <input type="text" data-rf="sectionNumber" placeholder="01" maxlength="3"
-                   value="${escapeHtml(curSec)}">
+                   value="${escapeHtml(curSec)}" style="max-width:90px;">
           </div>`;
         }
+        contextHtml += `
+        <div class="full">
+          <div class="cb-ctx-title ${titleClass}" id="cb${idx}_title">${escapeHtml(titleText)}</div>
+        </div>`;
         if (cfg.modality) {
           contextHtml += `
           <div>
