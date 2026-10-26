@@ -2626,21 +2626,26 @@
             <div id="sfld_courseHint" style="margin-top:4px;font-size:11.5px;color:var(--text-muted);"></div>
           </div>
           <div>
-            <label for="sfld_semester">Semester</label>
-            <select id="sfld_semester">
-              <option>Fall</option>
-              <option>Spring</option>
-              <option>Summer</option>
-            </select>
-          </div>
-          <div>
-            <label for="sfld_subterm">Subterm</label>
-            <select id="sfld_subterm">
-              <option value="1A">1A — A (5-week)</option>
-              <option value="2B">2B — B (5-week)</option>
-              <option value="3C">3C — C (5-week)</option>
-              <option value="F">F — First (10-week)</option>
-              <option value="L">L — Last (10-week)</option>
+            <label for="sfld_semterm">Semester &amp; Term</label>
+            <select id="sfld_semterm">
+              <option>Fall Semester</option>
+              <option>Fall A</option>
+              <option>Fall B</option>
+              <option>Fall C</option>
+              <option>Fall F</option>
+              <option>Fall L</option>
+              <option>Spring Semester</option>
+              <option>Spring A</option>
+              <option>Spring B</option>
+              <option>Spring C</option>
+              <option>Spring F</option>
+              <option>Spring L</option>
+              <option>Summer Semester</option>
+              <option>Summer A</option>
+              <option>Summer B</option>
+              <option>Summer C</option>
+              <option>Summer F</option>
+              <option>Summer L</option>
             </select>
           </div>
           <div>
@@ -2650,16 +2655,6 @@
               <option value="2026" selected>2026</option>
               <option value="2027">2027</option>
               <option value="2028">2028</option>
-            </select>
-          </div>
-          <div>
-            <label for="sfld_length">Length</label>
-            <select id="sfld_length">
-              <option value="5 Weeks">5 Weeks</option>
-              <option value="10 Weeks">10 Weeks</option>
-              <option value="15 Weeks">15 Weeks</option>
-              <option value="16 Weeks">16 Weeks</option>
-              <option value="As Needed">As Needed</option>
             </select>
           </div>
           <div>
@@ -8785,12 +8780,8 @@ function openSectionModal() {
   document.getElementById("sfld_course").value = "";
   document.getElementById("sfld_courseHint").textContent = "";
   // Prefill from current Term Assignments view
-  document.getElementById("sfld_semester").value = state.termFilter.semester || "Fall";
-  document.getElementById("sfld_subterm").value  = state.termFilter.subterm  || "1A";
+  document.getElementById("sfld_semterm").value  = `${state.termFilter.semester || "Fall"} ${({"1A":"A","2B":"B","3C":"C"})[state.termFilter.subterm] || "A"}`;
   document.getElementById("sfld_year").value     = String(storedYearFor(state.termFilter.semester || "Fall", state.termFilter.year || 2026));
-  // Reasonable length default based on current subterm (5-week subterms are 5W by default)
-  document.getElementById("sfld_length").value   = "5 Weeks";
-  document.getElementById("sfld_length").disabled = false;  // may have been locked by a prior F/L pick
   document.getElementById("sfld_deanDisplay").textContent = "—";
   // PM is now auto-derived from state.pmByCourse — the visible field is a
   // display-only div; the hidden input mirrors the same value for the form
@@ -8819,16 +8810,23 @@ function saveSectionFromModal() {
     return;
   }
   hint.textContent = "";
-  const semester = document.getElementById("sfld_semester").value;
   const year     = Number(document.getElementById("sfld_year").value) || 2026;
-  const subtermSel = document.getElementById("sfld_subterm").value;
-  // F and L are the 10-week terms: anchor to a physical subterm and force a
-  // 10-week length + the matching rotation slot. A/B/C (1A/2B/3C) keep the
-  // chosen Length and derive their slot from it.
-  let subterm = subtermSel, length = document.getElementById("sfld_length").value, slot;
-  if (subtermSel === "F")      { slot = "F"; subterm = "1A"; length = "10 Weeks"; }
-  else if (subtermSel === "L") { slot = "L"; subterm = "2B"; length = "10 Weeks"; }
-  else                         { slot = rotationSlotForLength(length, subterm); }
+  // Combined "Semester & Term" → semester + physical subterm anchor, rotation
+  // slot, and length (Semester=16wk, A/B/C=5wk, F/L=10wk).
+  const semTerm  = document.getElementById("sfld_semterm").value || "Fall Semester";
+  const _sp      = semTerm.indexOf(" ");
+  const semester = _sp > 0 ? semTerm.slice(0, _sp) : "Fall";
+  const _short   = _sp > 0 ? semTerm.slice(_sp + 1) : "Semester";
+  const _SEC_TERM_MAP = {
+    "Semester": { subterm: "1A", slot: "16W", length: "16 Weeks" },
+    "A":        { subterm: "1A", slot: "A",   length: "5 Weeks"  },
+    "B":        { subterm: "2B", slot: "B",   length: "5 Weeks"  },
+    "C":        { subterm: "3C", slot: "C",   length: "5 Weeks"  },
+    "F":        { subterm: "1A", slot: "F",   length: "10 Weeks" },
+    "L":        { subterm: "2B", slot: "L",   length: "10 Weeks" },
+  };
+  const _tm      = _SEC_TERM_MAP[_short] || _SEC_TERM_MAP["Semester"];
+  const subterm  = _tm.subterm, slot = _tm.slot, length = _tm.length;
 
   // Determine request type before creating the offering so the count is accurate.
   const existingCount = state.offerings.filter(x =>
@@ -9294,13 +9292,6 @@ function bindTermEvents() {
   document.getElementById("btnSecCancel").addEventListener("click", closeSectionModal);
   document.getElementById("secForm").addEventListener("submit", (e) => { e.preventDefault(); saveSectionFromModal(); });
   document.getElementById("sfld_instructor").addEventListener("input", _updateSecSaveBtn);
-  // Picking the 10-week F or L term forces a 10-week length (and locks the field).
-  document.getElementById("sfld_subterm").addEventListener("change", (e) => {
-    const lenSel = document.getElementById("sfld_length");
-    if (!lenSel) return;
-    if (e.target.value === "F" || e.target.value === "L") { lenSel.value = "10 Weeks"; lenSel.disabled = true; }
-    else { lenSel.disabled = false; }
-  });
   // Close on backdrop click
   document.getElementById("secModal").addEventListener("click", (e) => {
     if (e.target.id === "secModal") closeSectionModal();
@@ -9468,7 +9459,7 @@ function renderRequestActions(r) {
   // This prevents the "click → looks done → reverts on reload" trap that hit
   // program managers, whom cr_update/delete exclude for others' requests.
   const btns = [];
-  if (isOwner(r) || isDean()) btns.push(`<button type="button" data-ract="edit">Edit</button>`);
+  if (isOwner(r) || isDean() || currentRole() === "program_manager") btns.push(`<button type="button" data-ract="edit">Edit</button>`);
   if (canApproveRequest(r))   btns.push(`<button type="button" data-ract="approve" class="approve">Approve &amp; Send</button>`);
   if (canApproveRequest(r))   btns.push(`<button type="button" data-ract="reject" class="reject">Reject</button>`);
   if (isOwner(r) || isAdmin()) btns.push(`<button type="button" data-ract="del" class="danger">Delete</button>`);
