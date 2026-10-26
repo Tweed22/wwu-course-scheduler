@@ -8772,6 +8772,10 @@ function openSectionModal() {
   document.getElementById("sfld_course").value = "";
   document.getElementById("sfld_courseHint").textContent = "";
   // Prefill from current Term Assignments view
+  // Order the Semester & Term options by how soon each term starts (soonest
+  // first, furthest-away last) on every open, so the ordering tracks today.
+  { const _ss = document.getElementById("sfld_semterm");
+    if (_ss) _ss.innerHTML = semTermOptionsByProximity().map(v => `<option>${v}</option>`).join(""); }
   document.getElementById("sfld_semterm").value  = `${state.termFilter.semester || "Fall"} ${({"1A":"A","2B":"B","3C":"C"})[state.termFilter.subterm] || "A"}`;
   document.getElementById("sfld_year").value     = String(storedYearFor(state.termFilter.semester || "Fall", state.termFilter.year || 2026));
   // Dean and PM are auto-derived from the selected course on submit; no
@@ -9773,11 +9777,8 @@ function renderChangeBlock(idx, ch) {
       <div class="full">
         <label>Semester &amp; Term</label>
         <select data-rf="semesterTerm">
-          ${["Fall","Spring","Summer"].flatMap(sem =>
-             SEM_TERM_SHORTS.map(t => {
-               const val = `${sem} ${t}`;
-               return `<option${val === _curSemTerm ? " selected" : ""}>${val}</option>`;
-             })
+          ${semTermOptionsByProximity().map(val =>
+             `<option${val === _curSemTerm ? " selected" : ""}>${val}</option>`
            ).join("")}
         </select>
       </div>`;
@@ -10428,6 +10429,42 @@ const SEM_TERM_TO_SUBTERM = {
   "Semester":"Semester", "A":"A (5-week)", "B":"B (5-week)", "C":"C (5-week)",
   "F":"F (10-week First)", "L":"L (10-week Last)",
 };
+
+/* The physical grid subterm each dropdown short STARTS in — the full Semester,
+   the A block and the first-half F block all begin on the 1A start date; B and
+   the last-half L block begin on 2B; C on 3C. Used only for proximity sorting. */
+const _SEM_TERM_START_SUBTERM = { "Semester":"1A", "A":"1A", "B":"2B", "C":"3C", "F":"1A", "L":"2B" };
+
+/* Timestamp of the NEXT start of `semester short` on or after today. A term
+   whose start already passed this year rolls to its next occurrence (next
+   academic year), so it sorts far down the list. Falls back to the furthest
+   known start if no future bracket exists in TERM_DATES. */
+function semTermNextStartTs(semester, short) {
+  const sub = _SEM_TERM_START_SUBTERM[short] || "1A";
+  const todayTs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00").getTime();
+  let soonestFuture = Infinity, furthestKnown = -Infinity;
+  for (let y = 2025; y <= 2040; y++) {
+    const iso = termStartDate(semester, sub, y);
+    if (!iso) continue;
+    const ts = new Date(iso + "T00:00:00").getTime();
+    if (isNaN(ts)) continue;
+    if (ts > furthestKnown) furthestKnown = ts;
+    if (ts >= todayTs && ts < soonestFuture) soonestFuture = ts;
+  }
+  return soonestFuture !== Infinity ? soonestFuture : furthestKnown;
+}
+
+/* The 18 "Semester & Term" values ordered so the soonest-starting term is first
+   and the furthest-away is last. Ties (same start date — Semester/A/F, or B/L)
+   keep their canonical Semester→A→B→C→F→L order via a stable sort. */
+function semTermOptionsByProximity() {
+  const rows = [];
+  ["Fall", "Spring", "Summer"].forEach(sem => {
+    SEM_TERM_SHORTS.forEach(t => rows.push({ val: `${sem} ${t}`, ts: semTermNextStartTs(sem, t) }));
+  });
+  rows.sort((a, b) => a.ts - b.ts);
+  return rows.map(r => r.val);
+}
 
 /* Accept a raw grid code where a form label is expected. Older requests stored
    "1A"/"2B"/"3C", which matches no <option>, so the dropdown could neither show
