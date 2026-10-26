@@ -6215,11 +6215,13 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const def = SUBTERMS.find(s => s.semester === o.semester && s.subterm === o.subterm);
   const who = state.userName || (opts.submitter || "(unknown)");
   const sectionLabel = `section ${sectionNumberFor(o)}`;
-  const termLabel = def ? def.label : `${o.semester} ${o.subterm}`;
+  const termLabel = termPhraseForOffering(o);
   const instr = (o.instructor || "").trim();
 
   const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
-  const addSectionType = opts.addSectionType || (isOnline ? "Add Section & Split Enrollment" : "Add Section");
+  const addSectionType = !isOnline
+    ? "Add Section"                                   // on-ground sections are never split
+    : (opts.addSectionType || "Add Section & Split Enrollment");
   const modality       = isOnline ? "Online" : "On-Ground";
 
   // Build the change list.  The Add Section block never carries the instructor
@@ -6399,7 +6401,7 @@ function cancelCourseOffering(offeringId) {
     number:      parts[1] || "",
     sectionNumber: sectionNumberFor(o),
     changeType:  "Cancel Course",
-    explanation: `Cancel ${code} ${def ? def.label : (o.semester + " " + o.subterm)} ${o.year} (section ${sectionNumberFor(o)})`,
+    explanation: `Cancel ${code} ${termPhraseForOffering(o)} ${o.year} (section ${sectionNumberFor(o)})`,
     rationale:   "",
     courseId:    o.courseId,
     status:      "Pending Approval",
@@ -9645,12 +9647,39 @@ function requestChanges(r) {
 
 /* Build a one-line summary for a single change block — used for the
    Explanation column in the request table and the Registrar queue. */
+/* Every populated detail of a change, as a readable tail:
+     "instructor: Egon Spengler · MW · 3:25-4:40 · BB 002"
+   The registrar works from the explanation column, so everything the submitter
+   filled in has to reach it. Add Course and Add Section collect days, time and
+   location alongside the instructor, but only the instructor used to be
+   reported — the rest was captured, saved onto the change, and then silently
+   dropped from the text the registrar actually reads. */
+function changeDetailTail(f) {
+  const bits = [];
+  if (f.instructor) bits.push(`instructor: ${f.instructor}`);
+  if (f.days)       bits.push(f.days);
+  if (f.time)       bits.push(f.time);
+  if (f.location)   bits.push(f.location);
+  if (f.cap)        bits.push(`cap: ${f.cap}`);
+  if (f.detail)     bits.push(f.detail);
+  return bits.join(" · ");
+}
+
 function changeSummary(ch) {
   if (!ch) return "";
   const f = ch.fields || {};
-  if (ch.type === "Add Course") return f.instructor ? `Add course — instructor: ${f.instructor}` : "Add course";
-  if (ch.type === "Add Section") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section";
-  if (ch.type === "Add Section & Split Enrollment") return f.instructor ? `Add section — instructor: ${f.instructor}` : "Add section & split enrollment";
+  if (ch.type === "Add Course") {
+    const d = changeDetailTail(f);
+    return d ? `Add course — ${d}` : "Add course";
+  }
+  if (ch.type === "Add Section") {
+    const d = changeDetailTail(f);
+    return d ? `Add section — ${d}` : "Add section";
+  }
+  if (ch.type === "Add Section & Split Enrollment") {
+    const d = changeDetailTail(f);
+    return d ? `Add section & split enrollment — ${d}` : "Add section & split enrollment";
+  }
   if (ch.type === "Assign Instructor")  return f.instructor ? `Assign ${f.instructor}` : "Assign instructor";
   if (ch.type === "Change Instructor")  return f.instructor ? `Change to ${f.instructor}` : "Change instructor";
   if (ch.type === "Modify Time/Day") {
@@ -10405,6 +10434,19 @@ function normalizeReqSubtermLabel(v) {
    onto "A (5-week)", so a 10-week section arrived at the registrar looking like
    a 5-week one. Derive from the slot, which is what actually distinguishes
    them, and fall back to the grid code only when there is no usable slot. */
+/* How a term reads in prose: "Spring Semester", "Spring A", "Spring F (10-week
+   First)". Derived from the rotation slot, because the grid subterm alone files
+   a full-semester or 10-week course under the 5-week block it happens to start
+   in — a 16-week Spring course was reading "Spring A". */
+function termPhraseForOffering(o) {
+  const sem  = (o && o.semester) || "";
+  const slot = (o && o.rotationSlot) || "";
+  if (slot === "15W" || slot === "16W") return `${sem} Semester`;
+  if (slot === "F" || slot === "L")     return `${sem} ${reqSubtermLabelForOffering(o)}`;
+  const def = SUBTERMS.find(x => x.semester === sem && x.subterm === (o && o.subterm));
+  return def ? def.label : `${sem} ${(o && o.subterm) || ""}`.trim();
+}
+
 function reqSubtermLabelForOffering(o) {
   const slot = (o && o.rotationSlot) || "";
   if (slot === "F") return "F (10-week First)";
