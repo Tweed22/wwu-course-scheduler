@@ -10304,6 +10304,20 @@ function openRequestModal(r, opts) {
   // Is this an already-filed request, or one being composed? Decides whether
   // stored values may be reseeded from the current filters below.
   const isExistingRequest = !!state.requests.find(x => x.id === r.id);
+  // A brand-new, course-less request used to open pre-set to "Fall Semester",
+  // which now sorts to the BOTTOM of the proximity-ordered dropdown. Default it
+  // instead to the soonest-starting term — the top of that list. r.term/subterm
+  // are updated too so the year-seeder below derives the right stored year.
+  if (editable && !isExistingRequest && !r.prefix && !r.number && !r.courseId) {
+    const _top = semTermOptionsByProximity()[0] || "";
+    const _sp  = _top.indexOf(" ");
+    if (_sp > 0) {
+      r.term    = _top.slice(0, _sp);
+      r.subterm = SEM_TERM_TO_SUBTERM[_top.slice(_sp + 1)] || "Semester";
+      document.getElementById("rfld_term").value    = r.term;
+      document.getElementById("rfld_subterm").value = r.subterm;
+    }
+  }
   state.requestHeaderEditable = editable;
   renderRequestHeader(editable);
   // Submitter is auto-locked to the logged-in user; stored in a hidden field.
