@@ -7897,9 +7897,17 @@ function applyCancelCourseToOffering(r) {
   const code = `${r.prefix||""} ${r.number||""}`.trim();
   const c = state.courses.find(x => (x.code||"").trim().toUpperCase() === code.toUpperCase());
   if (!c) return null;
+  // Match the request's modality. On-Ground and Online sections of the same
+  // course are SEPARATE offerings that share one courseId, so a courseId match
+  // alone can't tell them apart — canceling the on-ground course would fall
+  // through to the online section. Default an older blank offering modality to
+  // Online (Term Assignments are the online schedule); a request with no
+  // modality keeps the old, modality-blind behavior.
+  const wantMod = (r.modality || "").trim();
   const o = state.offerings.find(x =>
     x.courseId === c.id && x.semester === r.term &&
     Number(x.year) === Number(r.year) && !x.canceled &&
+    (!wantMod || (x.modality || "Online") === wantMod) &&
     (!r.sectionNumber || sectionNumberFor(x) === r.sectionNumber)
   );
   if (!o) return null;
@@ -7920,9 +7928,13 @@ function applyReinstateToOffering(r, ch) {
     const code = `${r.prefix||""} ${r.number||""}`.trim();
     const c = state.courses.find(x => (x.code||"").trim() === code);
     if (!c) return null;
+    // Same modality guard as cancellation: an on-ground re-instate must not
+    // un-cancel the online section of the same course (they share a courseId).
+    const wantMod = (r.modality || "").trim();
     o = state.offerings.find(x =>
       x.courseId === c.id && x.semester === r.term &&
-      Number(x.year) === Number(r.year) && x.subterm === r.subterm && x.canceled
+      Number(x.year) === Number(r.year) && x.subterm === r.subterm && x.canceled &&
+      (!wantMod || (x.modality || "Online") === wantMod)
     );
   }
   if (!o || (!o.canceled && !o.pendingReinstate)) return null;
