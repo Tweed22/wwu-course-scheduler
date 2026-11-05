@@ -6456,13 +6456,13 @@ function submitNewSectionChange(o) {
   }
 
   // Standard path: no prior linked request — create a new Add Section request.
-  // Count existing non-canceled sections (excluding this one) to decide type.
-  const _existingCount = state.offerings.filter(x =>
-    x.id !== o.id && x.courseId === o.courseId &&
-    x.semester === o.semester && x.subterm === o.subterm &&
-    x.year === o.year && !x.canceled
-  ).length;
-  const _addType = _existingCount > 0 ? "Add Section & Split Enrollment" : "Add Section";
+  // The type follows MODALITY, not section count: split-enrollment applies to
+  // ONLINE sections only; an on-ground addition is always a plain "Add Section"
+  // (this mirrors the manual change-type dropdown, which offers "Add Section"
+  // on-ground and "Add Section & Split Enrollment" online).
+  const _addType = offeringModality(o) === "Online"
+    ? "Add Section & Split Enrollment"
+    : "Add Section";
   createAddCourseRequestForNewSection(o, { addSectionType: _addType });
   o.submitted   = true;
   o.submittedAt = new Date().toISOString();
@@ -8836,12 +8836,12 @@ function saveSectionFromModal() {
   const _tm      = _SEC_TERM_MAP[_short] || _SEC_TERM_MAP["Semester"];
   const subterm  = _tm.subterm, slot = _tm.slot, length = _tm.length;
 
-  // Determine request type before creating the offering so the count is accurate.
-  const existingCount = state.offerings.filter(x =>
-    x.courseId === c.id && x.semester === semester &&
-    x.subterm === subterm && x.year === year && !x.canceled
-  ).length;
-  const addSectionType = existingCount > 0 ? "Add Section & Split Enrollment" : "Add Section";
+  // Request type follows MODALITY, not section count: split-enrollment applies
+  // to ONLINE sections only; an on-ground addition is always a plain "Add
+  // Section". The modal sets no modality, so resolve it from the course's
+  // online rotation (the same fallback offeringModality() uses).
+  const _isOnline = !!((c.onlineFall || []).length || (c.onlineSpring || []).length || (c.onlineSummer || []).length);
+  const addSectionType = _isOnline ? "Add Section & Split Enrollment" : "Add Section";
 
   const o = newOffering({
     courseId:       c.id,
