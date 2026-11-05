@@ -7852,11 +7852,15 @@ function applyAssignInstructorToOffering(r, explicitName) {
   // requests saved before offeringId was introduced).
   if (r.sectionNumber) {
     const wantSubterm = (r.subterm && r.subterm !== "Semester") ? r.subterm : null;
+    const wantMod = (r.modality || "").trim();
     for (const o of state.offerings) {
       if (o.courseId !== c.id) continue;
       if (o.semester !== r.term) continue;
       if (Number(o.year) !== Number(r.year)) continue;
       if (wantSubterm && o.subterm !== wantSubterm) continue;
+      // Don't cross modalities: an on-ground instructor assignment must not be
+      // written onto the online section of the same course (shared courseId).
+      if (wantMod && (o.modality || "Online") !== wantMod) continue;
       if (o.canceled) continue;
       if (sectionNumberFor(o) === r.sectionNumber) {
         o.instructor   = name;
@@ -10703,10 +10707,15 @@ function saveRequestFromModal() {
     const code = `${draft.prefix} ${draft.number}`.trim().toUpperCase();
     const course = state.courses.find(c => (c.code || "").trim().toUpperCase() === code);
     if (course) {
+      // Scope to the request's modality: an existing ONLINE section must not
+      // make an ADD of the same course ON-GROUND (or vice versa) look like a
+      // duplicate — they are separate offerings sharing one courseId.
+      const _wantMod = (draft.modality || "").trim();
       const alreadyInTerm = state.offerings.some(o =>
         o.courseId === course.id &&
         o.semester === draft.term &&
         o.year     === draft.year &&
+        (!_wantMod || (o.modality || "Online") === _wantMod) &&
         !o.canceled
       );
       if (alreadyInTerm) {
