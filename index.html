@@ -2564,6 +2564,7 @@
         <input id="rfld_prefix" type="hidden">
         <input id="rfld_number" type="hidden">
         <input id="rfld_sectionNumber" type="hidden">
+        <input id="rfld_sectionNumberManual" type="hidden" value="">
         <input id="rfld_offeringId"    type="hidden">
         <input id="rfld_submitter"     type="hidden">
 
@@ -7034,7 +7035,10 @@ async function generateOnlineContractPDF(offeringIdOrData) {
 function contractDataFromRequestModal() {
   const prefix  = (document.getElementById("rfld_prefix").value || "").trim().toUpperCase();
   const number  = (document.getElementById("rfld_number").value || "").trim();
-  const secNum  = (document.getElementById("rfld_sectionNumber").value || "").trim();
+  // Only a hand-typed section number appears on the contract; a positional one
+  // is omitted (it is not the Registrar's official number).
+  const _secManual = (document.getElementById("rfld_sectionNumberManual")||{}).value === "1";
+  const secNum  = _secManual ? (document.getElementById("rfld_sectionNumber").value || "").trim() : "";
   const term        = document.getElementById("rfld_term").value || "";
   const subtermLbl  = document.getElementById("rfld_subterm").value || "";
   const year        = Number(document.getElementById("rfld_year").value) || 2026;
@@ -7901,19 +7905,29 @@ function applyCancelCourseToOffering(r) {
   const code = `${r.prefix||""} ${r.number||""}`.trim();
   const c = state.courses.find(x => (x.code||"").trim().toUpperCase() === code.toUpperCase());
   if (!c) return null;
-  // Match the request's modality. On-Ground and Online sections of the same
-  // course are SEPARATE offerings that share one courseId, so a courseId match
-  // alone can't tell them apart — canceling the on-ground course would fall
-  // through to the online section. Default an older blank offering modality to
-  // Online (Term Assignments are the online schedule); a request with no
-  // modality keeps the old, modality-blind behavior.
-  const wantMod = (r.modality || "").trim();
-  const o = state.offerings.find(x =>
-    x.courseId === c.id && x.semester === r.term &&
-    Number(x.year) === Number(r.year) && !x.canceled &&
-    (!wantMod || (x.modality || "Online") === wantMod) &&
-    (!r.sectionNumber || sectionNumberFor(x) === r.sectionNumber)
-  );
+  // On-Ground courses are NOT offerings — Term Assignments are built only from
+  // the rotation sheet's online columns (onlineFall/Spring/Summer), so an
+  // on-ground Cancel Course has nothing to cancel in the scheduler. This
+  // match-by-code path is reached ONLY when the request carries no offeringId;
+  // an online cancel ALWAYS links its offering (the inline Cancel button and
+  // the online course picker both stamp offeringId), so a real online cancel
+  // never reaches here. Guarantee an on-ground — or modality-less — cancel can
+  // NEVER land on the online section: the matched offering MUST be On-Ground.
+  // When no on-ground offering exists (the usual case) nothing is canceled,
+  // which is the correct outcome. offeringModality() is the canonical signal
+  // (it survives legacy rows whose raw modality column defaulted to Online).
+  const reqMod = (r.modality || "").trim();
+  const o = state.offerings.find(x => {
+    if (x.courseId !== c.id) return false;
+    if (x.semester !== r.term || Number(x.year) !== Number(r.year)) return false;
+    if (x.canceled) return false;
+    if (r.sectionNumber && sectionNumberFor(x) !== r.sectionNumber) return false;
+    const offMod = offeringModality(x);
+    // An explicit Online cancel (should have used the offeringId path, but be
+    // defensive) may only hit an Online offering; On-Ground or unspecified may
+    // only ever hit an On-Ground offering — never the online section.
+    return reqMod === "Online" ? offMod === "Online" : offMod === "On-Ground";
+  });
   if (!o) return null;
   o.canceled    = true;
   o.canceledAt  = now;
@@ -7932,14 +7946,20 @@ function applyReinstateToOffering(r, ch) {
     const code = `${r.prefix||""} ${r.number||""}`.trim();
     const c = state.courses.find(x => (x.code||"").trim() === code);
     if (!c) return null;
-    // Same modality guard as cancellation: an on-ground re-instate must not
-    // un-cancel the online section of the same course (they share a courseId).
-    const wantMod = (r.modality || "").trim();
-    o = state.offerings.find(x =>
-      x.courseId === c.id && x.semester === r.term &&
-      Number(x.year) === Number(r.year) && x.subterm === r.subterm && x.canceled &&
-      (!wantMod || (x.modality || "Online") === wantMod)
-    );
+    // Same strict modality guard as cancellation: an on-ground re-instate must
+    // never un-cancel the online section of the same course (they share a
+    // courseId). This fallback is only reached without an offeringId; an online
+    // re-instate links its offering via ch.fields.offeringId above. On-Ground
+    // or modality-less may only match an On-Ground offering, never the online one.
+    const reqMod = (r.modality || "").trim();
+    o = state.offerings.find(x => {
+      if (x.courseId !== c.id) return false;
+      if (x.semester !== r.term || Number(x.year) !== Number(r.year)) return false;
+      if (x.subterm !== r.subterm) return false;
+      if (!x.canceled) return false;
+      const offMod = offeringModality(x);
+      return reqMod === "Online" ? offMod === "Online" : offMod === "On-Ground";
+    });
   }
   if (!o || (!o.canceled && !o.pendingReinstate)) return null;
   const nowIso = new Date().toISOString();
@@ -9340,6 +9360,10 @@ function newRequest(prefill = {}) {
     prefix: "",
     number: "",
     sectionNumber: "",
+    // True only when a human typed the section number into the change-request
+    // form. The app's positional sectionNumberFor() is still stored above for
+    // matching, but section numbers DISPLAY only when this flag is set.
+    sectionNumberManual: false,
     changeType: "Add Course",
     explanation: "",
     // Multi-change list — each entry is { type, fields: { ... } }. Old
@@ -9369,10 +9393,11 @@ function newRequest(prefill = {}) {
 function requestCourseCode(r) {
   if (!r.prefix && !r.number) return "";
   const base = `${r.prefix || ""} ${r.number || ""}`.trim();
-  // Section number is appended in catalog form ("ACC 240 01"); blank when not
-  // tied to a specific section (e.g. brand-new Add Course requests before
-  // the section index is known).
-  return r.sectionNumber ? `${base} ${r.sectionNumber}`.trim() : base;
+  // Section number is shown ONLY when a human typed it into the change-request
+  // form (sectionNumberManual). The app's positional sectionNumberFor() value
+  // is still stored on r.sectionNumber for matching, but it is never displayed
+  // — a positional number must not read as the Registrar's official section.
+  return (r.sectionNumber && r.sectionNumberManual) ? `${base} ${r.sectionNumber}`.trim() : base;
 }
 
 function logRequestEvent(r, message) {
@@ -9752,7 +9777,10 @@ function renderChangeBlock(idx, ch) {
     // Read current shared context values from hidden fields so selections persist
     // across re-renders triggered by type/modality changes.
     const curCourse   = [document.getElementById("rfld_prefix").value || "", document.getElementById("rfld_number").value || ""].filter(Boolean).join(" ");
-    const curSec      = document.getElementById("rfld_sectionNumber").value || "";
+    // Prefill the Section # input only when the value was typed by hand — an
+    // auto/positional number is kept in the hidden field for matching but must
+    // not surface in the form.
+    const curSec      = ((document.getElementById("rfld_sectionNumberManual")||{}).value === "1") ? (document.getElementById("rfld_sectionNumber").value || "") : "";
     const curModality = document.getElementById("rfld_modality").value || "On-Ground";
     const curTerm     = document.getElementById("rfld_term").value || "Fall";
     const curSubterm  = document.getElementById("rfld_subterm").value || "Semester";
@@ -10269,12 +10297,16 @@ function renderRequestHeader(editable) {
   const prevSubEl = document.getElementById("rfld_submitter");
   const submitterVal = prevSubEl ? prevSubEl.value : (state.userName || "");
 
-  const sectionNumberVal = document.getElementById("rfld_sectionNumber").value || "";
+  // Show the section number in the header only when it was typed by hand; an
+  // auto/positional value stays hidden (kept in rfld_sectionNumber for matching).
+  const sectionNumberVal = ((document.getElementById("rfld_sectionNumberManual")||{}).value === "1")
+    ? (document.getElementById("rfld_sectionNumber").value || "")
+    : "";
 
   // Locked variant — read-only pills.
   wrap.innerHTML = `
     <div class="rs-course">
-      <div class="rs-code">${escapeHtml(codeStr || "— —")} <input type="text" id="rfld_sectionNumberVisible" value="${escapeHtml(sectionNumberVal)}" placeholder="Sec#" inputmode="numeric" maxlength="4" title="Section number — edit to change this request's section" oninput="document.getElementById('rfld_sectionNumber').value = this.value.trim();" style="width:54px;font:inherit;font-weight:600;color:var(--wwu-green-dark);background:transparent;border:1px solid rgba(128,128,128,.4);border-radius:4px;padding:1px 5px;margin-left:3px;"></div>
+      <div class="rs-code">${escapeHtml(codeStr || "— —")} <input type="text" id="rfld_sectionNumberVisible" value="${escapeHtml(sectionNumberVal)}" placeholder="Sec#" inputmode="numeric" maxlength="4" title="Section number — edit to change this request's section" oninput="document.getElementById('rfld_sectionNumber').value = this.value.trim(); var _m=document.getElementById('rfld_sectionNumberManual'); if(_m) _m.value = this.value.trim() ? '1' : '';" style="width:54px;font:inherit;font-weight:600;color:var(--wwu-green-dark);background:transparent;border:1px solid rgba(128,128,128,.4);border-radius:4px;padding:1px 5px;margin-left:3px;"></div>
       <div class="rs-title">${escapeHtml(course ? (course.title || "Untitled course") : "No course selected")}</div>
     </div>
     <div class="rs-meta">
@@ -10328,6 +10360,7 @@ function openRequestModal(r, opts) {
   document.getElementById("rfld_prefix").value = r.prefix || "";
   document.getElementById("rfld_number").value = r.number || "";
   document.getElementById("rfld_sectionNumber").value = r.sectionNumber || "";
+  document.getElementById("rfld_sectionNumberManual").value = r.sectionNumberManual ? "1" : "";
   document.getElementById("rfld_offeringId").value    = r.offeringId    || "";
   document.getElementById("rfld_changeType").value = r.changeType || "Add Course";
   document.getElementById("rfld_explanation").value = r.explanation || "";
@@ -10637,6 +10670,8 @@ function saveRequestFromModal() {
   draft.number = document.getElementById("rfld_number").value.trim();
   { const _rawSec = document.getElementById("rfld_sectionNumber").value.trim();
     draft.sectionNumber = /^\d{1,2}$/.test(_rawSec) ? _rawSec.padStart(2, "0") : _rawSec; }
+  // Only a hand-typed section number is ever displayed (see requestCourseCode).
+  draft.sectionNumberManual = document.getElementById("rfld_sectionNumberManual").value === "1";
   draft.offeringId    = document.getElementById("rfld_offeringId").value.trim() || "";
   // Sync per-block field values from the DOM, then persist the multi-change
   // list. The first change's type becomes the canonical changeType for legacy
@@ -11049,6 +11084,17 @@ function bindRequestEvents() {
     if (e.target.matches("[data-rf]")) {
       syncContextFieldToHidden(e.target);
       const rf = e.target.dataset.rf;
+      // Track whether the section number was typed by hand. This change event
+      // fires only on real user interaction (never on programmatic syncs), so
+      // it's the safe place to flag manual entry vs. an offering-derived value.
+      if (rf === "sectionNumber") {
+        const _m = document.getElementById("rfld_sectionNumberManual");
+        if (_m) _m.value = (e.target.value || "").trim() ? "1" : "";
+      } else if (rf === "offering-select") {
+        // Picking/typing an offering re-derives the section positionally → not manual.
+        const _m = document.getElementById("rfld_sectionNumberManual");
+        if (_m) _m.value = "";
+      }
       // Re-render to update filtered picker or show/hide fields.
       if (rf === "modality" || rf === "term" || rf === "subterm" || rf === "semesterTerm") {
         // Semester/subterm changed: keep the course the user already picked and
@@ -11092,6 +11138,11 @@ function bindRequestEvents() {
     const isOffering = e.target.matches("[data-rf='offering-select']");
     if (!isCourse && !isOffering) return;
     syncContextFieldToHidden(e.target);
+    // Editing the offering field re-derives the section positionally → not manual.
+    if (isOffering) {
+      const _m = document.getElementById("rfld_sectionNumberManual");
+      if (_m) _m.value = "";
+    }
     const block = e.target.closest(".change-block");
     if (!block) return;
     const idx = parseInt(block.dataset.cbIdx, 10);
