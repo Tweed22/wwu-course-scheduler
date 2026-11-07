@@ -11146,27 +11146,33 @@ function saveRequestFromModal() {
       );
       if (alreadyInTerm) {
         const switchType = draft.modality === "On-Ground" ? "Add Section" : "Add Section & Split Enrollment";
+        const origType = draft.changeType || "Add Course";
+        // OK = switch to the section/split type; Cancel = submit the original
+        // request as-is anyway (the "No" the user asked for). To abort entirely,
+        // close the modal.
         const ok = window.confirm(
           `${code} already has a section in ${draft.term} ${draft.year}.\n\n` +
-          `Would you like to submit an "${switchType}" request instead?\n\n` +
-          `Your course details will be preserved — only the request type changes.`
+          `Click OK to switch this to an "${switchType}" request, ` +
+          `or Cancel to submit it as "${origType}" anyway.`
         );
-        if (!ok) return; // User cancelled — keep the form open as-is
-        // Switch the change type in the editing buffer without clearing any fields.
-        if (state.editingChanges && state.editingChanges[0]) {
-          state.editingChanges[0].type = switchType;
-          // Sync type-specific fields back so they survive the re-render.
-          syncChangeListFromDom();
-          state.editingChanges[0].type = switchType;
-          renderChangeList();
+        if (ok) {
+          // Switch the change type in the editing buffer without clearing any fields.
+          if (state.editingChanges && state.editingChanges[0]) {
+            state.editingChanges[0].type = switchType;
+            // Sync type-specific fields back so they survive the re-render.
+            syncChangeListFromDom();
+            state.editingChanges[0].type = switchType;
+            renderChangeList();
+          }
+          // Re-derive draft values with the new type so the save proceeds correctly.
+          draft.changeType  = switchType;
+          draft.changes     = state.editingChanges.filter(ch => ch && ch.type)
+                                .map(ch => ({ type: ch.type, fields: Object.assign({}, ch.fields || {}) }));
+          draft.explanation = composeExplanation(draft.changes);
+          document.getElementById("rfld_changeType").value = draft.changeType;
+          document.getElementById("rfld_explanation").value = draft.explanation;
         }
-        // Re-derive draft values with the new type so the save proceeds correctly.
-        draft.changeType  = switchType;
-        draft.changes     = state.editingChanges.filter(ch => ch && ch.type)
-                              .map(ch => ({ type: ch.type, fields: Object.assign({}, ch.fields || {}) }));
-        draft.explanation = composeExplanation(draft.changes);
-        document.getElementById("rfld_changeType").value = draft.changeType;
-        document.getElementById("rfld_explanation").value = draft.explanation;
+        // Cancel → fall through and submit the original request unchanged.
       }
     }
   }
