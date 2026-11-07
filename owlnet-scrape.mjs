@@ -101,19 +101,22 @@ async function extractRows(page) {
 
 async function openAdvancedForm(page) {
   await page.goto(OWLNET_URL, { waitUntil: 'domcontentloaded' });
-  // The search form is collapsed behind a "Course Search" link. Try the direct
-  // advanced-screen URL first; fall back to clicking the link.
-  const advUrl = OWLNET_URL + '?portlet=Course_Schedules&screen=Advanced+Course+Search&screenType=next';
-  await page.goto(advUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  const hasTerm = await page.locator('select option:text-is("Spring 2027")').count().catch(() => 0);
-  if (!hasTerm) {
-    const link = page.getByRole('link', { name: 'Course Search' });
-    const n = await link.count();
-    for (let i = 0; i < n; i++) {
-      await link.nth(i).click({ timeout: 4000 }).catch(() => {});
-      if (await page.locator('select').first().count()) break;
-    }
+  // The Advanced form must be opened via the content "Course Search" link — a
+  // direct URL can render a form whose Division/Search controls aren't wired,
+  // which makes the search fall back to the default (grad) division. Click each
+  // "Course Search" link until the Division dropdown (with an OU option) appears.
+  const ready = () => page.locator('select option[value="OU"]').count().then(n => n > 0).catch(() => false);
+  if (await ready()) return;
+  const links = page.getByRole('link', { name: /Course Search/i });
+  const n = await links.count();
+  for (let i = 0; i < n; i++) {
+    await links.nth(i).click({ timeout: 5000 }).catch(() => {});
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    if (await ready()) return;
   }
+  // Last resort: the direct advanced-screen URL.
+  await page.goto(OWLNET_URL + '?portlet=Course_Schedules&screen=Advanced+Course+Search&screenType=next',
+    { waitUntil: 'domcontentloaded' }).catch(() => {});
 }
 
 function termSelect(page, termLabel) {
@@ -124,18 +127,35 @@ function divisionSelect(page) {
   return page.locator('select', { has: page.locator('option[value="OU"]') }).first();
 }
 async function clickSearch(page) {
-  const btn = page.locator('input[type="submit"], button[type="submit"]')
-    .filter({ hasText: /^\s*Search\s*$/ });
-  if (await btn.count()) { await btn.first().click(); return; }
-  await page.getByRole('button', { name: /^Search$/ }).last().click();
+  // The form's Search submit — NOT the site-nav search box (id ~ searchBox/siteNav).
+  const inp = page.locator('input[type="submit"][value~="Search" i], input[type="submit"][value="Search" i]');
+  if (await inp.count()) { await inp.last().click(); return; }
+  const btns = page.getByRole('button', { name: /^\s*Search\s*$/ });
+  const n = await btns.count();
+  for (let i = n - 1; i >= 0; i--) {
+    const id = (await btns.nth(i).getAttribute('id')) || '';
+    if (/searchBox|siteNav/i.test(id)) continue;
+    await btns.nth(i).click();
+    return;
+  }
+  if (n) await btns.last().click();
 }
 
 async function scrapeTermDivision(page, termLabel, division) {
   await openAdvancedForm(page);
-  // Set the term (may trigger an ASP.NET postback), then the division.
+  // Set the term (may trigger an ASP.NET postback), then the division — re-query
+  // each fresh and VERIFY the division took, because a silent miss makes the
+  // search run with the default (grad) division.
   await termSelect(page, termLabel).selectOption({ label: termLabel }).catch(() => {});
   await page.waitForLoadState('networkidle').catch(() => {});
-  await divisionSelect(page).selectOption({ value: division.value });
+  const div = divisionSelect(page);
+  await div.selectOption({ value: division.value }).catch(() => {});
+  let got = await div.inputValue().catch(() => '');
+  if (got !== division.value) {
+    await div.selectOption({ value: division.value }).catch(() => {});
+    got = await div.inputValue().catch(() => '');
+  }
+  console.log(`    division select = "${got}" (wanted ${division.value})`);
   await clickSearch(page);
   await page.waitForLoadState('networkidle').catch(() => {});
 
@@ -143,6 +163,7 @@ async function scrapeTermDivision(page, termLabel, division) {
   const seen = new Set();
   for (let guard = 0; guard < 60; guard++) {
     const pageRows = await extractRows(page);
+    if (guard === 0) console.log(`    first result: ${pageRows[0] ? pageRows[0].raw_code : '(none)'} (${pageRows.length} on page 1)`);
     for (const r of pageRows) {
       const key = r.raw_code + '|' + r.begin;
       if (!seen.has(key)) { seen.add(key); rows.push(r); }

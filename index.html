@@ -5706,6 +5706,7 @@ function offeringsForSubterm(semester, subterm) {
   if (subterm === "ALL") {
     const seen = new Set();
     return state.offerings.filter(o => {
+      if (o.deleted) return false;   // admin-deleted (soft) rows are hidden everywhere
       if (o.semester !== semester) return false;
       if (o.year !== storedYearFor(semester, state.termFilter.year)) return false;
       if (seen.has(o.id)) return false;
@@ -5718,6 +5719,7 @@ function offeringsForSubterm(semester, subterm) {
   const def = SUBTERMS.find(s => s.semester === semester && s.subterm === subterm);
   if (!def) return [];
   return state.offerings.filter(o => {
+    if (o.deleted) return false;   // admin-deleted (soft) rows are hidden everywhere
     if (o.semester !== semester) return false;
     if (o.year !== storedYearFor(semester, state.termFilter.year)) return false;
     if (!def.includes.includes(o.rotationSlot)) {
@@ -6124,6 +6126,12 @@ function renderTermTable(list) {
       const keepRecall = o.submitted && !o.registrarCompleted && !o.canceled && canRecallOffering(o);
       if (!keepRecall) actionBtn = "";
     }
+    // Admin-only: delete this line from Term Assignments. Soft-delete — the row
+    // is hidden everywhere and, because it stays in the data, the rotation sheet
+    // won't regenerate it on the next sync.
+    if (isAdmin()) {
+      actionBtn += `<button type="button" data-tact="admindelete" data-oid="${escapeHtml(o.id)}" title="Delete this line (admin only)" style="margin-left:6px;padding:2px 9px;font-size:11px;font-weight:600;color:#fff;background:var(--danger);border:none;border-radius:5px;cursor:pointer;">Delete</button>`;
+    }
     // Badge: DONE (purple) once registrar completes, SENT (green) while in queue.
     const submittedBadge = o.registrarCompleted
       ? `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`
@@ -6361,6 +6369,29 @@ function removeSectionOffering(offeringId) {
   renderTerms();
   if (typeof renderRegistrar === "function") renderRegistrar();
   toast(`Removed ${label}`);
+}
+
+/* Admin-only: soft-delete any Term Assignments line. The row stays in the data
+   (so the rotation sheet won't regenerate it) but o.deleted=true hides it from
+   every view. Admins can UPDATE any offering under RLS, so no new policy is
+   needed; on reload it comes back flagged and stays hidden. */
+function deleteOfferingAdmin(offeringId) {
+  if (!isAdmin()) { toast("Only admins can delete lines.", "error"); return; }
+  if (!offeringId) return;
+  const o = state.offerings.find(x => x.id === offeringId);
+  if (!o) return;
+  const c = state.courses.find(x => x.id === o.courseId) || {};
+  const label = `${c.code || "this section"}${o.subterm ? " · " + o.subterm : ""}`;
+  if (!confirm(`Delete ${label} from Term Assignments?\n\nThis hides the line for everyone and keeps it from being regenerated from the rotation sheet. Any linked change requests are left as they are.`)) return;
+  o.deleted   = true;
+  o.deletedAt = new Date().toISOString();
+  o.deletedBy = state.userName || "(admin)";
+  markLocallyTouched(o.id);
+  setDirty(true);
+  renderTerms();
+  if (typeof renderRegistrar === "function") renderRegistrar();
+  if (typeof renderVerification === "function" && state.view === "verify") renderVerification();
+  toast(`Deleted ${label}`);
 }
 
 /* Cancel a course offering. Locks the section, colors the row red (via the
@@ -7294,6 +7325,7 @@ function buildRegistrarQueue() {
   // isNewSection offerings are tracked via their Change Request, not as
   // direct section submissions, so they're excluded from this queue.
   for (const o of state.offerings) {
+    if (o.deleted) continue;   // admin-deleted (soft) rows never enter the queue
     if (!o.submitted || o.registrarCompleted) continue;
     if (o.isNewSection) continue;
     items.push({ kind: "section", id: "sec:" + o.id, offering: o });
@@ -8459,7 +8491,7 @@ function reconcileOwlnet(semester, year){
   const owl = (state.owlnetSections || []).filter(r =>
     (r.semester || "") === semester && Number(r.acad_year) === Number(year));
   const sched = (state.offerings || []).filter(o =>
-    (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
+    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
 
   const owlByCode = {}, owlCourseSet = new Set();
   owl.forEach(r => {
@@ -8513,16 +8545,19 @@ function reconcileOwlnet(semester, year){
         } else if(canceled.length){
           flags.push({ sev:"crit", code, sub, sched:"Canceled", owl:"Live", owlCodes,
             issue:"Canceled in the scheduler but still live on Owlnet.",
-            action:"Reinstate, or confirm the cancellation so it drops from Owlnet." });
+            action:"Reinstate, or confirm the cancellation so it drops from Owlnet.",
+            fix:{ act:"reinstate", oid: canceled[0].id, label:"Reinstate" } });
         } else {
           flags.push({ sev:"warn", code, sub, sched:"No offering", owl:"Live", owlCodes,
             issue:"Live on Owlnet with no matching offering in the scheduler.",
-            action:"Add the section to Term Assignments." });
+            action:"Add the section to Term Assignments.",
+            fix:{ act:"add", code, sub, label:"Add section" } });
         }
       } else if(active.length){
         flags.push({ sev:"warn", code, sub, sched:"Active", owl:"Not listed", owlCodes:"",
           issue:"Active in the scheduler but not listed on Owlnet.",
-          action:"Publish to Owlnet, or cancel if it isn't running." });
+          action:"Publish to Owlnet, or cancel if it isn't running.",
+          fix:{ act:"cancel", oid: active[0].id, label:"Cancel section" } });
       }
     });
   });
@@ -8553,7 +8588,7 @@ function verifyPanelHtml(terms, sel, r){
       <td><div class="ver-code">${esc(f.code)}</div><div class="ver-sub">Subterm ${esc(f.sub)}</div></td>
       <td>${verPill(f.sched)}</td>
       <td>${verPill(f.owl)}${f.owlCodes?`<div class="ver-owlcode">${esc(f.owlCodes)}</div>`:""}</td>
-      <td><div class="ver-issue">${esc(f.issue)}</div><div class="ver-action">→ ${esc(f.action)}</div></td>
+      <td><div class="ver-issue">${esc(f.issue)}</div><div class="ver-action">→ ${esc(f.action)}</div>${f.fix ? `<button type="button" class="ver-fix-btn" data-verfix="${esc(f.fix.act)}" data-oid="${esc(f.fix.oid||"")}" data-code="${esc(f.fix.code||"")}" data-sub="${esc(f.fix.sub||"")}">${esc(f.fix.label||"Make change")}</button>` : ""}</td>
     </tr>`).join("") :
     `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:26px;">No discrepancies — every Owlnet section matches the scheduler for this term.</td></tr>`;
 
@@ -8645,6 +8680,8 @@ function verifyStyleBlock(){
   #verifyRoot .ver-pill-cxl{background:rgba(192,57,43,.13);color:var(--danger)}
   #verifyRoot .ver-pill-act{background:rgba(28,122,68,.10);color:var(--wwu-green-dark)}
   #verifyRoot .ver-pill-abs,#verifyRoot .ver-pill-neu{background:rgba(128,128,128,.14);color:var(--text-muted)}
+  #verifyRoot .ver-fix-btn{margin-top:8px;padding:4px 11px;font:inherit;font-size:12px;font-weight:600;color:#fff;background:var(--wwu-green);border:none;border-radius:6px;cursor:pointer}
+  #verifyRoot .ver-fix-btn:hover{background:var(--wwu-green-dark)}
   #verifyRoot .ver-foot{font-size:12px;color:var(--text-muted);margin-top:12px}
   #verifyRoot .ver-empty{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:28px;text-align:center;color:var(--text-muted)}
   @media (max-width:720px){#verifyRoot .ver-tiles{grid-template-columns:1fr 1fr}}
@@ -8689,6 +8726,25 @@ async function renderVerification(){
     chips.querySelectorAll(".ver-chip").forEach(c=>c.setAttribute("aria-pressed", c===b?"true":"false"));
     const f=b.getAttribute("data-filter");
     document.querySelectorAll("#verRows tr[data-sev]").forEach(r=> r.hidden = !(f==="all" || r.getAttribute("data-sev")===f)); });
+  // "Make suggested change" buttons — route each flag to its existing flow.
+  const rowsBody = document.getElementById("verRows");
+  if(rowsBody) rowsBody.addEventListener("click", (e)=>{
+    const b = e.target.closest(".ver-fix-btn"); if(!b) return;
+    const act = b.getAttribute("data-verfix"), oid = b.getAttribute("data-oid");
+    if(act === "reinstate" && oid){
+      if(typeof openReinstateRequest === "function") openReinstateRequest(oid);
+    } else if(act === "cancel" && oid){
+      if(typeof cancelCourseOffering === "function"){ cancelCourseOffering(oid); renderVerification(); }
+    } else if(act === "add"){
+      const code = b.getAttribute("data-code") || "";
+      const c = (state.courses || []).find(x => canonicalCourseCode(x.code || "") === canonicalCourseCode(code));
+      if(c && typeof openRequestForCourse === "function"){ openRequestForCourse(c.id); }
+      else if(typeof openNewRequest === "function"){
+        const parts = code.split(/\s+/);
+        openNewRequest({ prefix:(parts[0]||"").toUpperCase(), number:parts.slice(1).join(" "), modality:"Online" });
+      } else { toast("Open a new Change Request to add this section.", "error"); }
+    }
+  });
 }
 
 function renderAdmin() {
@@ -9484,6 +9540,8 @@ function bindTermEvents() {
       removeSectionOffering(oid);
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
+    } else if (act === "admindelete") {
+      deleteOfferingAdmin(btn.dataset.oid);
     } else if (act === "undoreinstate") {
       const oid = btn.dataset.oid;
       if (!oid) return;
