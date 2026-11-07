@@ -34,6 +34,8 @@ const DIVISIONS = [
   { value: 'OG', label: '(Course) Online Graduate' },
 ];
 const DEFAULT_TERMS = ['Spring 2027', 'Fall 2026'];
+// Courses handled outside the scheduler (voucher-arranged) — never stored.
+const HIDDEN_COURSES = new Set(['ALE 799']);
 const TERMS = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_TERMS;
 const HEADFUL = !!process.env.HEADFUL;
 
@@ -221,7 +223,11 @@ async function sbPruneStale(termLabel, runId) {
       for (const division of DIVISIONS) {
         const rows = await scrapeTermDivision(page, termLabel, division);
         console.log(`  ${termLabel} / ${division.value}: ${rows.length} sections`);
-        for (const r of rows) records.push(toRecord(r, termLabel, division, runId));
+        for (const r of rows) {
+          const rec = toRecord(r, termLabel, division, runId);
+          if (HIDDEN_COURSES.has(`${rec.prefix} ${rec.course_number}`.trim())) continue;
+          records.push(rec);
+        }
       }
       // Upsert in chunks, then prune anything this run didn't touch for the term.
       for (let i = 0; i < records.length; i += 500) await sbUpsert(records.slice(i, i + 500));

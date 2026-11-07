@@ -1073,6 +1073,10 @@
      computed by sectionNumberFor() and recorded in change requests / the
      Changelog for internal change-tracking. */
   .section-num { display: none; }
+  /* Owlnet's official section number IS authoritative, so show it (the hidden
+     rule above still suppresses the app's internal positional number). */
+  .term-table .code .section-num.official { display: inline-block; color: var(--wwu-green-dark); font-weight: 600; }
+  html.dark .term-table .code .section-num.official { color: #5ab57d; }
   .term-table .deadline-warn { color: #b03a2e; font-weight: 700; }
   .term-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--wwu-green); }
   .term-table .add-section-btn {
@@ -5785,6 +5789,12 @@ function isOverdue(o) {
   return !isNaN(dl) && dl < new Date();
 }
 
+// Courses handled entirely outside the scheduler (e.g. ALE 799 dissertation
+// continuation — arranged per-student by voucher, many instructor-specific
+// sections). Hidden from Term Assignments AND skipped by Owlnet verification.
+const HIDDEN_COURSES = new Set(["ALE 799"]);
+function isHiddenCourse(code){ return HIDDEN_COURSES.has(canonicalCourseCode(code || "")); }
+
 function applyTermFilters(list) {
   const s = (state.termFilter.search || "").trim().toLowerCase();
   const so = state.termFilter.showOnly;
@@ -5796,6 +5806,8 @@ function applyTermFilters(list) {
   return list.filter(o => {
     const c = state.courses.find(x => x.id === o.courseId);
     if (!c) return false;
+    // Voucher-arranged courses are hidden from the scheduler entirely.
+    if (isHiddenCourse((c && c.code) || o.courseCode)) return false;
     // My-courses filter: only show offerings where the signed-in user is the
     // dean or program manager.  Skipped when myName is empty (no name set yet).
     if (myName) {
@@ -6142,17 +6154,14 @@ function renderTermTable(list) {
       // "+" on the first section of rotation courses — add another section.
       sectionActionBtn = `<button type="button" class="add-section-btn" data-tact="addsection" data-oid="${escapeHtml(o.id)}" title="Add another section of this course">+</button>`;
     }
-    // In ALL-semester mode, show a small subterm chip next to the course code
-    // so multi-subterm courses (e.g., A + B) are clearly distinguishable.
-    const allMode = state.termFilter.subterm === "ALL";
-    const subtermLabel = allMode
-      ? ` <span style="display:inline-block;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);vertical-align:middle;margin-left:3px;">${escapeHtml(o.subterm)}</span>`
-      : "";
+    // Subterm (1A/2B/…) chip removed — the Length column already shows the
+    // rotation slot (A/B/C), so the chip was redundant next to the course code.
+    const subtermLabel = "";
     return `
       <tr data-oid="${escapeHtml(o.id)}"${clsAttr}>
         <td class="code">
           ${sectionActionBtn}
-          ${orphanBadge}${escapeHtml(c.code)} <span class="section-num">${sectionNum}</span>${subtermLabel}${submittedBadge}${canceledBadge}
+          ${orphanBadge}${escapeHtml(c.code)}${(o.officialSection||"").trim() ? ` <span class="section-num official" title="Official section number (from Owlnet)">${escapeHtml((o.officialSection||"").trim())}</span>` : ""}${subtermLabel}${submittedBadge}${canceledBadge}
         </td>
         <td class="title-cell">${escapeHtml(c.title || "")}</td>
         <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
@@ -6518,7 +6527,9 @@ async function generateOnlineContractPDF(offeringIdOrData) {
     const c = state.courses.find(x => x.id === o.courseId);
     if (!c) return;
     instructor    = (o.instructor || "").trim();
-    const secNum  = sectionNumberFor(o);
+    // Owlnet's official section number is authoritative on the contract; fall
+    // back to the positional number only when Owlnet hasn't supplied one yet.
+    const secNum  = (o.officialSection || "").trim() || sectionNumberFor(o);
     courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
     courseTitle   = (c.title || "").trim();
     credits       = creditsForCourse(c);
@@ -8466,8 +8477,10 @@ function reconcileOwlnet(semester, year){
   });
 
   const flags = [];
+  const adopted = [];
   let matched = 0, cells = 0;
   owlCourseSet.forEach(code => {
+    if (isHiddenCourse(code)) return;   // voucher-arranged courses (e.g. ALE 799)
     const subs = new Set([...Object.keys(owlByCode[code] || {}), ...Object.keys(schedByCode[code] || {})]);
     subs.forEach(sub => {
       if(sub === "?") return;
@@ -8480,19 +8493,23 @@ function reconcileOwlnet(semester, year){
       const owlCodes = owlRows.map(r => r.raw_code).join(", ");
       if(owlRows.length){
         if(active.length){
-          const official = owlRows.map(r => r.section).filter(Boolean);
-          const positional = active.map(o => sectionNumberFor(o));
-          const officialSet = official.map(_verNormSec).sort().join(",");
-          const posSet = positional.map(_verNormSec).sort().join(",");
-          if(owlRows.length !== active.length){
+          if(active.length === 1 && owlRows.length === 1){
+            // Always adopt Owlnet's official section number onto the offering.
+            const want = String(owlRows[0].section || "").trim();
+            if(want && _verNormSec(active[0].officialSection) !== _verNormSec(want)){
+              active[0].officialSection = want;
+              adopted.push(active[0].id);
+            }
+            matched++;
+          } else if(owlRows.length !== active.length){
             flags.push({ sev:"warn", code, sub, sched:`${active.length} active`, owl:`${owlRows.length} live`, owlCodes,
               issue:`Owlnet lists ${owlRows.length} section(s); the scheduler has ${active.length}.`,
               action:"Reconcile the section count with the registrar." });
-          } else if(officialSet !== posSet){
-            flags.push({ sev:"info", code, sub, sched:`§${positional.join(", §")} (positional)`, owl:`§${official.join(", §")}`, owlCodes,
-              issue:"Official section number differs — Owlnet is the source of truth.",
-              action:`Adopt Owlnet's number (§${official.join(", §")}).` });
-          } else matched++;
+          } else {
+            // Equal counts >1 in one subterm — pairing is ambiguous, so adopt
+            // is skipped; counts agree, so nothing to flag.
+            matched++;
+          }
         } else if(canceled.length){
           flags.push({ sev:"crit", code, sub, sched:"Canceled", owl:"Live", owlCodes,
             issue:"Canceled in the scheduler but still live on Owlnet.",
@@ -8513,7 +8530,7 @@ function reconcileOwlnet(semester, year){
   const order = { crit:0, warn:1, info:2 };
   flags.sort((a,b) => (order[a.sev]-order[b.sev]) || a.code.localeCompare(b.code) || a.sub.localeCompare(b.sub));
   const lastScraped = owl.reduce((m,r) => (r.scraped_at && r.scraped_at > m ? r.scraped_at : m), "");
-  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped };
+  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped, adopted };
 }
 
 function _verFmtWhen(iso){
@@ -8577,7 +8594,7 @@ function verifyPanelHtml(terms, sel, r){
       </table>
     </div>
   </div>
-  <p class="ver-foot">Divisions checked: Online Undergraduate + Online Graduate · Canceled sections drop off Owlnet, so a canceled match is critical · Only courses Owlnet returned are reconciled.</p>
+  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Canceled sections drop off Owlnet, so a canceled match is critical.</p>
   `;
 }
 function verPill(text){
@@ -8653,6 +8670,14 @@ async function renderVerification(){
   }
   const sel = state.verifyTerm;
   const result = reconcileOwlnet(sel.semester, Number(sel.year));
+  // Always adopt Owlnet's official section numbers: persist the ones this run
+  // wrote onto offerings, and refresh Term Assignments so they show immediately.
+  if(result.adopted && result.adopted.length){
+    result.adopted.forEach(id => { if(typeof markLocallyTouched === "function") markLocallyTouched(id); });
+    if(typeof setDirty === "function") setDirty(true);
+    if(typeof flushToSupabase === "function") flushToSupabase();
+    if(typeof renderTerms === "function") renderTerms();
+  }
   root.innerHTML = verifyPanelHtml(terms, sel, result);
 
   const ts = document.getElementById("verTermSel");
