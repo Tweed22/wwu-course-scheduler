@@ -8533,10 +8533,14 @@ function reconcileOwlnet(semester, year){
               adopted.push(active[0].id);
             }
             matched++;
-          } else if(owlRows.length !== active.length){
+          } else if(owlRows.length > active.length){
+            // Owlnet has MORE online sections than the scheduler → one may be
+            // missing. The reverse (scheduler has more) is NOT flagged: the extra
+            // is normally an on-ground section (which Owlnet's online search never
+            // lists) or a duplicate — not an Owlnet discrepancy.
             flags.push({ sev:"warn", code, sub, sched:`${active.length} active`, owl:`${owlRows.length} live`, owlCodes,
-              issue:`Owlnet lists ${owlRows.length} section(s); the scheduler has ${active.length}.`,
-              action:"Reconcile the section count with the registrar." });
+              issue:`Owlnet lists ${owlRows.length} online section(s); the scheduler has ${active.length}.`,
+              action:"A section may be missing from the scheduler." });
           } else {
             // Equal counts >1 in one subterm — pairing is ambiguous, so adopt
             // is skipped; counts agree, so nothing to flag.
