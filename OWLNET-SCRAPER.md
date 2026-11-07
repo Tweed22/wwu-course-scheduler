@@ -1,59 +1,45 @@
 # Owlnet Verification scraper
 
-Feeds the admin-only **Verification** tab in the scheduler. It scrapes the public
-Owlnet course search for the online sections and writes them to the Supabase
-table `public.owlnet_sections`. The scheduler reconciles those against its own
-offerings — **Owlnet's section number is the source of truth**, and because a
-canceled section drops off Owlnet entirely, a section that's canceled in the
-scheduler but still live on Owlnet is flagged critical.
+Feeds the admin-only **Verification** tab. It scrapes the public Owlnet course
+search for the online sections (divisions **OU** = Online Undergraduate and
+**OG** = Online Graduate, which covers masters + doctoral) and writes them to the
+Supabase table `public.owlnet_sections`. The scheduler reconciles those against
+its own offerings — **Owlnet's section number is the source of truth**, and a
+section that's canceled in the scheduler but still live on Owlnet is flagged
+critical.
 
-## One-time setup (on the Mac that runs the backups)
+## Primary: the in-app "Scrape Owlnet" button (no setup)
 
-```bash
-cd "WWU Course Scheduling"
-npm install playwright
-npx playwright install chromium
-```
+In the scheduler, **Verification** tab → **Scrape Owlnet**. It calls the Supabase
+Edge Function `owlnet-scrape`, which does the whole scrape server-side (an HTTP
+replay of the Jenzabar/ASP.NET form — no browser): GET the advanced form (cookies
++ `__VIEWSTATE`), POST the search per division, page through via the `ltrNav`
+postback, parse rows, upsert to `owlnet_sections`, and prune stale rows so
+cancellations propagate. Admin-only (verifies the caller's `profiles.role`).
+Scrapes the selected term; the empty-state button scrapes the defaults.
 
-The Supabase service key is read from the **same file the backup job uses**:
-`backups/.backup-env`, line `SB_SERVICE_KEY=<supabase-service-role-key>` (already
-present if the nightly backup works). No GitHub secret or extra config needed.
+- Function source: `supabase/functions/owlnet-scrape/index.ts` (deployed to the
+  Supabase project — redeploy with `supabase functions deploy owlnet-scrape`).
+- No secrets to manage: it uses the project's built-in service role internally.
+- Owlnet reachability from Supabase egress is confirmed.
 
-## Run it
+### Scheduled (optional)
 
-```bash
-node owlnet-scrape.mjs                      # default terms: Spring 2027, Fall 2026
-node owlnet-scrape.mjs "Spring 2027"        # one term
-HEADFUL=1 node owlnet-scrape.mjs "Spring 2027"   # watch the browser (debugging)
-```
+To refresh nightly without a click, call the function on a schedule with pg_cron
++ pg_net (POST to `/functions/v1/owlnet-scrape` with a service-role bearer), or
+just click the button when you want fresh data.
 
-Run it once by hand first to confirm the counts look right (it prints
-`Spring 2027 / OU: N sections`, etc.). Then open the scheduler → **Verification**
-and hit **Refresh**.
+## Fallback: local Playwright scraper
 
-## Schedule it (nightly, after the 4 AM rotation sync)
+`owlnet-scrape.mjs` + `com.wwuapps.owlnet-scrape.plist` still work if you ever
+want a local/launchd scrape (needs `npm install playwright && npx playwright
+install chromium` and the `SB_SERVICE_KEY` in `backups/.backup-env`). The Edge
+Function is the primary path now and needs none of that.
 
-```bash
-cp com.wwuapps.owlnet-scrape.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.wwuapps.owlnet-scrape.plist
-```
+## Notes
 
-Logs land in `backups/owlnet-scrape.log`. Adjust the node path / repo path in the
-plist if yours differ.
-
-## How it works / tuning
-
-Owlnet is a stateful ASP.NET (Jenzabar) site, so the script drives a headless
-Chromium the way a person would: open Advanced Course Search, pick the term, pick
-the division (**OU** = Online Undergraduate, **OG** = Online Graduate — OG already
-includes masters *and* doctoral), Search, and page through with "Next page →".
-
-Each run upserts the live sections for a term and then **prunes** any rows it
-didn't see (so cancellations propagate). Only courses Owlnet actually returns are
-reconciled in the panel, so a partial or failed run never produces false "missing"
-flags.
-
-If the first run scrapes 0 sections, Owlnet likely tweaked a control's markup —
-the selectors to check are in `owlnet-scrape.mjs`: `termSelect`, `divisionSelect`,
-`clickSearch`, and the "Next page" locator. Run with `HEADFUL=1` to watch where it
-stalls.
+- Only two divisions cover every online course (OG includes masters + doctoral).
+- `ALE 799` (voucher-arranged dissertation continuation) is skipped.
+- Owlnet lists only LIVE sections, so "canceled" is detected by absence.
+- A retired `owlnet-ping` probe function is inert (returns 410) — safe to delete
+  from the Supabase dashboard.
