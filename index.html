@@ -297,6 +297,16 @@
     color: #5ab57d;
     border-color: transparent;
   }
+  /* DONE rows read blue (matching the DONE badge); LIVE rows — DONE and
+     verified on Owlnet — read green (matching the LIVE badge). */
+  html.dark .term-table tr.done td,
+  html.dark .term-table tr.done td .instr-plain,
+  html.dark .term-table tr.done td .section-num,
+  html.dark .term-table tr.done input[data-field="instructor"] { color: #7fb1f5; }
+  html.dark .term-table tr.done.live td,
+  html.dark .term-table tr.done.live td .instr-plain,
+  html.dark .term-table tr.done.live td .section-num,
+  html.dark .term-table tr.done.live input[data-field="instructor"] { color: #5ab57d; }
   html.dark .term-table input.pending-instr {
     color: var(--text-muted);
   }
@@ -325,6 +335,8 @@
   /* Submitted rows keep their state on hover. */
   html.dark .term-table tbody tr.submitted:hover td,
   html.dark .term-table tbody tr.done:hover td { background: transparent !important; color: #5ab57d; }
+  html.dark .term-table tbody tr.done:hover td { color: #7fb1f5; }
+  html.dark .term-table tbody tr.done.live:hover td { color: #5ab57d; }
   html.dark .req-table th { background: #232323; color: #909090; border-bottom-color: var(--border); }
   html.dark .req-table td { border-bottom-color: var(--border); }
   /* Subterm chips. */
@@ -357,9 +369,9 @@
     border: 1px solid rgba(212, 165, 91, 0.4);
   }
   html.dark .done-badge {
-    background: rgba(90, 181, 125, 0.18);
-    color: #5ab57d;
-    border: 1px solid rgba(90, 181, 125, 0.4);
+    background: rgba(110, 162, 240, 0.16);
+    color: #7fb1f5;
+    border: 1px solid rgba(110, 162, 240, 0.45);
   }
   html.dark .ct-pill, html.dark .status-pill {
     background: var(--surface-2);
@@ -1076,7 +1088,7 @@
   /* Owlnet's official section number IS authoritative, so show it (the hidden
      rule above still suppresses the app's internal positional number). */
   .term-table .code .section-num.official { display: inline-block; color: var(--wwu-green-dark); font-weight: 600; }
-  html.dark .term-table .code .section-num.official { color: #5ab57d; }
+  html.dark .term-table .code .section-num.official { color: inherit; }
   .term-table .deadline-warn { color: #b03a2e; font-weight: 700; }
   .term-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--wwu-green); }
   .term-table .add-section-btn {
@@ -1141,16 +1153,54 @@
     padding: 1px 6px;
     vertical-align: middle;
   }
+  /* Enrollment (from Owlnet). The row gets a very light green fill from the
+     left, sized to the share of seats taken: 10 of 20 enrolled = 50%, nobody
+     enrolled = 0%. Higher specificity + !important so it survives the dark-mode
+     rule that forces SENT/DONE rows transparent. */
+  .term-table { --enroll-tint: rgba(28, 122, 68, 0.10); }
+  html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.13); }
+  .term-table tbody tr.has-enroll,
+  html.dark .term-table tbody tr.has-enroll {
+    background-image: linear-gradient(to right,
+      var(--enroll-tint) var(--enroll-fill, 0%),
+      transparent var(--enroll-fill, 0%)) !important;
+    background-repeat: no-repeat !important;
+  }
+  .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .term-table .enroll-num { font-weight: 600; }
+  .term-table .enroll-cap { font-weight: 400; color: var(--text-muted); }
+  .term-table .enroll-none { color: var(--text-muted); }
+  /* DONE = processed by the Registrar (blue). */
   .term-table .done-badge {
     display: inline-block;
     margin-left: 6px;
     font-size: 10px;
     font-weight: 700;
-    color: #5a2d87;
-    background: #ece4f5;
+    color: #0b5cad;
+    background: #e1eefc;
+    border: 1px solid rgba(11, 92, 173, 0.25);
     border-radius: 3px;
     padding: 1px 6px;
     vertical-align: middle;
+  }
+  /* LIVE = DONE and confirmed on Owlnet — course in term + instructor agrees (green). */
+  .term-table .live-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #17633a;
+    background: #dcf1e3;
+    border: 1px solid rgba(23, 99, 58, 0.28);
+    border-radius: 3px;
+    padding: 1px 6px;
+    vertical-align: middle;
+    letter-spacing: .02em;
+  }
+  html.dark .term-table .live-badge {
+    color: #5ab57d;
+    background: rgba(90, 181, 125, 0.18);
+    border-color: rgba(90, 181, 125, 0.45);
   }
   .term-table .btn-submit {
     color: #1d4989;
@@ -2084,7 +2134,7 @@
           <th data-tsort="pm" style="padding-left:18px;">Program Manager</th>
           <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="white-space:nowrap;">Actions</th>
-          <th class="no-sort">Notes</th>
+          <th class="no-sort" style="white-space:nowrap;" title="Enrolled / seats, from Owlnet">Enrollment</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -6016,8 +6066,14 @@ function renderTermTable(list) {
     // DONE rows carry their own class: registrar-finalized sections are locked even
     // when they never passed through the SENT state, and must LOOK locked too.
     if (o.registrarCompleted) classes.push("done");
+    if (o.registrarCompleted && isOwlnetLive(o)) classes.push("live");
     if (o.canceled && !o.pendingReinstate) classes.push("canceled");
-    const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
+    // Enrollment from Owlnet (seats remaining / cap → enrolled). Drives the
+    // Enrollment column and a light green row fill scaled to % of seats taken.
+    const _enr = owlnetEnrollment(o);
+    if (_enr) classes.push("has-enroll");
+    const clsAttr = (classes.length ? ` class="${classes.join(" ")}"` : "") +
+                    (_enr ? ` style="--enroll-fill:${_enr.pct}%"` : "");
     const sectionNum = sectionNumberFor(o);
     // Locked when submitted OR when canceled (canceled offerings can't be edited
     // inline — they have to go through Request Change).
@@ -6132,9 +6188,12 @@ function renderTermTable(list) {
     if (isAdmin()) {
       actionBtn += `<button type="button" data-tact="admindelete" data-oid="${escapeHtml(o.id)}" title="Delete this line (admin only)" style="margin-left:6px;padding:2px 9px;font-size:11px;font-weight:600;color:#fff;background:var(--danger);border:none;border-radius:5px;cursor:pointer;">Delete</button>`;
     }
-    // Badge: DONE (purple) once registrar completes, SENT (green) while in queue.
+    // Badge: LIVE (blue) once DONE and verified on Owlnet; DONE (purple) once the
+    // registrar completes; SENT (green) while in queue.
     const submittedBadge = o.registrarCompleted
-      ? `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`
+      ? (isOwlnetLive(o)
+          ? `<span class="live-badge" title="Verified live on Owlnet${o.owlnetVerifiedAt ? ' (checked ' + escapeHtml(fmtDateShort(o.owlnetVerifiedAt)) + ')' : ''} — course is in the term and the instructor matches">LIVE</span>`
+          : `<span class="done-badge" title="Processed by Registrar${o.registrarCompletedAt ? ' on ' + escapeHtml(fmtDateShort(o.registrarCompletedAt)) : ''}">DONE</span>`)
       : o.submitted
         ? `<span class="submitted-badge" title="Submitted${o.submittedAt ? ' on ' + escapeHtml(fmtDateShort(o.submittedAt)) : ''}">SENT</span>`
         : "";
@@ -6177,7 +6236,9 @@ function renderTermTable(list) {
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
         ${instructorCell}
         <td class="actions">${actionBtn}</td>
-        <td><input type="text" data-field="notes" value="${escapeHtml(o.notes||"")}" placeholder="Notes…"${o.canceled?' readonly tabindex="-1"':''}></td>
+        <td class="enroll-cell">${_enr
+          ? `<span class="enroll-num" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span>`
+          : `<span class="enroll-none" title="No Owlnet enrollment yet — scrape Owlnet from the Verification tab">—</span>`}</td>
       </tr>
     `;
   }).join("");
@@ -8491,6 +8552,54 @@ function _verCourseCode(o){
 }
 function _verNormSec(s){ return String(s == null ? "" : s).replace(/\D/g,"").replace(/^0+/,"") || "0"; }
 
+/* Instructor comparison for Owlnet verification. Owlnet writes "Last, First M"
+   (and "Staff, S" when the registrar hasn't entered anyone); the scheduler
+   stores free text, usually "First Last". */
+function _verIsStaff(name){
+  const n = String(name || "").trim().toLowerCase();
+  return !n || /^staff\b/.test(n) || n === "tba" || n === "faculty";
+}
+function _verNameParts(name){
+  const s = String(name || "").replace(/\./g, "").trim();
+  if(!s) return null;
+  if(s.includes(",")){
+    const i = s.indexOf(",");
+    return { last: s.slice(0, i).trim().toLowerCase().split(/[\s-]+/).filter(Boolean),
+             first: (s.slice(i + 1).trim().toLowerCase().split(/\s+/)[0] || "") };
+  }
+  const t = s.toLowerCase().split(/\s+/).filter(Boolean);
+  if(t.length === 1) return { last: [t[0]], first: "" };
+  return { last: t.slice(1).flatMap(x => x.split("-")).filter(Boolean), first: t[0] };
+}
+// Same person? Blank in the scheduler matches "Staff" on Owlnet; otherwise the
+// last name must agree and the first names must be compatible (same initial,
+// or one a prefix of the other — "Lee"/"Leola", "Tom"/"Thomas").
+function _verSameInstructor(schedName, owlName){
+  const schedBlank = _verIsStaff(schedName), owlStaff = _verIsStaff(owlName);
+  if(schedBlank || owlStaff) return schedBlank && owlStaff;
+  const a = _verNameParts(schedName), b = _verNameParts(owlName);
+  if(!a || !b) return false;
+  if(!a.last.some(x => b.last.includes(x))) return false;
+  if(!a.first || !b.first) return true;
+  return a.first[0] === b.first[0] || a.first.startsWith(b.first) || b.first.startsWith(a.first);
+}
+// LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
+// the instructor drops the row back to DONE until the next verification.
+// Enrollment from Owlnet. Its "Seats Open" column is REMAINING / CAP, so
+// 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the row fill).
+function owlnetEnrollment(o){
+  if(!o || o.owlnetSeatsCap == null || o.owlnetSeatsOpen == null) return null;
+  const cap = Number(o.owlnetSeatsCap), open = Number(o.owlnetSeatsOpen);
+  if(!(cap > 0) || !Number.isFinite(open)) return null;
+  const enrolled = Math.max(0, Math.min(cap, cap - open));
+  return { enrolled, cap, open: Math.max(0, open), pct: Math.round(enrolled / cap * 100) };
+}
+function isOwlnetLive(o){
+  if(!o || !o.owlnetVerified) return false;
+  const norm = s => _verIsStaff(s) ? "" : String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return norm(o.instructor) === norm(o.owlnetVerifiedInstructor);
+}
+
 async function loadOwlnetSections(force){
   if(state.owlnetSections && !force) return state.owlnetSections;
   try{
@@ -8524,6 +8633,8 @@ function reconcileOwlnet(semester, year){
 
   const flags = [];
   const adopted = [];
+  const verifiedMap = new Map();   // offering id -> Owlnet instructor it was verified against
+  const seatMap = new Map();       // offering id -> the Owlnet row it maps to (for enrollment)
   let matched = 0, cells = 0;
   owlCourseSet.forEach(code => {
     if (isHiddenCourse(code)) return;   // voucher-arranged courses (e.g. ALE 799)
@@ -8539,6 +8650,17 @@ function reconcileOwlnet(semester, year){
       const owlCodes = owlRows.map(r => r.raw_code).join(", ");
       if(owlRows.length){
         if(active.length){
+          // Verify: pair each active offering with an Owlnet section whose
+          // instructor agrees (blank in the scheduler ↔ "Staff" on Owlnet).
+          // A paired offering is confirmed LIVE.
+          const pool = owlRows.slice();
+          const unpaired = [];
+          active.forEach(o => {
+            const i = pool.findIndex(r => _verSameInstructor(o.instructor, r.instructor));
+            if(i >= 0){ verifiedMap.set(o.id, pool[i].instructor || ""); seatMap.set(o.id, pool[i]); pool.splice(i, 1); }
+            else unpaired.push(o);
+          });
+          const _owlName = s => _verIsStaff(s) ? "Staff" : String(s || "");
           if(active.length === 1 && owlRows.length === 1){
             // Always adopt Owlnet's official section number onto the offering.
             const want = String(owlRows[0].section || "").trim();
@@ -8546,7 +8668,23 @@ function reconcileOwlnet(semester, year){
               active[0].officialSection = want;
               adopted.push(active[0].id);
             }
+            // A clean 1:1 match is the same section even if the instructor differs,
+            // so its enrollment still applies.
+            if(!seatMap.has(active[0].id)) seatMap.set(active[0].id, owlRows[0]);
             matched++;
+            if(unpaired.length){
+              const owlI = owlRows[0].instructor || "";
+              const schedI = String(active[0].instructor || "").trim();
+              flags.push({ sev:"info", code, sub,
+                sched: _verIsStaff(schedI) ? "No instructor" : schedI,
+                owl: _owlName(owlI), owlCodes,
+                issue: _verIsStaff(owlI)
+                  ? "Instructor assigned in the scheduler, but Owlnet still shows Staff."
+                  : (_verIsStaff(schedI) ? "Owlnet lists an instructor the scheduler doesn't have."
+                                         : "Instructor differs between the scheduler and Owlnet."),
+                action: _verIsStaff(owlI) ? "Registrar needs to enter the instructor in Owlnet."
+                                          : "Confirm which instructor is correct." });
+            }
           } else if(owlRows.length > active.length){
             // Owlnet has MORE online sections than the scheduler → one may be
             // missing. The reverse (scheduler has more) is NOT flagged: the extra
@@ -8556,9 +8694,15 @@ function reconcileOwlnet(semester, year){
               issue:`Owlnet lists ${owlRows.length} online section(s); the scheduler has ${active.length}.`,
               action:"A section may be missing from the scheduler." });
           } else {
-            // Equal counts >1 in one subterm — pairing is ambiguous, so adopt
-            // is skipped; counts agree, so nothing to flag.
+            // Equal counts >1 in one subterm — section-number pairing is
+            // ambiguous, so adopt is skipped. Instructor pairing still verifies
+            // what it can; flag any section whose instructor matched nothing.
             matched++;
+            unpaired.forEach(o => flags.push({ sev:"info", code, sub,
+              sched: _verIsStaff(o.instructor) ? "No instructor" : String(o.instructor),
+              owl: pool.map(r => _owlName(r.instructor)).join(", ") || "—", owlCodes,
+              issue: "Couldn't match this section's instructor to an Owlnet section.",
+              action: "Confirm the instructor assignment." }));
           }
         } else if(canceled.length){
           flags.push({ sev:"crit", code, sub, sched:"Canceled", owl:"Live", owlCodes,
@@ -8580,10 +8724,42 @@ function reconcileOwlnet(semester, year){
     });
   });
 
+  // Record the verification on every online offering of the term, so the LIVE
+  // badge shows for everyone (the Owlnet table itself is admin-only). Only when
+  // this term actually has Owlnet data — an empty/failed scrape never wipes LIVE.
+  let verified = 0;
+  if(owl.length){
+    sched.forEach(o => {
+      if(isHiddenCourse(_verCourseCode(o))) return;
+      const isV = !o.canceled && verifiedMap.has(o.id);
+      if(isV) verified++;
+      const wantInstr = isV ? String(o.instructor || "") : "";
+      const wantOwl   = isV ? String(verifiedMap.get(o.id) || "") : "";
+      if(!!o.owlnetVerified !== isV ||
+         String(o.owlnetVerifiedInstructor || "") !== wantInstr ||
+         String(o.owlnetInstructor || "") !== wantOwl){
+        o.owlnetVerified = isV;
+        o.owlnetVerifiedInstructor = wantInstr;
+        o.owlnetInstructor = wantOwl;
+        o.owlnetVerifiedAt = isV ? new Date().toISOString() : "";
+        if(!adopted.includes(o.id)) adopted.push(o.id);
+      }
+      // Enrollment (Owlnet "seats open" = remaining, plus the cap).
+      const sr = !o.canceled ? seatMap.get(o.id) : null;
+      const wantOpen = (sr && sr.seats_open != null) ? Number(sr.seats_open) : null;
+      const wantCap  = (sr && sr.seats_cap  != null) ? Number(sr.seats_cap)  : null;
+      if((o.owlnetSeatsOpen ?? null) !== wantOpen || (o.owlnetSeatsCap ?? null) !== wantCap){
+        o.owlnetSeatsOpen = wantOpen;
+        o.owlnetSeatsCap  = wantCap;
+        if(!adopted.includes(o.id)) adopted.push(o.id);
+      }
+    });
+  }
+
   const order = { crit:0, warn:1, info:2 };
   flags.sort((a,b) => (order[a.sev]-order[b.sev]) || a.code.localeCompare(b.code) || a.sub.localeCompare(b.sub));
   const lastScraped = owl.reduce((m,r) => (r.scraped_at && r.scraped_at > m ? r.scraped_at : m), "");
-  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped, adopted };
+  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped, adopted, verified };
 }
 
 function _verFmtWhen(iso){
@@ -8597,7 +8773,7 @@ function verifyPanelHtml(terms, sel, r){
   const nCrit = r.flags.filter(f=>f.sev==="crit").length;
   const nWarn = r.flags.filter(f=>f.sev==="warn").length;
   const nInfo = r.flags.filter(f=>f.sev==="info").length;
-  const sevName = { crit:"Canceled / live", warn:"Mismatch", info:"Section #" };
+  const sevName = { crit:"Canceled / live", warn:"Mismatch", info:"Instructor" };
   const termOpts = terms.map(t =>
     `<option value="${esc(t.semester+"|"+t.year)}"${(t.semester===sel.semester && String(t.year)===String(sel.year))?" selected":""}>${esc(t.label)}</option>`).join("");
   const rowsHtml = r.flags.length ? r.flags.map(f => `
@@ -8627,10 +8803,10 @@ function verifyPanelHtml(terms, sel, r){
   </div>
 
   <div class="ver-tiles">
-    <div class="ver-tile ver-ok"><div class="ver-k">Matched</div><div class="ver-v">${r.matched} <small>/ ${r.checked} checked</small></div></div>
+    <div class="ver-tile ver-ok"><div class="ver-k">Matched</div><div class="ver-v">${r.matched} <small>/ ${r.checked} checked · ${r.verified || 0} LIVE</small></div></div>
     <div class="ver-tile ver-crit"><div class="ver-k">Canceled, still live</div><div class="ver-v">${nCrit}</div></div>
     <div class="ver-tile ver-warn"><div class="ver-k">Mismatches</div><div class="ver-v">${nWarn}</div></div>
-    <div class="ver-tile ver-info"><div class="ver-k">Section #</div><div class="ver-v">${nInfo}</div></div>
+    <div class="ver-tile ver-info"><div class="ver-k">Instructor</div><div class="ver-v">${nInfo}</div></div>
   </div>
 
   <div class="ver-chips" id="verChips">
@@ -8754,10 +8930,16 @@ async function renderVerification(){
   }
   const sel = state.verifyTerm;
   const result = reconcileOwlnet(sel.semester, Number(sel.year));
-  // Always adopt Owlnet's official section numbers: persist the ones this run
-  // wrote onto offerings, and refresh Term Assignments so they show immediately.
-  if(result.adopted && result.adopted.length){
-    result.adopted.forEach(id => { if(typeof markLocallyTouched === "function") markLocallyTouched(id); });
+  // Reconcile EVERY scraped term (not just the one on screen) so official
+  // section numbers, LIVE verification and enrollment are current everywhere.
+  const changed = new Set(result.adopted || []);
+  terms.forEach(t => {
+    if(t.semester === sel.semester && String(t.year) === String(sel.year)) return;
+    (reconcileOwlnet(t.semester, Number(t.year)).adopted || []).forEach(id => changed.add(id));
+  });
+  // Persist what changed onto the offerings, and refresh Term Assignments.
+  if(changed.size){
+    changed.forEach(id => { if(typeof markLocallyTouched === "function") markLocallyTouched(id); });
     if(typeof setDirty === "function") setDirty(true);
     if(typeof flushToSupabase === "function") flushToSupabase();
     if(typeof renderTerms === "function") renderTerms();
