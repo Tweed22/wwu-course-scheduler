@@ -8602,6 +8602,7 @@ function verifyPanelHtml(terms, sel, r){
     <div class="ver-controls">
       <label class="ver-fieldlbl" for="verTermSel">Term</label>
       <select id="verTermSel">${termOpts}</select>
+      <button type="button" id="verScrape" class="ver-btn ver-btn-primary">Scrape Owlnet</button>
       <button type="button" id="verRefresh" class="ver-btn">Refresh</button>
       <span class="ver-checked">Owlnet last scraped ${esc(_verFmtWhen(r.lastScraped))}</span>
     </div>
@@ -8648,6 +8649,9 @@ function verifyStyleBlock(){
   #verifyRoot .ver-fieldlbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
   #verifyRoot select,#verifyRoot .ver-btn{font:inherit;font-size:13px;border-radius:7px;border:1px solid var(--border);background:var(--surface);color:inherit;padding:6px 11px;height:32px;cursor:pointer}
   #verifyRoot .ver-btn{font-weight:600}
+  #verifyRoot .ver-btn-primary{background:var(--wwu-green);color:#fff;border-color:transparent}
+  #verifyRoot .ver-btn-primary:hover{background:var(--wwu-green-dark)}
+  #verifyRoot .ver-btn:disabled{opacity:.6;cursor:default}
   #verifyRoot .ver-checked{font-size:11.5px;color:var(--text-muted)}
   #verifyRoot .ver-tiles{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px}
   #verifyRoot .ver-tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
@@ -8688,6 +8692,27 @@ function verifyStyleBlock(){
   </style>`;
 }
 
+/* Invoke the owlnet-scrape Edge Function (admin-only, server-side HTTP scrape),
+   then reload the table and re-render. termLabel null = the function's default
+   terms (Spring 2027 + Fall 2026). */
+async function runOwlnetScrape(btn, termLabel){
+  if(!isAdmin()){ toast("Admins only.", "error"); return; }
+  const old = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "Scraping Owlnet…"; }
+  try{
+    const { data, error } = await sb.functions.invoke("owlnet-scrape", { body: termLabel ? { terms:[termLabel] } : {} });
+    if(error) throw error;
+    if(data && data.ok === false) throw new Error(data.error || "scrape failed");
+    const n = ((data && data.summary) || []).reduce((s, x) => s + (x.scraped || 0), 0);
+    toast(`Owlnet scrape complete — ${n} sections`);
+    await loadOwlnetSections(true);
+    renderVerification();
+  }catch(e){
+    toast("Scrape failed: " + ((e && e.message) ? e.message : String(e)), "error");
+    if(btn){ btn.disabled = false; btn.textContent = old; }
+  }
+}
+
 async function renderVerification(){
   const root = document.getElementById("verifyRoot");
   if(!root) return;
@@ -8699,7 +8724,11 @@ async function renderVerification(){
   owl.forEach(r => { const k=(r.semester||"")+"|"+r.acad_year; if(!seen.has(k)){ seen.add(k); terms.push({semester:r.semester, year:r.acad_year, label:r.term_label||((r.semester||"")+" "+r.acad_year)}); } });
   terms.sort((a,b)=> String(b.year).localeCompare(String(a.year)));
   if(!terms.length){
-    root.innerHTML = verifyStyleBlock() + '<h2 style="margin:0 0 10px;color:var(--wwu-green-dark);font-size:21px;">Owlnet Verification</h2><div class="ver-empty">No Owlnet data yet. The scheduled scrape populates this table; once it runs, offerings are reconciled here and discrepancies appear.</div>';
+    root.innerHTML = verifyStyleBlock() +
+      '<h2 style="margin:0 0 10px;color:var(--wwu-green-dark);font-size:21px;">Owlnet Verification</h2>' +
+      '<div class="ver-empty">No Owlnet data yet.<br><br><button type="button" id="verScrapeEmpty" class="ver-btn ver-btn-primary">Scrape Owlnet now</button><br><br>This fetches the official online sections (Spring 2027 + Fall 2026) and reconciles them against the scheduler.</div>';
+    const se = document.getElementById("verScrapeEmpty");
+    if(se) se.addEventListener("click", () => runOwlnetScrape(se, null));
     return;
   }
   if(!state.verifyTerm || !terms.some(t=>t.semester===state.verifyTerm.semester && String(t.year)===String(state.verifyTerm.year))){
@@ -8721,6 +8750,11 @@ async function renderVerification(){
   if(ts) ts.addEventListener("change", () => { const p = ts.value.split("|"); state.verifyTerm = { semester:p[0], year:p[1] }; renderVerification(); });
   const rf = document.getElementById("verRefresh");
   if(rf) rf.addEventListener("click", async () => { rf.disabled = true; rf.textContent = "Refreshing…"; await loadOwlnetSections(true); renderVerification(); });
+  const scr = document.getElementById("verScrape");
+  if(scr) scr.addEventListener("click", () => {
+    const t = (terms.find(x => x.semester === state.verifyTerm.semester && String(x.year) === String(state.verifyTerm.year)) || {}).label || null;
+    runOwlnetScrape(scr, t);
+  });
   const chips = document.getElementById("verChips");
   if(chips) chips.addEventListener("click", (e)=>{ const b=e.target.closest(".ver-chip"); if(!b) return;
     chips.querySelectorAll(".ver-chip").forEach(c=>c.setAttribute("aria-pressed", c===b?"true":"false"));
