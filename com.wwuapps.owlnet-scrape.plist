@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd job: nightly Owlnet scrape → Supabase owlnet_sections.
+     Install (one time):
+       cp com.wwuapps.owlnet-scrape.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.wwuapps.owlnet-scrape.plist
+     Adjust the node path / repo path below if yours differ.
+     Runs daily at 4:30 AM, just after the scheduler's 4 AM rotation sync. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wwuapps.owlnet-scrape</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/tweed/Documents/Claude/Projects/WWU Course Scheduling/owlnet-scrape.mjs</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/tweed/Documents/Claude/Projects/WWU Course Scheduling</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/tweed/Documents/Claude/Projects/WWU Course Scheduling/backups/owlnet-scrape.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tweed/Documents/Claude/Projects/WWU Course Scheduling/backups/owlnet-scrape.err.log</string>
+</dict>
+</plist>
