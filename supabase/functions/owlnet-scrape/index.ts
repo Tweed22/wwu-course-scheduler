@@ -11,7 +11,7 @@ const OWLNET = "https://owlnet.williamwoods.edu/ICS/Course_Search.jnz";
 const ADV = OWLNET + "?portlet=Course_Schedules&screen=Advanced+Course+Search&screenType=next";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
 const DIVISIONS = [{ value: "OU" }, { value: "OG" }];
-const HIDDEN = new Set(["ALE 799"]);
+const HIDDEN = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
 const DEFAULT_TERMS = ["Spring 2027", "Fall 2026"];
 
 const CORS = {

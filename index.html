@@ -5794,7 +5794,7 @@ function isOverdue(o) {
 // Courses handled entirely outside the scheduler (e.g. ALE 799 dissertation
 // continuation — arranged per-student by voucher, many instructor-specific
 // sections). Hidden from Term Assignments AND skipped by Owlnet verification.
-const HIDDEN_COURSES = new Set(["ALE 799"]);
+const HIDDEN_COURSES = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
 function isHiddenCourse(code){ return HIDDEN_COURSES.has(canonicalCourseCode(code || "")); }
 
 function applyTermFilters(list) {
@@ -6212,6 +6212,17 @@ function sectionNumberFor(o) {
   return String(n).padStart(2, "0");
 }
 
+/* The section number to SHOW anywhere in the app. Owlnet's official number
+   (adopted onto the offering by verification) is the truth; the positional
+   number is only a fallback for places that must print something (toasts,
+   CSV, contracts) when Owlnet hasn't supplied one yet. Matching code keeps
+   using sectionNumberFor() so request↔offering links aren't disturbed. */
+function displaySectionFor(o) {
+  if (!o) return "";
+  const official = String(o.officialSection || "").trim();
+  return official || sectionNumberFor(o);
+}
+
 /* Auto-create an "Add Section & Split Enrollment" Change Request for a freshly
    added section so the Registrar sees a paper trail. Used by both the "+"
    duplicate button on the Term Assignments page and the "Add Section" modal.
@@ -6224,7 +6235,7 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const parts = code.split(/\s+/);
   const def = SUBTERMS.find(s => s.semester === o.semester && s.subterm === o.subterm);
   const who = state.userName || (opts.submitter || "(unknown)");
-  const sectionLabel = `section ${sectionNumberFor(o)}`;
+  const sectionLabel = `section ${displaySectionFor(o)}`;
   // On-Ground sections are always full-semester — never a 5/10-week sub-term.
   const termLabel = ((c.onlineFall||[]).length || (c.onlineSpring||[]).length || (c.onlineSummer||[]).length)
     ? termPhraseForOffering(o)
@@ -6344,7 +6355,7 @@ function duplicateSection(offeringId) {
   renderTerms();
   if (typeof updateRegistrarBadge === "function") updateRegistrarBadge();
   const c = state.courses.find(x => x.id === dup.courseId);
-  toast(`Added ${c ? c.code : "new"} section ${sectionNumberFor(dup)} — assign an instructor (optional) and click Submit Change to send for approval`);
+  toast(`Added ${c ? c.code : "new"} section ${displaySectionFor(dup)} — assign an instructor (optional) and click Submit Change to send for approval`);
 }
 
 /* Remove an added section. Refuses if the section has been submitted to the
@@ -6362,7 +6373,7 @@ function removeSectionOffering(offeringId) {
     return;
   }
   const c = state.courses.find(x => x.id === o.courseId) || {};
-  const label = `${c.code || "Section"} §${sectionNumberFor(o)}`;
+  const label = `${c.code || "Section"} §${displaySectionFor(o)}`;
   markOfferingDeleted(o.id);
   state.offerings.splice(idx, 1);
   setDirty(true);
@@ -6416,7 +6427,7 @@ function cancelCourseOffering(offeringId) {
   }
   const c = state.courses.find(x => x.id === o.courseId) || {};
   const code = c.code || "this course";
-  if (!confirm(`Cancel ${code} (section ${sectionNumberFor(o)})?\n\nThis will lock the section and push a Cancel Course request to the Change Requests queue. The instructor field will be left blank for this offering (the approver's name is recorded separately).`)) return;
+  if (!confirm(`Cancel ${code} (section ${displaySectionFor(o)})?\n\nThis will lock the section and push a Cancel Course request to the Change Requests queue. The instructor field will be left blank for this offering (the approver's name is recorded separately).`)) return;
   const who = state.userName || "(unknown)";
   o.canceled = true;
   o.canceledAt = new Date().toISOString();
@@ -6437,7 +6448,7 @@ function cancelCourseOffering(offeringId) {
     number:      parts[1] || "",
     sectionNumber: sectionNumberFor(o),
     changeType:  "Cancel Course",
-    explanation: `Cancel ${code} ${termPhraseForOffering(o)} ${o.year} (section ${sectionNumberFor(o)})`,
+    explanation: `Cancel ${code} ${termPhraseForOffering(o)} ${o.year} (section ${displaySectionFor(o)})`,
     rationale:   "",
     courseId:    o.courseId,
     status:      "Pending Approval",
@@ -6497,7 +6508,7 @@ function submitNewSectionChange(o) {
       renderTerms();
       if (typeof renderRequests === "function") renderRequests();
       if (typeof renderChangelog === "function") renderChangelog();
-      const sec = sectionNumberFor(o);
+      const sec = displaySectionFor(o);
       toast(instr
         ? `${c ? c.code : "Section"} §${sec} — instructor "${instr}" added to existing request`
         : `${c ? c.code : "Section"} §${sec} — submitted (instructor pending)`);
@@ -6523,7 +6534,7 @@ function submitNewSectionChange(o) {
   renderTerms();
   if (typeof renderRequests === "function") renderRequests();
   if (typeof renderChangelog === "function") renderChangelog();
-  const sec = sectionNumberFor(o);
+  const sec = displaySectionFor(o);
   toast(instr
     ? `${c ? c.code : "Section"} §${sec} — Add Section + Assign Instructor (${instr}) sent for approval`
     : `${c ? c.code : "Section"} §${sec} — Add Section sent for approval (no instructor yet)`);
@@ -6560,7 +6571,7 @@ async function generateOnlineContractPDF(offeringIdOrData) {
     instructor    = (o.instructor || "").trim();
     // Owlnet's official section number is authoritative on the contract; fall
     // back to the positional number only when Owlnet hasn't supplied one yet.
-    const secNum  = (o.officialSection || "").trim() || sectionNumberFor(o);
+    const secNum  = displaySectionFor(o);
     courseCodeFull = `${(c.code || "").trim()} ${secNum}`.trim();
     courseTitle   = (c.title || "").trim();
     credits       = creditsForCourse(c);
@@ -7086,10 +7097,13 @@ async function generateOnlineContractPDF(offeringIdOrData) {
 function contractDataFromRequestModal() {
   const prefix  = (document.getElementById("rfld_prefix").value || "").trim().toUpperCase();
   const number  = (document.getElementById("rfld_number").value || "").trim();
-  // Only a hand-typed section number appears on the contract; a positional one
-  // is omitted (it is not the Registrar's official number).
+  // The contract shows Owlnet's official number for the linked section; failing
+  // that, only a hand-typed number (a positional one is never printed).
   const _secManual = (document.getElementById("rfld_sectionNumberManual")||{}).value === "1";
-  const secNum  = _secManual ? (document.getElementById("rfld_sectionNumber").value || "").trim() : "";
+  const _linkedOid = (document.getElementById("rfld_offeringId").value || "").trim();
+  const _linkedO   = _linkedOid ? (state.offerings || []).find(x => x.id === _linkedOid) : null;
+  const _official  = _linkedO ? String(_linkedO.officialSection || "").trim() : "";
+  const secNum  = _official || (_secManual ? (document.getElementById("rfld_sectionNumber").value || "").trim() : "");
   const term        = document.getElementById("rfld_term").value || "";
   const subtermLbl  = document.getElementById("rfld_subterm").value || "";
   const year        = Number(document.getElementById("rfld_year").value) || 2026;
@@ -7164,7 +7178,7 @@ function submitSectionToRegistrar(offeringId) {
       toast("Submitted to Registrar — contract PDF could not be generated", "error");
     });
   }
-  toast(`${c ? c.code : "Section"} ${sectionNumberFor(o)} submitted to Registrar`);
+  toast(`${c ? c.code : "Section"} ${displaySectionFor(o)} submitted to Registrar`);
 }
 
 function refreshTermDatalists() {
@@ -7281,7 +7295,7 @@ function exportTermCsv() {
   for (const o of list) {
     const c = state.courses.find(x => x.id === o.courseId) || {};
     const prefix = (c.code||"").split(" ")[0];
-    const cells = [c.code||"", sectionNumberFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), pmsForOffering(o).join(", "), deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
+    const cells = [c.code||"", displaySectionFor(o), c.title||"", o.length||"", SCHOOL_BY_PREFIX[prefix]||"", deanForOffering(o), pmsForOffering(o).join(", "), deadlineForOffering(o), o.instructor||"", o.submitted?"Yes":"No", o.notes||"", o.year, `${def.semester} ${def.subterm}`]
       .map(v => { v = String(v ?? ""); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; });
     rows.push(cells.join(","));
   }
@@ -7721,7 +7735,7 @@ function markRegistrarItemComplete(regId) {
     renderRegistrar();
     if (typeof renderTerms === "function") renderTerms();
     if (typeof renderChangelog === "function") renderChangelog();
-    toast(`${c.code || "Section"} ${sectionNumberFor(o)} marked completed by Registrar`);
+    toast(`${c.code || "Section"} ${displaySectionFor(o)} marked completed by Registrar`);
   } else if (kind === "req") {
     const r = state.requests.find(x => x.id === id);
     if (!r) return;
@@ -7744,7 +7758,7 @@ function markRegistrarItemComplete(regId) {
           linkedOffering.instructor    = name;
           linkedOffering.lastModified  = new Date().toISOString();
           markLocallyTouched(linkedOffering.id);
-          logRequestEvent(r, `Instructor "${name}" written to section ${sectionNumberFor(linkedOffering)} only`);
+          logRequestEvent(r, `Instructor "${name}" written to section ${displaySectionFor(linkedOffering)} only`);
         } else {
           const propagated = applyAssignInstructorToOffering(r, name);
           if (propagated) {
@@ -7818,7 +7832,7 @@ function undoRegistrarItem(regId) {
     const o = state.offerings.find(x => x.id === id);
     if (!o) return;
     const c = state.courses.find(x => x.id === o.courseId) || {};
-    if (!confirm(`Undo submission of ${c.code || "this section"} §${sectionNumberFor(o)}? The row will return to Term Assignments as unsubmitted with no instructor assigned.`)) return;
+    if (!confirm(`Undo submission of ${c.code || "this section"} §${displaySectionFor(o)}? The row will return to Term Assignments as unsubmitted with no instructor assigned.`)) return;
     o.submitted      = false;
     o.submittedAt    = "";
     o.submittedBy    = "";
@@ -7899,7 +7913,7 @@ function applyAssignInstructorToOffering(r, explicitName) {
       specific.instructor   = name;
       specific.lastModified = new Date().toISOString();
       markLocallyTouched(specific.id);
-      return { name, code, term: r.term, subterm: specific.subterm, year: r.year, section: sectionNumberFor(specific) };
+      return { name, code, term: r.term, subterm: specific.subterm, year: r.year, section: displaySectionFor(specific) };
     }
     return null;
   }
@@ -7950,7 +7964,7 @@ function applyCancelCourseToOffering(r) {
       o.lastModified = now;
       markLocallyTouched(o.id);
       const c = state.courses.find(x => x.id === o.courseId) || {};
-      return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
+      return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: displaySectionFor(o) };
     }
     return null;
   }
@@ -7986,7 +8000,7 @@ function applyCancelCourseToOffering(r) {
   o.canceledBy  = who;
   o.lastModified = now;
   markLocallyTouched(o.id);
-  return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
+  return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: displaySectionFor(o) };
 }
 
 function applyReinstateToOffering(r, ch) {
@@ -8031,7 +8045,7 @@ function applyReinstateToOffering(r, ch) {
   o.registrarCompletedBy = state.userName || "(unknown)";
   o.lastModified      = nowIso;
   const c = state.courses.find(x => x.id === o.courseId) || {};
-  return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: sectionNumberFor(o) };
+  return { code: c.code || "(course)", term: o.semester, subterm: o.subterm, year: o.year, section: displaySectionFor(o) };
 }
 function exportRegistrarCsv() {
   const def = activeRegSubtermDef();
@@ -8042,7 +8056,7 @@ function exportRegistrarCsv() {
     const f = regItemSortFields(item);
     let course = f.code;
     if (item.kind === "section") {
-      course = `${f.code} (section ${sectionNumberFor(item.offering)})`;
+      course = `${f.code} (section ${displaySectionFor(item.offering)})`;
     }
     const cells = [
       item.kind === "section" ? "Section" : "Request",
@@ -8150,7 +8164,7 @@ function buildChangelogEvents() {
       events.push({
         at: o.submittedAt,
         type: "submission",
-        subject: `${c.code || "?"} §${sectionNumberFor(o)}`,
+        subject: `${c.code || "?"} §${displaySectionFor(o)}`,
         detail: `Section submitted to Registrar (${label} ${o.year})${o.instructor ? ` — instructor: ${o.instructor}` : ""}`,
         // Prefer the recorded user-name; fall back to the school's dean if older
         // data didn't capture an actor.
@@ -8164,7 +8178,7 @@ function buildChangelogEvents() {
       events.push({
         at: o.registrarCompletedAt,
         type: "completion",
-        subject: `${c.code || "?"} §${sectionNumberFor(o)}`,
+        subject: `${c.code || "?"} §${displaySectionFor(o)}`,
         detail: `Marked completed by Registrar (${label} ${o.year})`,
         actor: o.registrarCompletedBy || "Registrar",
       });
@@ -8178,7 +8192,7 @@ function buildChangelogEvents() {
         events.push({
           at: h.at || "",
           type: "edit",
-          subject: `${c.code || "?"} §${sectionNumberFor(o)}`,
+          subject: `${c.code || "?"} §${displaySectionFor(o)}`,
           detail: h.msg || "(no message)",
           actor: h.actor || "—",
         });
@@ -8343,7 +8357,7 @@ function exportScheduleBackup() {
     const c = state.courses.find(x => x.id === o.courseId) || {};
     const prefix = (c.code||"").split(" ")[0];
     const cells = [
-      c.code||"", sectionNumberFor(o), c.title||"",
+      c.code||"", displaySectionFor(o), c.title||"",
       o.semester||"", o.subterm||"", o.year||"",
       o.length||"", SCHOOL_BY_PREFIX[prefix]||"",
       deanForOffering(o), pmsForOffering(o).join(", "), deadlineForOffering(o),
@@ -9784,11 +9798,14 @@ function newRequest(prefill = {}) {
 function requestCourseCode(r) {
   if (!r.prefix && !r.number) return "";
   const base = `${r.prefix || ""} ${r.number || ""}`.trim();
-  // Section number is shown ONLY when a human typed it into the change-request
-  // form (sectionNumberManual). The app's positional sectionNumberFor() value
-  // is still stored on r.sectionNumber for matching, but it is never displayed
-  // — a positional number must not read as the Registrar's official section.
-  return (r.sectionNumber && r.sectionNumberManual) ? `${base} ${r.sectionNumber}`.trim() : base;
+  // Section number reflects Owlnet: the linked offering's adopted official
+  // number wins. Without one, show a number only if a human typed it into the
+  // form (sectionNumberManual). The positional value stored on r.sectionNumber
+  // is for matching only and is never displayed.
+  const linked = r.offeringId ? (state.offerings || []).find(x => x.id === r.offeringId) : null;
+  const official = linked ? String(linked.officialSection || "").trim() : "";
+  const sec = official || ((r.sectionNumber && r.sectionNumberManual) ? r.sectionNumber : "");
+  return sec ? `${base} ${sec}`.trim() : base;
 }
 
 function logRequestEvent(r, message) {
@@ -10688,11 +10705,17 @@ function renderRequestHeader(editable) {
   const prevSubEl = document.getElementById("rfld_submitter");
   const submitterVal = prevSubEl ? prevSubEl.value : (state.userName || "");
 
-  // Show the section number in the header only when it was typed by hand; an
-  // auto/positional value stays hidden (kept in rfld_sectionNumber for matching).
-  const sectionNumberVal = ((document.getElementById("rfld_sectionNumberManual")||{}).value === "1")
-    ? (document.getElementById("rfld_sectionNumber").value || "")
-    : "";
+  // Header section number reflects Owlnet: the linked offering's official number
+  // wins; otherwise only a hand-typed one. A positional value stays hidden (it's
+  // kept in rfld_sectionNumber for matching). Pre-filling the box doesn't write
+  // rfld_sectionNumber — only typing does — so this is display-only.
+  const _hdrOid = ((document.getElementById("rfld_offeringId") || {}).value || "").trim();
+  const _hdrO   = _hdrOid ? (state.offerings || []).find(x => x.id === _hdrOid) : null;
+  const _hdrOfficial = _hdrO ? String(_hdrO.officialSection || "").trim() : "";
+  const sectionNumberVal = _hdrOfficial ||
+    (((document.getElementById("rfld_sectionNumberManual")||{}).value === "1")
+      ? (document.getElementById("rfld_sectionNumber").value || "")
+      : "");
 
   // Locked variant — read-only pills.
   wrap.innerHTML = `
@@ -10848,7 +10871,7 @@ function openReinstateRequest(offeringId) {
     year: o.year,
     courseId: c.id,
     changeType: "Re-instate Course",
-    explanation: `Re-instate ${c.code || "this course"} (section ${sectionNumberFor(o)})`,
+    explanation: `Re-instate ${c.code || "this course"} (section ${displaySectionFor(o)})`,
     changes: [{ type: "Re-instate Course", fields: { offeringId: o.id } }],
   });
   openRequestModal(r);

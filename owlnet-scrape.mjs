@@ -35,7 +35,7 @@ const DIVISIONS = [
 ];
 const DEFAULT_TERMS = ['Spring 2027', 'Fall 2026'];
 // Courses handled outside the scheduler (voucher-arranged) — never stored.
-const HIDDEN_COURSES = new Set(['ALE 799']);
+const HIDDEN_COURSES = new Set(['ALE 799', 'DIS 781', 'DIS 790', 'DIS 791']);
 const TERMS = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_TERMS;
 const HEADFUL = !!process.env.HEADFUL;
 
