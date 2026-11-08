@@ -9156,6 +9156,16 @@ function _loadXlsxLib(){
 
 /* Excel workbook of the verification report for every scraped term:
    Summary · Flags · Offerings (rotation vs scheduler vs Owlnet) · Sections. */
+/* Who needs to act on a flag — so the registrar can filter the shared sheet to
+   their items. Read from the suggested action's wording. */
+function _verWhoActs(f){
+  const a = String((f && f.action) || "");
+  if(/^Registrar\b/i.test(a)) return "Registrar";
+  if(/registrar|Owlnet/i.test(a)) return "Review (both)";
+  if(/here|Term Assignments|scheduler|modality|Delete|Add the section/i.test(a)) return "Scheduler";
+  return "Review (both)";
+}
+
 async function downloadVerificationXlsx(btn){
   if(!isAdmin()){ toast("Admins only."); return; }
   const old = btn ? btn.textContent : "";
@@ -9186,12 +9196,15 @@ async function downloadVerificationXlsx(btn){
       const rotFor = (f, which) => String(f.sub || "").split(" / ").filter(Boolean)
         .map(s => { const g = gridBy.get(f.code + "|" + s); return g ? (String(f.sub).includes(" / ") ? `${L(s)}: ` : "") + rotTxt(g[which]) : ""; })
         .filter(Boolean).join("; ");
-      r.flags.forEach(f => flagRows.push({ "Term": t.label, "Severity": sevName[f.sev] || f.sev, "Course": f.code,
-        "Modality": f.ground ? "On-ground" : "Online", "Subterm": f.ground ? "Full semester" : L(f.sub),
+      // Same columns, same order as the on-screen flag table — this sheet is the
+      // one to share with the registrar.
+      r.flags.forEach(f => flagRows.push({ _sev: f.sev, _t: terms.indexOf(t),
+        "Severity": sevName[f.sev] || f.sev, "Who acts": _verWhoActs(f), "Term": t.label,
+        "Course": f.code, "Subterm": f.ground ? "Full semester" : L(f.sub), "Modality": f.ground ? "On-ground" : "Online",
         "Scheduler": f.sched || "", "Owlnet": f.owl || "", "Owlnet section(s)": f.owlCodes || "",
-        "Rotation": f.rotation || _verRotation(f.code, t.semester).label,
         "Scheduler vs rotation": rotFor(f, "schedRot"), "Owlnet vs rotation": rotFor(f, "owlRot"),
-        "Issue": f.issue || "", "Suggested action": f.action || "" }));
+        "Issue": f.issue || "", "Suggested action": f.action || "",
+        "Rotation": f.rotation || _verRotation(f.code, t.semester).label }));
       grid.forEach(g => offerRows.push({ "Term": g.term, "Course": g.code, "Subterm": g.subterm,
         "Scheduler vs rotation": rotTxt(g.schedRot), "Owlnet vs rotation": rotTxt(g.owlRot), "Status": g.status,
         "On rotation": g.rotation, "Rotation (all)": g.rotationAll, "Scheduler sections": g.schedCount, "Canceled in scheduler": g.canceledCount,
@@ -9208,6 +9221,9 @@ async function downloadVerificationXlsx(btn){
         });
     });
     sectionRows.sort((a,b) => a.Term.localeCompare(b.Term) || a.Course.localeCompare(b.Course) || a.Subterm.localeCompare(b.Subterm));
+    const sevRank = { crit:0, warn:1, info:2 };
+    flagRows.sort((a,b) => (sevRank[a._sev] - sevRank[b._sev]) || (a._t - b._t) || a.Course.localeCompare(b.Course) || String(a.Subterm).localeCompare(String(b.Subterm)));
+    flagRows.forEach(r => { delete r._sev; delete r._t; });
     const wb = XLSX.utils.book_new();
     const add = (name, rows, widths) => {
       const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "": "(none)" }]);
@@ -9215,8 +9231,9 @@ async function downloadVerificationXlsx(btn){
       if(rows.length && ws["!ref"]) ws["!autofilter"] = { ref: ws["!ref"] };
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
+    // Flags first — it's the sheet that gets shared.
+    add("Flags", flagRows, [11,12,13,10,13,11,28,22,24,22,22,70,55,22]);
     add("Summary", summary, [14,15,22,10,8,9,10,11,18,22,20,18,22]);
-    add("Flags", flagRows, [13,11,10,11,13,28,22,24,22,22,22,70,50]);
     add("Offerings", offerRows, [13,10,8,22,22,18,11,22,10,12,10,60,60]);
     add("Sections", sectionRows, [13,10,11,8,8,10,24,13,24,9,6,10]);
     XLSX.writeFile(wb, `owlnet-verification-${new Date().toISOString().slice(0,10)}.xlsx`);
