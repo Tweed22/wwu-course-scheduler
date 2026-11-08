@@ -41,10 +41,14 @@ class Jar {
   header() { return [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; "); }
 }
 
+// Owlnet error pages must never be read as "no sections" — that would prune
+// every saved section for the term. Any non-2xx response is a failure.
 async function httpGet(jar: Jar, url: string): Promise<string> {
   const res = await fetch(url, { headers: { "User-Agent": UA, "Cookie": jar.header() }, redirect: "follow" });
   jar.update(res);
-  return await res.text();
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Owlnet returned HTTP ${res.status}`);
+  return text;
 }
 async function httpPost(jar: Jar, url: string, fields: Record<string, string>): Promise<string> {
   const body = Object.entries(fields).map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&");
@@ -54,7 +58,9 @@ async function httpPost(jar: Jar, url: string, fields: Record<string, string>): 
     body, redirect: "follow",
   });
   jar.update(res);
-  return await res.text();
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Owlnet returned HTTP ${res.status}`);
+  return text;
 }
 
 function parseForm(html: string): Record<string, string> {
@@ -198,7 +204,9 @@ Deno.serve(async (req) => {
       const records: any[] = [];
       const seenKey = new Set<string>();   // one row per unique key — a section listed
       for (const d of DIVISIONS) {        // under two divisions would break the upsert
-        const rows = await scrapeTermDivision(jar, termLabel, d.value);
+        let rows: any[];
+        try { rows = await scrapeTermDivision(jar, termLabel, d.value); }
+        catch (e) { throw new Error(`${termLabel} / ${d.value}: ${String((e as any)?.message ?? e)}`); }
         for (const r of rows) {
           const rec = toRecord(r, termLabel, d.value, runId);
           if (HIDDEN.has(`${rec.prefix} ${rec.course_number}`.trim())) continue;
@@ -209,6 +217,9 @@ Deno.serve(async (req) => {
         }
         summary.push({ term: termLabel, division: d.value, scraped: rows.length });
       }
+      // A term that came back completely empty is suspect (Owlnet glitch, form
+      // change) — keep what's saved rather than prune it all.
+      if (!records.length) { summary.push({ term: termLabel, warning: "no sections returned — kept existing data" }); continue; }
       for (let i = 0; i < records.length; i += 500) {
         const { error } = await svc.from("owlnet_sections")
           .upsert(records.slice(i, i + 500), { onConflict: "term_label,prefix,course_number,section,suffix" });
