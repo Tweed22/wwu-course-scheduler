@@ -1159,28 +1159,25 @@
     padding: 1px 6px;
     vertical-align: middle;
   }
-  /* Enrollment (from Owlnet). A thin bar along the bottom edge of the row,
-     drawn from the left and sized to the share of seats taken: 10 of 20
-     enrolled = half the row, nobody enrolled = no bar. Higher specificity +
-     !important so it survives the dark-mode rule that forces SENT/DONE rows
-     transparent. */
-  .term-table { --enroll-bar: rgba(28, 122, 68, 0.60); }
-  html.dark .term-table { --enroll-bar: rgba(90, 181, 125, 0.70); }
+  /* Enrollment (from Owlnet). A small progress bar in the Enrollment cell,
+     vertically centered beside the count and filled to the share of seats
+     taken: 10 of 20 enrolled = half full, nobody enrolled = empty track. */
+  .term-table { --enroll-bar: rgba(28, 122, 68, 0.75); --enroll-track: rgba(0, 0, 0, 0.08); }
+  html.dark .term-table { --enroll-bar: rgba(90, 181, 125, 0.85); --enroll-track: rgba(255, 255, 255, 0.10); }
   /* Row generated from an out-of-date rotation: amber edge + ⚠ beside the slot. */
   .term-table tbody tr.rot-stale td.code { box-shadow: inset 3px 0 0 #d9a400; }
   .rot-stale-ico { color: #b7791f; font-weight: 700; margin-left: 2px; cursor: help; }
   html.dark .rot-stale-ico { color: #e3b341; }
   /* Under 8 enrolled the bar turns yellow (low-enrollment warning); 8+ stays green. */
-  .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.85); }
-  html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.80); }
-  .term-table tbody tr.has-enroll,
-  html.dark .term-table tbody tr.has-enroll {
-    background-image: linear-gradient(var(--enroll-bar), var(--enroll-bar)) !important;
-    background-size: var(--enroll-fill, 0%) 3px !important;
-    background-position: left bottom !important;
-    background-repeat: no-repeat !important;
-  }
+  .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.90); }
+  html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); }
   .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .term-table .enroll-wrap { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; }
+  .term-table .enroll-bar {
+    flex: none; width: 36px; height: 6px; border-radius: 3px;
+    background: var(--enroll-track); overflow: hidden;
+  }
+  .term-table .enroll-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--enroll-bar); }
   .term-table .enroll-num { font-weight: 600; }
   .term-table .enroll-cap { font-weight: 400; color: var(--text-muted); }
   .term-table .enroll-none { color: var(--text-muted); }
@@ -6125,12 +6122,11 @@ function renderTermTable(list) {
     const _stale = rotationStaleness(o);
     if (_stale) classes.push("rot-stale");
     // Enrollment from Owlnet (seats remaining / cap → enrolled). Drives the
-    // Enrollment column and a thin bar under the row scaled to % of seats taken.
+    // Enrollment column: count + a small progress bar scaled to % of seats taken.
     const _enr = owlnetEnrollment(o);
     if (_enr) classes.push("has-enroll");
     if (_enr && _enr.enrolled < ENROLL_LOW_THRESHOLD) classes.push("enroll-low");
-    const clsAttr = (classes.length ? ` class="${classes.join(" ")}"` : "") +
-                    (_enr ? ` style="--enroll-fill:${_enr.pct}%"` : "");
+    const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
     const sectionNum = sectionNumberFor(o);
     // Locked when submitted OR when canceled (canceled offerings can't be edited
     // inline — they have to go through Request Change).
@@ -6292,7 +6288,7 @@ function renderTermTable(list) {
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
         <td class="enroll-cell">${_enr
-          ? `<span class="enroll-num" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span>`
+          ? `<span class="enroll-wrap" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet"><span class="enroll-bar"><span class="enroll-bar-fill" style="width:${_enr.pct}%"></span></span><span class="enroll-num">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span></span>`
           : `<span class="enroll-none" title="No Owlnet enrollment yet — scrape Owlnet from the Verification tab">—</span>`}</td>
         ${instructorCell}
         <td class="actions">${actionBtn}</td>
@@ -8694,7 +8690,7 @@ function _verEdit1(x, y){
 // LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
 // the instructor drops the row back to DONE until the next verification.
 // Enrollment from Owlnet. Its "Seats Open" column is REMAINING / CAP, so
-// 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the enrollment bar under the row).
+// 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the Enrollment-cell progress bar).
 const ENROLL_LOW_THRESHOLD = 8;   // fewer enrolled than this → yellow enrollment bar
 function owlnetEnrollment(o){
   if(!o || o.owlnetSeatsCap == null || o.owlnetSeatsOpen == null) return null;
