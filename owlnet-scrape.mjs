@@ -32,6 +32,8 @@ const OWLNET_URL = 'https://owlnet.williamwoods.edu/ICS/Course_Search.jnz';
 const DIVISIONS = [
   { value: 'OU', label: '(Course) Online Undergraduate' },
   { value: 'OG', label: '(Course) Online Graduate' },
+  // Semester Undergraduate (on-ground) — the panel classifies each row by suffix.
+  { value: 'SU', label: 'Semester Undergraduate' },
 ];
 const DEFAULT_TERMS = ['Spring 2027', 'Fall 2026'];
 // Courses handled outside the scheduler (voucher-arranged) — never stored.
@@ -91,6 +93,7 @@ async function extractRows(page) {
         faculty: tds[ci + 2] || '',
         seats: tds[ci + 3] || '',
         status: tds[ci + 4] || '',
+        meeting: tds[ci + 5] || '',
         credits: tds[ci + 6] || '',
         begin: tds[ci + 7] || '',
         end: tds[ci + 8] || '',
@@ -198,6 +201,7 @@ function toRecord(r, termLabel, division, runId) {
     begin_date: isoDate(r.begin),
     end_date: isoDate(r.end),
     credits: numOrNull(r.credits),
+    meeting: r.meeting || null,
     source_run: runId,
     scraped_at: new Date().toISOString(), // refresh on upsert, not just insert
   };
@@ -242,12 +246,16 @@ async function sbPruneStale(termLabel, runId) {
       const { semester } = termToSemesterYear(termLabel);
       if (!semester) { console.warn(`Skipping unrecognized term "${termLabel}"`); continue; }
       const records = [];
+      const seenKey = new Set(); // a section listed under two divisions would break the upsert
       for (const division of DIVISIONS) {
         const rows = await scrapeTermDivision(page, termLabel, division);
         console.log(`  ${termLabel} / ${division.value}: ${rows.length} sections`);
         for (const r of rows) {
           const rec = toRecord(r, termLabel, division, runId);
           if (HIDDEN_COURSES.has(`${rec.prefix} ${rec.course_number}`.trim())) continue;
+          const key = [rec.prefix, rec.course_number, rec.section, rec.suffix].join('|');
+          if (seenKey.has(key)) continue;
+          seenKey.add(key);
           records.push(rec);
         }
       }

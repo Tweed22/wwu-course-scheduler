@@ -10,7 +10,10 @@ import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts
 const OWLNET = "https://owlnet.williamwoods.edu/ICS/Course_Search.jnz";
 const ADV = OWLNET + "?portlet=Course_Schedules&screen=Advanced+Course+Search&screenType=next";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
-const DIVISIONS = [{ value: "OU" }, { value: "OG" }];
+// OU/OG = online undergrad/grad. SU = Semester Undergraduate (on-ground) — also
+// catches online-program sections the registrar filed under SU; the panel tells
+// them apart by suffix (OLC/GPS = online program). `meeting` = location column.
+const DIVISIONS = [{ value: "OU" }, { value: "OG" }, { value: "SU" }];
 const HIDDEN = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
 const DEFAULT_TERMS = ["Spring 2027", "Fall 2026"];
 
@@ -92,7 +95,7 @@ function extractRows(html: string) {
     if (ci < 0) ci = 2;
     out.push({
       raw_code: code, name: tds[ci + 1] || "", faculty: tds[ci + 2] || "",
-      seats: tds[ci + 3] || "", status: tds[ci + 4] || "", credits: tds[ci + 6] || "",
+      seats: tds[ci + 3] || "", status: tds[ci + 4] || "", meeting: tds[ci + 5] || "", credits: tds[ci + 6] || "",
       begin: tds[ci + 7] || "", end: tds[ci + 8] || "",
     });
   });
@@ -158,7 +161,7 @@ function toRecord(r: any, termLabel: string, divisionValue: string, runId: strin
     title: r.name || null, instructor: r.faculty || null,
     seats_open: intOrNull(seats[0]), seats_cap: intOrNull(seats[1]),
     status: r.status || null, begin_date: isoDate(r.begin), end_date: isoDate(r.end),
-    credits: numOrNull(r.credits), source_run: runId,
+    credits: numOrNull(r.credits), meeting: r.meeting || null, source_run: runId,
     // Explicit, so an upsert of an already-known section refreshes it (the
     // column default only fires on insert).
     scraped_at: new Date().toISOString(),
@@ -193,11 +196,15 @@ Deno.serve(async (req) => {
       if (!semester) { summary.push({ term: termLabel, error: "unrecognized term" }); continue; }
       const jar = new Jar();
       const records: any[] = [];
-      for (const d of DIVISIONS) {
+      const seenKey = new Set<string>();   // one row per unique key — a section listed
+      for (const d of DIVISIONS) {        // under two divisions would break the upsert
         const rows = await scrapeTermDivision(jar, termLabel, d.value);
         for (const r of rows) {
           const rec = toRecord(r, termLabel, d.value, runId);
           if (HIDDEN.has(`${rec.prefix} ${rec.course_number}`.trim())) continue;
+          const key = [rec.prefix, rec.course_number, rec.section, rec.suffix].join("|");
+          if (seenKey.has(key)) continue;
+          seenKey.add(key);
           records.push(rec);
         }
         summary.push({ term: termLabel, division: d.value, scraped: rows.length });

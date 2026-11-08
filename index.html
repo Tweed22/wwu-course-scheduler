@@ -8648,9 +8648,24 @@ function _verSameInstructor(schedName, owlName){
   if(schedBlank || owlStaff) return schedBlank && owlStaff;
   const a = _verNameParts(schedName), b = _verNameParts(owlName);
   if(!a || !b) return false;
-  if(!a.last.some(x => b.last.includes(x))) return false;
-  if(!a.first || !b.given.length) return true;
-  return b.given.some(g => _verFirstCompatible(a.first, g));
+  const firstOk = !a.first || !b.given.length || b.given.some(g => _verFirstCompatible(a.first, g));
+  if(a.last.some(x => b.last.includes(x))) return firstOk;
+  // A one-letter last-name typo ("Simmons" / "Simons") still counts when the
+  // first name agrees exactly — same course, same person.
+  const exactFirst = a.first && b.given.some(g => g === a.first);
+  return !!exactFirst && a.last.some(x => b.last.some(y => x.length >= 4 && y.length >= 4 && _verEdit1(x, y)));
+}
+// True when two strings differ by at most one insertion, deletion or substitution.
+function _verEdit1(x, y){
+  if(x === y) return true;
+  if(Math.abs(x.length - y.length) > 1) return false;
+  let i = 0, j = 0, diffs = 0;
+  while(i < x.length && j < y.length){
+    if(x[i] === y[j]){ i++; j++; continue; }
+    if(++diffs > 1) return false;
+    if(x.length > y.length) i++; else if(y.length > x.length) j++; else { i++; j++; }
+  }
+  return diffs + (x.length - i) + (y.length - j) <= 1;
 }
 // LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
 // the instructor drops the row back to DONE until the next verification.
@@ -8699,16 +8714,33 @@ function _verRotation(code, semester){
   const label = slots.length ? `${semester} ${slots.join(", ")}` : `none in ${semester} online`;
   return { unknown:false, asNeeded, label, subs, slots, has: sub => asNeeded || subs.has(sub) };
 }
+/* Which program an Owlnet section belongs to. OU/OG divisions are the online
+   program. SU (Semester Undergraduate) is the on-ground semester program — except
+   online-program sections the registrar filed under SU by mistake, which keep the
+   online suffix (e.g. "ACC 240 01 OLC"). Full-semester "FUL" sections taught
+   online/synchronously are still semester-program. */
+const OWLNET_ONLINE_SUFFIXES = new Set(["OLC", "GPS"]);
+function _owlProgram(r){
+  const div = String(r.division || "").toUpperCase();
+  if(div !== "SU") return "online";
+  return OWLNET_ONLINE_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) ? "online" : "semester";
+}
 function reconcileOwlnet(semester, year){
   const owl = (state.owlnetSections || []).filter(r =>
     (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
-    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
+    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) &&
+    _owlProgram(r) === "online");
   const termRows = (state.offerings || []).filter(o =>
     !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year));
   const sched = termRows.filter(o => offeringModality(o) === "Online");
   // Active NON-online rows, so "on Owlnet but not in the scheduler" can say when
-  // the scheduler does have the section, just recorded as On-Ground.
-  const onGroundKeys = new Set(termRows.filter(o => !o.canceled && offeringModality(o) !== "Online")
+  // the scheduler does have the section, just recorded as On-Ground. Courses can
+  // legitimately run BOTH ways, so only when that on-ground row has no on-ground
+  // (semester-program) counterpart on Owlnet.
+  const owlGroundCodes = new Set((state.owlnetSections || []).filter(r =>
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlProgram(r) === "semester")
+    .map(r => canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`)));
+  const onGroundKeys = new Set(termRows.filter(o => !o.canceled && offeringModality(o) !== "Online" && !owlGroundCodes.has(_verCourseCode(o)))
     .map(o => _verCourseCode(o) + "|" + (o.subterm || "?")));
 
   const owlByCode = {}, owlCourseSet = new Set();
@@ -8820,7 +8852,7 @@ function reconcileOwlnet(semester, year){
             action:"Reinstate, or confirm the cancellation so it drops from Owlnet.",
             fix:{ act:"reinstate", oid: canceled[0].id, label:"Reinstate" } });
         } else if(onGroundKeys.has(code + "|" + sub)){
-          flags.push({ sev:"warn", code, sub, sched:"On-Ground", owl:"Online", owlCodes,
+          flags.push({ sev:"warn", kind:"modality", code, sub, sched:"On-Ground", owl:"Online", owlCodes,
             issue:"The scheduler has this section, but recorded as On-Ground; Owlnet lists it as online.",
             action:"Check the section's modality (the add request's Modality field)." });
         } else {
@@ -8839,6 +8871,7 @@ function reconcileOwlnet(semester, year){
             action:"Registrar: check Owlnet — the section may be missing, under another number, or canceled there." });
         } else {
           flags.push({ sev:"warn", kind:"schedOnly", code, sub, sched: active.length > 1 ? `${active.length} active` : "Active", owl:"Not listed", owlCodes:"",
+            added: active.some(o => o.isNewSection || o.addRequestId),
             issue:"Active in the scheduler but not listed on Owlnet." + (active.length > 1 ? ` (${active.length} rows here — check for a duplicate.)` : ""),
             action:"Publish to Owlnet, or cancel if it isn't running.",
             fix:{ act:"cancel", oid: active[0].id, label:"Cancel section" } });
@@ -8877,11 +8910,31 @@ function reconcileOwlnet(semester, year){
     }
     owlF.forEach(f => { f.issue += R.has(f.sub) ? ` It IS on the rotation (${R.label}) — the scheduler is missing it.`
                                                 : ` Off-rotation: the rotation has ${R.label}.`; });
+    // Rows the rotation sync generated are never removed when the rotation later
+    // drops that subterm (to protect assignments), so they linger as stale rows.
     schF.forEach(f => { f.issue += R.has(f.sub) ? ` It's on the rotation (${R.label}) — Owlnet is missing it.`
-                                                : ` Off-rotation: the rotation has ${R.label} (an added section?).`; });
+                                    : f.added ? ` Off-rotation (rotation: ${R.label}) — an added section.`
+                                              : ` Not on the current rotation (${R.label}) — this row was generated from an earlier version of the rotation and was never removed.`; });
   });
+  // Online-program sections filed under Semester Undergraduate on Owlnet: they
+  // verify fine above, but students searching Online Undergraduate won't see them.
+  owl.filter(r => String(r.division || "").toUpperCase() === "SU").forEach(r => {
+    const code = canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`);
+    merged.push({ sev:"warn", kind:"division", code, sub: _verOwlSubterm(r.begin_date, semester, year) || "?",
+      sched:"Online", owl:"Semester Undergrad", owlCodes: r.raw_code,
+      issue:"Online section filed under the Semester Undergraduate division on Owlnet — it won't show in an Online Undergraduate search.",
+      action:"Registrar: move it to the Online Undergraduate division." });
+  });
+  // On-ground (semester-program) check — scheduler on-ground rows vs Owlnet SU.
+  const ground = reconcileOnGround(semester, year);
+  // The online side already says "recorded as On-Ground" for these — don't repeat it.
+  const modalityCodes = new Set(flags.filter(f => f.kind === "modality").map(f => f.code));
+  merged.push(...ground.flags.filter(f => !(f.modalityHint && modalityCodes.has(f.code))));
+  ground.adopted.forEach(id => { if(!adopted.includes(id)) adopted.push(id); });
+  cells += ground.checked; matched += ground.matched;
   // Excluded from the report (not from LIVE/enrollment): DIS sections.
-  const _kept = flags.filter(f => !dropped.has(f) && !VERIFY_EXCLUDED_PREFIXES.has(String(f.code).split(" ")[0])).concat(merged);
+  const _kept = flags.filter(f => !dropped.has(f) && !VERIFY_EXCLUDED_PREFIXES.has(String(f.code).split(" ")[0])).concat(merged)
+    .filter(f => !VERIFY_EXCLUDED_PREFIXES.has(String(f.code).split(" ")[0]));
   flags.length = 0; flags.push(..._kept);
 
   // Record the verification on every online offering of the term, so the LIVE
@@ -8919,7 +8972,8 @@ function reconcileOwlnet(semester, year){
   const order = { crit:0, warn:1, info:2 };
   flags.sort((a,b) => (order[a.sev]-order[b.sev]) || a.code.localeCompare(b.code) || a.sub.localeCompare(b.sub));
   const lastScraped = owl.reduce((m,r) => (r.scraped_at && r.scraped_at > m ? r.scraped_at : m), "");
-  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped, adopted, verified };
+  return { flags, matched, checked: cells, owlCount: owl.length, lastScraped, adopted, verified: verified + ground.verified,
+           groundCount: ground.owlCount, groundChecked: ground.checked };
 }
 
 /* Course × subterm comparison of the three sources for one term — rotation
@@ -8927,9 +8981,10 @@ function reconcileOwlnet(semester, year){
    Owlnet (what the registrar built). Every cell is listed, matches included, so
    the offerings can be audited before any assignments are made. */
 function verifyOfferingsGrid(semester, year){
+  // Online program only — the rotation sheet builds online offerings.
   const owl = (state.owlnetSections || []).filter(r =>
     (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
-    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
+    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) && _owlProgram(r) === "online");
   const rows = (state.offerings || []).filter(o =>
     !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
   const cells = new Map();
@@ -9044,7 +9099,8 @@ async function downloadVerificationXlsx(btn){
       const rotFor = (f, which) => String(f.sub || "").split(" / ").filter(Boolean)
         .map(s => { const g = gridBy.get(f.code + "|" + s); return g ? (String(f.sub).includes(" / ") ? `${L(s)}: ` : "") + rotTxt(g[which]) : ""; })
         .filter(Boolean).join("; ");
-      r.flags.forEach(f => flagRows.push({ "Term": t.label, "Severity": sevName[f.sev] || f.sev, "Course": f.code, "Subterm": L(f.sub),
+      r.flags.forEach(f => flagRows.push({ "Term": t.label, "Severity": sevName[f.sev] || f.sev, "Course": f.code,
+        "Modality": f.ground ? "On-ground" : "Online", "Subterm": f.ground ? "Full semester" : L(f.sub),
         "Scheduler": f.sched || "", "Owlnet": f.owl || "", "Owlnet section(s)": f.owlCodes || "",
         "Rotation": f.rotation || _verRotation(f.code, t.semester).label,
         "Scheduler vs rotation": rotFor(f, "schedRot"), "Owlnet vs rotation": rotFor(f, "owlRot"),
@@ -9053,12 +9109,12 @@ async function downloadVerificationXlsx(btn){
         "Scheduler vs rotation": rotTxt(g.schedRot), "Owlnet vs rotation": rotTxt(g.owlRot), "Status": g.status,
         "On rotation": g.rotation, "Rotation (all)": g.rotationAll, "Scheduler sections": g.schedCount, "Canceled in scheduler": g.canceledCount,
         "Owlnet sections": g.owlCount, "Scheduler detail": g.schedDetail, "Owlnet detail": g.owlDetail }));
-      (state.offerings || []).filter(o => !o.deleted && (o.semester || "") === t.semester && Number(o.year) === t.year && offeringModality(o) === "Online")
+      (state.offerings || []).filter(o => !o.deleted && (o.semester || "") === t.semester && Number(o.year) === t.year)
         .filter(o => { const c = _verCourseCode(o); return !isHiddenCourse(c) && !VERIFY_EXCLUDED_PREFIXES.has(c.split(" ")[0]); })
         .forEach(o => {
           const e = owlnetEnrollment(o);
           const status = o.canceled ? "Canceled" : o.registrarCompleted ? (isOwlnetLive(o) ? "LIVE" : "DONE") : (o.submitted ? "SENT" : "Not submitted");
-          sectionRows.push({ "Term": t.label, "Course": _verCourseCode(o), "Section": displaySectionFor(o) || "", "Subterm": L(o.subterm),
+          sectionRows.push({ "Term": t.label, "Course": _verCourseCode(o), "Modality": offeringModality(o), "Section": displaySectionFor(o) || "", "Subterm": L(o.subterm),
             "Length": o.length || "", "Instructor": _verIsStaff(o.instructor) ? "" : String(o.instructor).trim(), "Status": status,
             "Owlnet instructor": o.owlnetInstructor ? (_verIsStaff(o.owlnetInstructor) ? "Staff" : o.owlnetInstructor) : "",
             "Enrolled": e ? e.enrolled : "", "Cap": e ? e.cap : "", "Seats open": e ? e.open : "" });
@@ -9073,9 +9129,9 @@ async function downloadVerificationXlsx(btn){
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
     add("Summary", summary, [14,15,22,10,8,9,10,11,18,22,20,18,22]);
-    add("Flags", flagRows, [13,11,10,9,28,22,24,22,22,22,70,50]);
+    add("Flags", flagRows, [13,11,10,11,13,28,22,24,22,22,22,70,50]);
     add("Offerings", offerRows, [13,10,8,22,22,18,11,22,10,12,10,60,60]);
-    add("Sections", sectionRows, [13,10,8,8,10,24,13,24,9,6,10]);
+    add("Sections", sectionRows, [13,10,11,8,8,10,24,13,24,9,6,10]);
     XLSX.writeFile(wb, `owlnet-verification-${new Date().toISOString().slice(0,10)}.xlsx`);
     toast("Verification report downloaded");
   }catch(e){
@@ -9083,6 +9139,106 @@ async function downloadVerificationXlsx(btn){
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = old; }
   }
+}
+
+/* On-ground check (Tony, 2026-11-08). The scheduler only holds on-ground
+   sections that were added/changed through it (the rotation sheet builds online
+   only), so the check runs ONE way: every on-ground section the scheduler has
+   must agree with Owlnet's Semester Undergraduate (SU) sections. On-ground
+   courses on Owlnet that the scheduler doesn't have are NOT flagged. Matched per
+   course + semester (on-ground sections run the full semester, so the scheduler's
+   subterm isn't compared). Same instructor rule as online: only DONE sections. */
+function reconcileOnGround(semester, year){
+  const owlG = (state.owlnetSections || []).filter(r =>
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlProgram(r) === "semester");
+  const res = { flags:[], adopted:[], verified:0, checked:0, matched:0, owlCount: owlG.length };
+  if(!owlG.length) return res;          // SU not scraped for this term yet — judge nothing
+  const owlOnline = new Set((state.owlnetSections || []).filter(r =>
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlProgram(r) === "online")
+    .map(r => canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`)));
+  const byOwl = {};
+  owlG.forEach(r => { const c = canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`); (byOwl[c] = byOwl[c] || []).push(r); });
+  const rows = (state.offerings || []).filter(o =>
+    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "On-Ground");
+  const bySched = {};
+  rows.forEach(o => { const c = _verCourseCode(o); (bySched[c] = bySched[c] || []).push(o); });
+  const nm = s => _verIsStaff(s) ? "No instructor" : String(s || "").trim();
+  const owlNm = s => _verIsStaff(s) ? "Staff" : String(s || "");
+  const st = o => o.registrarCompleted ? " · DONE" : (o.submitted ? " · SENT" : "");
+  const verifiedMap = new Map(), seatMap = new Map();
+  Object.entries(bySched).forEach(([code, offs]) => {
+    if(isHiddenCourse(code)) return;
+    res.checked++;
+    const active = offs.filter(o => !o.canceled), canceled = offs.filter(o => o.canceled);
+    const W = byOwl[code] || [];
+    const owlCodes = W.map(r => r.raw_code).join(", ");
+    const base = { ground:true, code, sub:"Semester" };
+    if(!active.length){
+      if(canceled.length && W.length)
+        res.flags.push({ ...base, sev:"crit", sched:"Canceled", owl:"Live", owlCodes,
+          issue:"On-ground section canceled in the scheduler but still live on Owlnet.",
+          action:"Reinstate, or confirm the cancellation so it drops from Owlnet.",
+          fix:{ act:"reinstate", oid: canceled[0].id, label:"Reinstate" } });
+      return;
+    }
+    if(!W.length){
+      const done = active.filter(o => o.registrarCompleted);
+      const hint = owlOnline.has(code) ? " Owlnet does list it online — check whether this section is really on-ground." : "";
+      res.flags.push({ ...base, sev: done.length ? "crit" : "warn", modalityHint: !!hint, sched: active.map(o => nm(o.instructor) + st(o)).join("; "), owl:"Not listed", owlCodes:"",
+        issue: (done.length ? "On-ground section completed by the registrar, but not on Owlnet (Semester Undergraduate)."
+                            : "On-ground in the scheduler but not on Owlnet (Semester Undergraduate).") + hint,
+        action: hint ? "Fix the section's modality here, or have the registrar add the on-ground section." : "Registrar: check Owlnet — add the section, or cancel it here if it isn't running." });
+      return;
+    }
+    // Pair by instructor (blank ↔ Staff).
+    const pool = W.slice(), unpaired = [];
+    active.forEach(o => {
+      const i = pool.findIndex(r => _verSameInstructor(o.instructor, r.instructor));
+      if(i >= 0){ verifiedMap.set(o.id, pool[i].instructor || ""); seatMap.set(o.id, pool[i]); pool.splice(i, 1); }
+      else unpaired.push(o);
+    });
+    res.matched++;
+    if(active.length === 1 && W.length === 1){
+      const want = String(W[0].section || "").trim();
+      if(want && _verNormSec(active[0].officialSection) !== _verNormSec(want)){ active[0].officialSection = want; res.adopted.push(active[0].id); }
+      if(!seatMap.has(active[0].id)) seatMap.set(active[0].id, W[0]);
+    }
+    if(active.length > W.length){
+      res.flags.push({ ...base, sev: unpaired.some(o => o.registrarCompleted) ? "crit" : "warn",
+        sched:`${active.length} on-ground`, owl:`${W.length} live`, owlCodes,
+        issue:`The scheduler has ${active.length} on-ground sections; Owlnet lists ${W.length}.` + (unpaired.length ? ` Unmatched here: ${unpaired.map(o => nm(o.instructor) + st(o)).join("; ")}.` : ""),
+        action:"Remove the duplicate here, or have the registrar add the missing section." });
+    } else {
+      // Owlnet having MORE on-ground sections isn't flagged (the scheduler only
+      // holds on-ground sections changed through it). Instructor check: DONE only.
+      unpaired.filter(o => o.registrarCompleted).forEach(o => {
+        const staffOnly = pool.length > 0 && pool.every(r => _verIsStaff(r.instructor));
+        res.flags.push({ ...base, sev:"info", sched: nm(o.instructor) + " · DONE", owl: pool.map(r => owlNm(r.instructor)).join(", ") || "—", owlCodes,
+          issue: staffOnly ? "On-ground section completed by the registrar, but Owlnet still shows Staff."
+                           : "On-ground section completed by the registrar, but Owlnet lists a different instructor.",
+          action: staffOnly ? "Registrar: enter the instructor in Owlnet." : "Confirm which instructor is correct." });
+      });
+    }
+  });
+  // Persist verification / enrollment onto on-ground rows (LIVE badge works the same).
+  rows.forEach(o => {
+    if(isHiddenCourse(_verCourseCode(o))) return;
+    const isV = !o.canceled && verifiedMap.has(o.id);
+    if(isV) res.verified++;
+    const wantInstr = isV ? String(o.instructor || "") : "";
+    const wantOwl   = isV ? String(verifiedMap.get(o.id) || "") : "";
+    let changed = false;
+    if(!!o.owlnetVerified !== isV || String(o.owlnetVerifiedInstructor || "") !== wantInstr || String(o.owlnetInstructor || "") !== wantOwl){
+      o.owlnetVerified = isV; o.owlnetVerifiedInstructor = wantInstr; o.owlnetInstructor = wantOwl;
+      o.owlnetVerifiedAt = isV ? new Date().toISOString() : ""; changed = true;
+    }
+    const sr = !o.canceled ? seatMap.get(o.id) : null;
+    const wantOpen = (sr && sr.seats_open != null) ? Number(sr.seats_open) : null;
+    const wantCap  = (sr && sr.seats_cap  != null) ? Number(sr.seats_cap)  : null;
+    if((o.owlnetSeatsOpen ?? null) !== wantOpen || (o.owlnetSeatsCap ?? null) !== wantCap){ o.owlnetSeatsOpen = wantOpen; o.owlnetSeatsCap = wantCap; changed = true; }
+    if(changed && !res.adopted.includes(o.id)) res.adopted.push(o.id);
+  });
+  return res;
 }
 
 function _verFmtWhen(iso){
@@ -9125,9 +9281,9 @@ function verifyPanelHtml(terms, sel, r, grid){
   const termOpts = terms.map(t =>
     `<option value="${esc(t.semester+"|"+t.year)}"${(t.semester===sel.semester && String(t.year)===String(sel.year))?" selected":""}>${esc(t.label)}</option>`).join("");
   const rowsHtml = r.flags.length ? r.flags.map(f => `
-    <tr data-sev="${f.sev}">
+    <tr data-sev="${f.sev}" data-ground="${f.ground ? "1" : "0"}">
       <td class="ver-sevcell"></td>
-      <td><div class="ver-code">${esc(f.code)}</div><div class="ver-sub">Subterm ${esc(f.sub)}</div></td>
+      <td><div class="ver-code">${esc(f.code)}${f.ground ? ' <span class="ver-pill ver-pill-neu">On-ground</span>' : ""}</div><div class="ver-sub">${f.ground ? "Full semester" : "Subterm " + esc(f.sub)}</div></td>
       <td>${verPill(f.sched)}</td>
       <td>${verPill(f.owl)}${f.owlCodes?`<div class="ver-owlcode">${esc(f.owlCodes)}</div>`:""}</td>
       <td>${rotCell(f, "schedRot")}</td>
@@ -9189,6 +9345,7 @@ function verifyPanelHtml(terms, sel, r, grid){
     <button type="button" class="ver-chip" data-filter="crit" aria-pressed="false"><span class="ver-sw ver-sw-crit"></span>${sevName.crit} ${nCrit}</button>
     <button type="button" class="ver-chip" data-filter="warn" aria-pressed="false"><span class="ver-sw ver-sw-warn"></span>${sevName.warn} ${nWarn}</button>
     <button type="button" class="ver-chip" data-filter="info" aria-pressed="false"><span class="ver-sw ver-sw-info"></span>${sevName.info} ${nInfo}</button>
+    <button type="button" class="ver-chip" data-filter="ground" aria-pressed="false">On-ground ${r.flags.filter(f => f.ground).length}</button>
   </div>
 
   <div class="ver-card">
@@ -9199,7 +9356,7 @@ function verifyPanelHtml(terms, sel, r, grid){
       </table>
     </div>
   </div>
-  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected.</p>
+  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected · On-ground: sections the scheduler holds as On-Ground are checked against Owlnet's Semester Undergraduate list (on-ground courses only on Owlnet aren't flagged).</p>
   </div>
   `;
 }
@@ -9407,7 +9564,7 @@ async function renderVerification(){
   if(chips) chips.addEventListener("click", (e)=>{ const b=e.target.closest(".ver-chip"); if(!b) return;
     chips.querySelectorAll(".ver-chip").forEach(c=>c.setAttribute("aria-pressed", c===b?"true":"false"));
     const f=b.getAttribute("data-filter");
-    document.querySelectorAll("#verRows tr[data-sev]").forEach(r=> r.hidden = !(f==="all" || r.getAttribute("data-sev")===f)); });
+    document.querySelectorAll("#verRows tr[data-sev]").forEach(r=> r.hidden = !(f==="all" || r.getAttribute("data-sev")===f || (f==="ground" && r.getAttribute("data-ground")==="1"))); });
   // "Make suggested change" buttons — route each flag to its existing flow.
   const rowsBody = document.getElementById("verRows");
   if(rowsBody) rowsBody.addEventListener("click", (e)=>{
