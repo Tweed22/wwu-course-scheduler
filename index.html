@@ -8986,6 +8986,30 @@ function reconcileOwlnet(semester, year){
                                     : f.added ? ` Off-rotation (rotation: ${R.label}) — an added section.`
                                               : ` Not on the current rotation (${R.label}) — this row was generated from an earlier version of the rotation and was never removed.`; });
   });
+  // On the rotation but missing from BOTH sides (e.g. EDU 503 Spring C: rotation
+  // A+C, Owlnet built only A, the scheduler's C row was deleted). Presence flags
+  // can't see these — nothing exists on either side — so walk the rotation.
+  // Canceled cells are deliberate and not flagged.
+  const deletedRows = (state.offerings || []).filter(o =>
+    o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year));
+  (state.courses || []).forEach(c => {
+    const code = canonicalCourseCode(c.code || "");
+    if(!code || isHiddenCourse(code) || (typeof isNurCode === "function" && isNurCode(code))) return;
+    const R = _verRotation(code, semester);
+    if(R.unknown || R.asNeeded) return;
+    R.subs.forEach(sub => {
+      const offs = (schedByCode[code] && schedByCode[code][sub]) || [];
+      const owlRows = (owlByCode[code] && owlByCode[code][sub]) || [];
+      if(offs.length || owlRows.length) return;           // something exists → handled above
+      const del = deletedRows.filter(o => _verCourseCode(o) === code && (o.subterm || "?") === sub);
+      const restore = del.find(o => !o.isNewSection && !o.addRequestId) || del[0];
+      merged.push({ sev:"warn", kind:"rotOnly", code, sub, sched: del.length ? "Deleted" : "Missing", owl:"Not listed", owlCodes:"",
+        rotation: R.label,
+        issue: `On the rotation (${R.label}) but missing from both the scheduler and Owlnet.` + (del.length ? " The scheduler's row was deleted." : ""),
+        action: "If it's running: restore/add it here and ask the registrar to build it on Owlnet. If not: update the rotation sheet.",
+        fix: restore ? { act:"restore", oid: restore.id, label:"Restore row" } : { act:"add", code, sub, label:"Add to Term Assignments" } });
+    });
+  });
   // Rows generated from an OUT-OF-DATE rotation. Lone "scheduler only" flags
   // already say so; flag the rest — notably ones Owlnet still lists.
   const notedStale = new Set(flags.filter(f => f.kind === "schedOnly" && !dropped.has(f)).map(f => f.code + "|" + f.sub));
@@ -9680,6 +9704,16 @@ async function renderVerification(){
       if(typeof cancelCourseOffering === "function"){ cancelCourseOffering(oid); renderVerification(); }
     } else if(act === "delete" && oid){
       if(typeof deleteOfferingAdmin === "function"){ deleteOfferingAdmin(oid); renderVerification(); }
+    } else if(act === "restore" && oid){
+      const o = (state.offerings || []).find(x => x.id === oid);
+      if(o && confirm(`Restore ${_verCourseCode(o)} (${o.semester} ${o.subterm}) to Term Assignments?`)){
+        o.deleted = false; o.deletedAt = ""; o.deletedBy = "";
+        markLocallyTouched(o.id); setDirty(true);
+        if(typeof flushToSupabase === "function") flushToSupabase();
+        if(typeof renderTerms === "function") renderTerms();
+        toast(`Restored ${_verCourseCode(o)} to Term Assignments`);
+        renderVerification();
+      }
     } else if(act === "add"){
       // Owlnet already has it → add a plain unassigned row (no change request).
       const code = b.getAttribute("data-code") || "", sub = b.getAttribute("data-sub") || "";
