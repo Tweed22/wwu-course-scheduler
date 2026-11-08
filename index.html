@@ -1159,6 +1159,9 @@
      rule that forces SENT/DONE rows transparent. */
   .term-table { --enroll-tint: rgba(28, 122, 68, 0.06); }
   html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.08); }
+  /* Under 8 enrolled the fill turns yellow (low-enrollment warning); 8+ stays green. */
+  .term-table tbody tr.enroll-low { --enroll-tint: rgba(222, 170, 0, 0.13); }
+  html.dark .term-table tbody tr.enroll-low { --enroll-tint: rgba(240, 200, 70, 0.10); }
   .term-table tbody tr.has-enroll,
   html.dark .term-table tbody tr.has-enroll {
     background-image: linear-gradient(to right,
@@ -4662,6 +4665,34 @@ function handleRealtimeOffering(payload) {
     scheduleReRender();
   }
 }
+/* Re-read every offering from the server and merge it in exactly as if each
+   row had arrived over realtime. Realtime never replays events a tab missed
+   (laptop asleep, tab backgrounded, network blip), so a long-open tab can hold
+   a stale copy — e.g. a section the registrar has since completed still SENT.
+   Any later save of that row upserts the WHOLE row and would undo the
+   completion. So every automatic writer (the 4 AM rotation sync, Owlnet
+   verification) and a tab waking up call this first. `minAgeMs` throttles. */
+let _lastOfferingsRefreshAt = 0;
+async function refreshOfferingsFromServer(minAgeMs = 0) {
+  if (!window.AUTH || !window.AUTH.user || !_supabaseReady) return false;
+  if (minAgeMs && Date.now() - _lastOfferingsRefreshAt < minAgeMs) return false;
+  try {
+    const res = await selectAll("offerings");
+    if (!res || res.error || !res.data) { if (res && res.error) console.warn("offerings refresh failed", res.error); return false; }
+    _lastOfferingsRefreshAt = Date.now();
+    res.data.forEach(row => handleRealtimeOffering({ eventType: "UPDATE", new: row }));
+    return true;
+  } catch (e) { console.warn("offerings refresh error", e); return false; }
+}
+// A tab that was hidden for a while (sleep / background) has likely missed
+// realtime events — catch up as soon as it's visible again.
+let _hiddenSince = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { _hiddenSince = Date.now(); return; }
+  if (_hiddenSince && Date.now() - _hiddenSince > 5 * 60 * 1000) refreshOfferingsFromServer(0);
+  _hiddenSince = 0;
+});
+
 function handleRealtimeRequest(payload) {
   const event = payload.eventType || payload.type;
   if (event === "DELETE") {
@@ -6072,6 +6103,7 @@ function renderTermTable(list) {
     // Enrollment column and a light green row fill scaled to % of seats taken.
     const _enr = owlnetEnrollment(o);
     if (_enr) classes.push("has-enroll");
+    if (_enr && _enr.enrolled < ENROLL_LOW_THRESHOLD) classes.push("enroll-low");
     const clsAttr = (classes.length ? ` class="${classes.join(" ")}"` : "") +
                     (_enr ? ` style="--enroll-fill:${_enr.pct}%"` : "");
     const sectionNum = sectionNumberFor(o);
@@ -8614,6 +8646,7 @@ function _verSameInstructor(schedName, owlName){
 // the instructor drops the row back to DONE until the next verification.
 // Enrollment from Owlnet. Its "Seats Open" column is REMAINING / CAP, so
 // 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the row fill).
+const ENROLL_LOW_THRESHOLD = 8;   // fewer enrolled than this → yellow row fill
 function owlnetEnrollment(o){
   if(!o || o.owlnetSeatsCap == null || o.owlnetSeatsOpen == null) return null;
   const cap = Number(o.owlnetSeatsCap), open = Number(o.owlnetSeatsOpen);
@@ -8637,9 +8670,14 @@ async function loadOwlnetSections(force){
   return state.owlnetSections;
 }
 
+/* Owlnet section suffixes the scheduler doesn't manage — ignored entirely by
+   verification (never flagged, never paired). CIC = consortium seats on a
+   course (e.g. "SWK 317 02 CIC", cap 1). */
+const OWLNET_IGNORED_SUFFIXES = new Set(["CIC"]);
 function reconcileOwlnet(semester, year){
   const owl = (state.owlnetSections || []).filter(r =>
-    (r.semester || "") === semester && Number(r.acad_year) === Number(year));
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
+    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
   const sched = (state.offerings || []).filter(o =>
     !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
 
@@ -8974,6 +9012,9 @@ async function renderVerification(){
   if(!isAdmin()){ root.innerHTML = '<div class="ver-empty">Admins only.</div>'; return; }
   if(!state.owlnetSections) root.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Loading Owlnet verification…</p>';
   await loadOwlnetSections();
+  // Verification writes whole rows back — make sure they're the server's
+  // current rows first, so a stale tab can't undo a registrar completion.
+  await refreshOfferingsFromServer(60 * 1000);
   const owl = state.owlnetSections || [];
   const terms = [], seen = new Set();
   owl.forEach(r => { const k=(r.semester||"")+"|"+r.acad_year; if(!seen.has(k)){ seen.add(k); terms.push({semester:r.semester, year:r.acad_year, label:r.term_label||((r.semester||"")+" "+r.acad_year)}); } });
@@ -12181,6 +12222,9 @@ async function init() {
   function scheduleNextDailySync() {
     const delay = msUntilNextChicago4am(new Date());
     setTimeout(async () => {
+      // A tab left open overnight has likely missed realtime events; catch up
+      // before the sync writes rows back.
+      try { await refreshOfferingsFromServer(0); } catch (e) {}
       try { await syncRotationFromSheet(); }
       catch (e) { toast("Rotation daily sync failed: " + (e && e.message || e)); }
       scheduleNextDailySync();
