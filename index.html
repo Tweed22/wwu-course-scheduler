@@ -7556,9 +7556,18 @@ function offeringModality(o) {
   const course = (state.courses || []).find((x) => x.id === o.courseId) || {};
   const code = (course.code || o.courseCode || "").trim().toUpperCase();
   const sect = String(sectionNumberFor(o) || "").replace(/^0+/, "");
+  // 2a. The add request that created THIS offering (or is linked to it) is
+  //     decisive — e.g. EXS 402 Spring B: an older, since-deleted On-Ground add
+  //     and a newer Online add for the same course/term made the term-level
+  //     match ambiguous, so the live row fell back to the rotation (in-seat only).
+  for (const r of state.requests || []) {
+    if (!r.modality || !ADD_TYPES.includes(r.changeType)) continue;
+    if ((o.addRequestId && r.id === o.addRequestId) || (r.offeringId && r.offeringId === o.id)) return r.modality;
+  }
   const said = new Set();
   for (const r of state.requests || []) {
     if (!ADD_TYPES.includes(r.changeType)) continue;
+    if (r.offeringId && r.offeringId !== o.id) continue;   // belongs to a different section
     if (!["Approved", "Finalized"].includes(r.status)) continue;
     if (`${r.prefix || ""} ${r.number || ""}`.trim().toUpperCase() !== code) continue;
     if ((r.term || "") !== (o.semester || "")) continue;
@@ -8678,8 +8687,13 @@ function reconcileOwlnet(semester, year){
   const owl = (state.owlnetSections || []).filter(r =>
     (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
     !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
-  const sched = (state.offerings || []).filter(o =>
-    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
+  const termRows = (state.offerings || []).filter(o =>
+    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year));
+  const sched = termRows.filter(o => offeringModality(o) === "Online");
+  // Active NON-online rows, so "on Owlnet but not in the scheduler" can say when
+  // the scheduler does have the section, just recorded as On-Ground.
+  const onGroundKeys = new Set(termRows.filter(o => !o.canceled && offeringModality(o) !== "Online")
+    .map(o => _verCourseCode(o) + "|" + (o.subterm || "?")));
 
   const owlByCode = {}, owlCourseSet = new Set();
   owl.forEach(r => {
@@ -8701,7 +8715,28 @@ function reconcileOwlnet(semester, year){
   const verifiedMap = new Map();   // offering id -> Owlnet instructor it was verified against
   const seatMap = new Map();       // offering id -> the Owlnet row it maps to (for enrollment)
   let matched = 0, cells = 0;
-  owlCourseSet.forEach(code => {
+  // Workflow: Dean/PM enters faculty → submits (SENT) → registrar processes
+  // (DONE) → Owlnet shows the instructor. Until a section is DONE, Owlnet
+  // showing "Staff" (or an older name) is expected, so instructor checks apply
+  // ONLY to DONE sections — and for those, any disagreement is a real error.
+  const _isDone = o => !!o.registrarCompleted;
+  const _owlName = s => _verIsStaff(s) ? "Staff" : String(s || "");
+  const doneInstrFlag = (o, candidates, code, sub, owlCodes) => {
+    const schedI = String(o.instructor || "").trim();
+    const staffOnly = candidates.length > 0 && candidates.every(r => _verIsStaff(r.instructor));
+    return { sev:"info", code, sub,
+      sched: (_verIsStaff(schedI) ? "No instructor" : schedI) + " · DONE",
+      owl: candidates.map(r => _owlName(r.instructor)).join(", ") || "—", owlCodes,
+      issue: staffOnly ? "Completed by the registrar, but Owlnet still shows Staff."
+           : (_verIsStaff(schedI) ? "Completed with no instructor, but Owlnet lists one."
+                                  : "Completed by the registrar, but Owlnet lists a different instructor."),
+      action: staffOnly ? "Registrar: enter the instructor in Owlnet." : "Confirm which instructor is correct." };
+  };
+  // Every course on EITHER side — a course the scheduler has but Owlnet lacks
+  // entirely (e.g. a completed ACC 240 that never made it onto Owlnet) must be
+  // examined too, not just courses Owlnet lists.
+  const allCodes = new Set([...owlCourseSet, ...Object.keys(schedByCode)]);
+  allCodes.forEach(code => {
     if (isHiddenCourse(code)) return;   // voucher-arranged courses (e.g. ALE 799)
     const subs = new Set([...Object.keys(owlByCode[code] || {}), ...Object.keys(schedByCode[code] || {})]);
     subs.forEach(sub => {
@@ -8725,7 +8760,6 @@ function reconcileOwlnet(semester, year){
             if(i >= 0){ verifiedMap.set(o.id, pool[i].instructor || ""); seatMap.set(o.id, pool[i]); pool.splice(i, 1); }
             else unpaired.push(o);
           });
-          const _owlName = s => _verIsStaff(s) ? "Staff" : String(s || "");
           if(active.length === 1 && owlRows.length === 1){
             // Always adopt Owlnet's official section number onto the offering.
             const want = String(owlRows[0].section || "").trim();
@@ -8737,19 +8771,8 @@ function reconcileOwlnet(semester, year){
             // so its enrollment still applies.
             if(!seatMap.has(active[0].id)) seatMap.set(active[0].id, owlRows[0]);
             matched++;
-            if(unpaired.length){
-              const owlI = owlRows[0].instructor || "";
-              const schedI = String(active[0].instructor || "").trim();
-              flags.push({ sev:"info", code, sub,
-                sched: _verIsStaff(schedI) ? "No instructor" : schedI,
-                owl: _owlName(owlI), owlCodes,
-                issue: _verIsStaff(owlI)
-                  ? "Instructor assigned in the scheduler, but Owlnet still shows Staff."
-                  : (_verIsStaff(schedI) ? "Owlnet lists an instructor the scheduler doesn't have."
-                                         : "Instructor differs between the scheduler and Owlnet."),
-                action: _verIsStaff(owlI) ? "Registrar needs to enter the instructor in Owlnet."
-                                          : "Confirm which instructor is correct." });
-            }
+            // Not DONE yet → Owlnet lagging is expected; nothing to flag.
+            if(unpaired.length && _isDone(active[0])) flags.push(doneInstrFlag(active[0], owlRows, code, sub, owlCodes));
           } else if(owlRows.length > active.length){
             // Owlnet has MORE online sections than the scheduler → one may be
             // missing. The reverse (scheduler has more) is NOT flagged: the extra
@@ -8758,22 +8781,23 @@ function reconcileOwlnet(semester, year){
             flags.push({ sev:"warn", code, sub, sched:`${active.length} active`, owl:`${owlRows.length} live`, owlCodes,
               issue:`Owlnet lists ${owlRows.length} online section(s); the scheduler has ${active.length}.`,
               action:"A section may be missing from the scheduler." });
-          } else {
+            unpaired.filter(_isDone).forEach(o => flags.push(doneInstrFlag(o, pool, code, sub, owlCodes)));
+          } else if(owlRows.length === active.length){
             // Equal counts >1 in one subterm — section-number pairing is
             // ambiguous, so adopt is skipped. Instructor pairing still verifies
-            // what it can; flag any section whose instructor matched nothing.
+            // what it can; flag any DONE section whose instructor matched nothing.
             matched++;
-            unpaired.forEach(o => flags.push({ sev:"info", code, sub,
-              sched: _verIsStaff(o.instructor) ? "No instructor" : String(o.instructor),
-              owl: pool.map(r => _owlName(r.instructor)).join(", ") || "—", owlCodes,
-              issue: "Couldn't match this section's instructor to an Owlnet section.",
-              action: "Confirm the instructor assignment." }));
+            unpaired.filter(_isDone).forEach(o => flags.push(doneInstrFlag(o, pool, code, sub, owlCodes)));
           }
         } else if(canceled.length){
           flags.push({ sev:"crit", code, sub, sched:"Canceled", owl:"Live", owlCodes,
             issue:"Canceled in the scheduler but still live on Owlnet.",
             action:"Reinstate, or confirm the cancellation so it drops from Owlnet.",
             fix:{ act:"reinstate", oid: canceled[0].id, label:"Reinstate" } });
+        } else if(onGroundKeys.has(code + "|" + sub)){
+          flags.push({ sev:"warn", code, sub, sched:"On-Ground", owl:"Online", owlCodes,
+            issue:"The scheduler has this section, but recorded as On-Ground; Owlnet lists it as online.",
+            action:"Check the section's modality (the add request's Modality field)." });
         } else {
           flags.push({ sev:"warn", code, sub, sched:"No offering", owl:"Live", owlCodes,
             issue:"Live on Owlnet with no matching offering in the scheduler.",
@@ -8781,10 +8805,19 @@ function reconcileOwlnet(semester, year){
             fix:{ act:"add", code, sub, label:"Add section" } });
         }
       } else if(active.length){
-        flags.push({ sev:"warn", code, sub, sched:"Active", owl:"Not listed", owlCodes:"",
-          issue:"Active in the scheduler but not listed on Owlnet.",
-          action:"Publish to Owlnet, or cancel if it isn't running.",
-          fix:{ act:"cancel", oid: active[0].id, label:"Cancel section" } });
+        const done = active.filter(_isDone);
+        if(done.length){
+          // The registrar completed it, yet it isn't on Owlnet at all — an error.
+          const who = done.map(o => _verIsStaff(o.instructor) ? "No instructor" : String(o.instructor).trim()).join(", ");
+          flags.push({ sev:"crit", code, sub, sched:`${who} · DONE`, owl:"Not listed", owlCodes:"",
+            issue:"Completed by the registrar, but not on Owlnet.",
+            action:"Registrar: check Owlnet — the section may be missing, under another number, or canceled there." });
+        } else {
+          flags.push({ sev:"warn", code, sub, sched:"Active", owl:"Not listed", owlCodes:"",
+            issue:"Active in the scheduler but not listed on Owlnet.",
+            action:"Publish to Owlnet, or cancel if it isn't running.",
+            fix:{ act:"cancel", oid: active[0].id, label:"Cancel section" } });
+        }
       }
     });
   });
@@ -8838,7 +8871,7 @@ function verifyPanelHtml(terms, sel, r){
   const nCrit = r.flags.filter(f=>f.sev==="crit").length;
   const nWarn = r.flags.filter(f=>f.sev==="warn").length;
   const nInfo = r.flags.filter(f=>f.sev==="info").length;
-  const sevName = { crit:"Canceled / live", warn:"Mismatch", info:"Instructor" };
+  const sevName = { crit:"Critical", warn:"Mismatch", info:"Instructor" };
   const termOpts = terms.map(t =>
     `<option value="${esc(t.semester+"|"+t.year)}"${(t.semester===sel.semester && String(t.year)===String(sel.year))?" selected":""}>${esc(t.label)}</option>`).join("");
   const rowsHtml = r.flags.length ? r.flags.map(f => `
@@ -8869,7 +8902,7 @@ function verifyPanelHtml(terms, sel, r){
 
   <div class="ver-tiles">
     <div class="ver-tile ver-ok"><div class="ver-k">Matched</div><div class="ver-v">${r.matched} <small>/ ${r.checked} checked · ${r.verified || 0} LIVE</small></div></div>
-    <div class="ver-tile ver-crit"><div class="ver-k">Canceled, still live</div><div class="ver-v">${nCrit}</div></div>
+    <div class="ver-tile ver-crit"><div class="ver-k">Critical</div><div class="ver-v">${nCrit}</div></div>
     <div class="ver-tile ver-warn"><div class="ver-k">Mismatches</div><div class="ver-v">${nWarn}</div></div>
     <div class="ver-tile ver-info"><div class="ver-k">Instructor</div><div class="ver-v">${nInfo}</div></div>
   </div>
@@ -8889,7 +8922,7 @@ function verifyPanelHtml(terms, sel, r){
       </table>
     </div>
   </div>
-  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Canceled sections drop off Owlnet, so a canceled match is critical.</p>
+  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected.</p>
   `;
 }
 function verPill(text){
