@@ -2137,7 +2137,7 @@
           <th data-tsort="pm" style="padding-left:18px;">Program Manager</th>
           <th data-tsort="instructor">Assigned Instructor</th>
           <th class="no-sort" style="white-space:nowrap;">Actions</th>
-          <th class="no-sort" style="white-space:nowrap;" title="Enrolled / seats, from Owlnet">Enrollment</th>
+          <th data-tsort="enroll" style="white-space:nowrap;" title="Enrolled / seats, from Owlnet — click to sort (your view only)">Enrollment</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -5938,10 +5938,20 @@ function applyTermSort(list) {
         case "ftNeeded": return o.fullTimeNeeded || "";
         case "instructor": return o.instructor || "";
         case "contract": return o.contractReturned ? 1 : 0;
+        case "enroll": { const e = owlnetEnrollment(o); return e ? e.enrolled : null; }
         default: return "";
       }
     };
     const va = get(a, ca), vb = get(b, cb);
+    if (k === "enroll") {
+      // Sections with no Owlnet enrollment stay at the bottom either way; ties
+      // fall back to % full, then course code.
+      if (va === null || vb === null) return (va === null) - (vb === null);
+      if (va !== vb) return (va - vb) * dir;
+      const pa = (owlnetEnrollment(a) || {}).pct || 0, pb = (owlnetEnrollment(b) || {}).pct || 0;
+      if (pa !== pb) return (pa - pb) * dir;
+      return String(ca.code || "").localeCompare(String(cb.code || ""));
+    }
     if (va < vb) return -dir;
     if (va > vb) return dir;
     return 0;
