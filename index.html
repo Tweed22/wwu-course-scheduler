@@ -1159,24 +1159,25 @@
     padding: 1px 6px;
     vertical-align: middle;
   }
-  /* Enrollment (from Owlnet). The row gets a very light green fill from the
-     left, sized to the share of seats taken: 10 of 20 enrolled = 50%, nobody
-     enrolled = 0%. Higher specificity + !important so it survives the dark-mode
-     rule that forces SENT/DONE rows transparent. */
-  .term-table { --enroll-tint: rgba(28, 122, 68, 0.06); }
-  html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.08); }
+  /* Enrollment (from Owlnet). A thin bar along the bottom edge of the row,
+     drawn from the left and sized to the share of seats taken: 10 of 20
+     enrolled = half the row, nobody enrolled = no bar. Higher specificity +
+     !important so it survives the dark-mode rule that forces SENT/DONE rows
+     transparent. */
+  .term-table { --enroll-bar: rgba(28, 122, 68, 0.60); }
+  html.dark .term-table { --enroll-bar: rgba(90, 181, 125, 0.70); }
   /* Row generated from an out-of-date rotation: amber edge + ⚠ beside the slot. */
   .term-table tbody tr.rot-stale td.code { box-shadow: inset 3px 0 0 #d9a400; }
   .rot-stale-ico { color: #b7791f; font-weight: 700; margin-left: 2px; cursor: help; }
   html.dark .rot-stale-ico { color: #e3b341; }
-  /* Under 8 enrolled the fill turns yellow (low-enrollment warning); 8+ stays green. */
-  .term-table tbody tr.enroll-low { --enroll-tint: rgba(222, 170, 0, 0.13); }
-  html.dark .term-table tbody tr.enroll-low { --enroll-tint: rgba(240, 200, 70, 0.10); }
+  /* Under 8 enrolled the bar turns yellow (low-enrollment warning); 8+ stays green. */
+  .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.85); }
+  html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.80); }
   .term-table tbody tr.has-enroll,
   html.dark .term-table tbody tr.has-enroll {
-    background-image: linear-gradient(to right,
-      var(--enroll-tint) var(--enroll-fill, 0%),
-      transparent var(--enroll-fill, 0%)) !important;
+    background-image: linear-gradient(var(--enroll-bar), var(--enroll-bar)) !important;
+    background-size: var(--enroll-fill, 0%) 3px !important;
+    background-position: left bottom !important;
     background-repeat: no-repeat !important;
   }
   .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -6124,7 +6125,7 @@ function renderTermTable(list) {
     const _stale = rotationStaleness(o);
     if (_stale) classes.push("rot-stale");
     // Enrollment from Owlnet (seats remaining / cap → enrolled). Drives the
-    // Enrollment column and a light green row fill scaled to % of seats taken.
+    // Enrollment column and a thin bar under the row scaled to % of seats taken.
     const _enr = owlnetEnrollment(o);
     if (_enr) classes.push("has-enroll");
     if (_enr && _enr.enrolled < ENROLL_LOW_THRESHOLD) classes.push("enroll-low");
@@ -8693,8 +8694,8 @@ function _verEdit1(x, y){
 // LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
 // the instructor drops the row back to DONE until the next verification.
 // Enrollment from Owlnet. Its "Seats Open" column is REMAINING / CAP, so
-// 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the row fill).
-const ENROLL_LOW_THRESHOLD = 8;   // fewer enrolled than this → yellow row fill
+// 14/20 means 6 enrolled of 20. pct = share of seats taken (drives the enrollment bar under the row).
+const ENROLL_LOW_THRESHOLD = 8;   // fewer enrolled than this → yellow enrollment bar
 function owlnetEnrollment(o){
   if(!o || o.owlnetSeatsCap == null || o.owlnetSeatsOpen == null) return null;
   const cap = Number(o.owlnetSeatsCap), open = Number(o.owlnetSeatsOpen);
