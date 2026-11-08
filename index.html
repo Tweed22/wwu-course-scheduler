@@ -745,6 +745,11 @@
 
   .term-table th.no-sort:nth-child(8),
   .term-table th[data-tsort="enroll"]               { width: 120px; min-width: 80px; padding-left: 18px; }
+  /* Term Assignments: Enrollment sits between Program Manager and Assigned
+     Instructor, which moves Actions to the 8th column — pin its width by class
+     so the position-based rules above (shared with other tables) can't. */
+  .term-table.ta-table thead th.actions-th          { width: 250px; min-width: 0; padding-left: 18px; }
+  .term-table.ta-table td.enroll-cell               { padding-left: 18px; }
   .term-table td:has(input[data-field="notes"])      { padding-left: 18px; overflow: hidden; white-space: nowrap; min-width: 80px; }
   .term-table input[data-field="notes"]              { overflow: hidden; text-overflow: ellipsis; }
   .actions button {
@@ -2132,7 +2137,7 @@
   <div class="stats" id="termStats"></div>
 
   <div class="table-wrap">
-    <table class="term-table">
+    <table class="term-table ta-table">
       <thead>
         <tr>
           <th data-tsort="code" style="width:140px;">Course</th>
@@ -2140,9 +2145,9 @@
           <th data-tsort="length" style="width:80px;">Length</th>
           <th data-tsort="dean" style="display:none;">Dean</th>
           <th data-tsort="pm" style="padding-left:18px;">Program Manager</th>
-          <th data-tsort="instructor">Assigned Instructor</th>
-          <th class="no-sort" style="white-space:nowrap;">Actions</th>
           <th data-tsort="enroll" style="white-space:nowrap;" title="Enrolled / seats, from Owlnet — click to sort (your view only)">Enrollment</th>
+          <th data-tsort="instructor">Assigned Instructor</th>
+          <th class="no-sort actions-th" style="white-space:nowrap;">Actions</th>
         </tr>
       </thead>
       <tbody id="ttbody"></tbody>
@@ -6285,11 +6290,11 @@ function renderTermTable(list) {
         <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}${_stale ? ` <span class="rot-stale-ico" title="${escapeHtml(`Out-of-date rotation: this row was generated from an earlier rotation. The current rotation sheet lists ${_stale.label}. Delete it if the course isn't running this term.`)}">⚠</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
-        ${instructorCell}
-        <td class="actions">${actionBtn}</td>
         <td class="enroll-cell">${_enr
           ? `<span class="enroll-num" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span>`
           : `<span class="enroll-none" title="No Owlnet enrollment yet — scrape Owlnet from the Verification tab">—</span>`}</td>
+        ${instructorCell}
+        <td class="actions">${actionBtn}</td>
       </tr>
     `;
   }).join("");
