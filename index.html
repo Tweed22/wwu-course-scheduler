@@ -1172,7 +1172,7 @@
   .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.90); }
   html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); }
   .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .term-table .enroll-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; vertical-align: middle; }
+  .term-table .enroll-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; vertical-align: middle; }
   .term-table .enroll-bar {
     flex: none; width: 48px; height: 5px; border-radius: 3px;
     background: var(--enroll-track); overflow: hidden;
@@ -1180,7 +1180,7 @@
   .term-table .enroll-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--enroll-bar); }
   .term-table .enroll-num { font-weight: 600; }
   .term-table .enroll-cap { font-weight: 400; color: var(--text-muted); }
-  .term-table .enroll-none { color: var(--text-muted); }
+  .term-table .enroll-none { color: var(--text-muted); display: inline-block; min-width: 48px; text-align: center; }
   /* DONE = processed by the Registrar (blue). */
   .term-table .done-badge {
     display: inline-block;
