@@ -743,7 +743,8 @@
     min-width: 160px;
   }
 
-  .term-table th.no-sort:nth-child(8)               { width: 120px; min-width: 80px; padding-left: 18px; }
+  .term-table th.no-sort:nth-child(8),
+  .term-table th[data-tsort="enroll"]               { width: 120px; min-width: 80px; padding-left: 18px; }
   .term-table td:has(input[data-field="notes"])      { padding-left: 18px; overflow: hidden; white-space: nowrap; min-width: 80px; }
   .term-table input[data-field="notes"]              { overflow: hidden; text-overflow: ellipsis; }
   .actions button {
@@ -1159,6 +1160,10 @@
      rule that forces SENT/DONE rows transparent. */
   .term-table { --enroll-tint: rgba(28, 122, 68, 0.06); }
   html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.08); }
+  /* Row generated from an out-of-date rotation: amber edge + ⚠ beside the slot. */
+  .term-table tbody tr.rot-stale td.code { box-shadow: inset 3px 0 0 #d9a400; }
+  .rot-stale-ico { color: #b7791f; font-weight: 700; margin-left: 2px; cursor: help; }
+  html.dark .rot-stale-ico { color: #e3b341; }
   /* Under 8 enrolled the fill turns yellow (low-enrollment warning); 8+ stays green. */
   .term-table tbody tr.enroll-low { --enroll-tint: rgba(222, 170, 0, 0.13); }
   html.dark .term-table tbody tr.enroll-low { --enroll-tint: rgba(240, 200, 70, 0.10); }
@@ -6110,6 +6115,9 @@ function renderTermTable(list) {
     if (o.registrarCompleted) classes.push("done");
     if (o.registrarCompleted && isOwlnetLive(o)) classes.push("live");
     if (o.canceled && !o.pendingReinstate) classes.push("canceled");
+    // Generated from an out-of-date rotation (current sheet no longer lists this slot).
+    const _stale = rotationStaleness(o);
+    if (_stale) classes.push("rot-stale");
     // Enrollment from Owlnet (seats remaining / cap → enrolled). Drives the
     // Enrollment column and a light green row fill scaled to % of seats taken.
     const _enr = owlnetEnrollment(o);
@@ -6274,7 +6282,7 @@ function renderTermTable(list) {
           ${orphanBadge}${escapeHtml(c.code)}${(o.officialSection||"").trim() ? ` <span class="section-num official" title="Official section number (from Owlnet)">${escapeHtml((o.officialSection||"").trim())}</span>` : ""}${subtermLabel}${submittedBadge}${canceledBadge}
         </td>
         <td class="title-cell">${escapeHtml(c.title || "")}</td>
-        <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}</td>
+        <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}${_stale ? ` <span class="rot-stale-ico" title="${escapeHtml(`Out-of-date rotation: this row was generated from an earlier rotation. The current rotation sheet lists ${_stale.label}. Delete it if the course isn't running this term.`)}">⚠</span>` : ""}</td>
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
         <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
         ${instructorCell}
@@ -8724,6 +8732,55 @@ function _verRotation(code, semester){
   const label = slots.length ? `${semester} ${slots.join(", ")}` : `none in ${semester} online`;
   return { unknown:false, asNeeded, label, subs, slots, has: sub => asNeeded || subs.has(sub) };
 }
+/* A row the rotation sync generated from an OUT-OF-DATE rotation: the current
+   rotation sheet no longer lists this slot for the semester. The sync adds rows
+   for new rotation entries but never removes rows (to protect assignments), so
+   these linger (e.g. PSY 565 Spring A after its rotation became Fall A + Summer A).
+   Deliberately added sections are never "stale". Returns null or { label }. */
+function rotationStaleness(o){
+  if(!o || o.deleted || o.canceled || o.isNewSection || o.addRequestId || o.addedFromOwlnet) return null;
+  if(offeringModality(o) !== "Online") return null;
+  const R = _verRotation(_verCourseCode(o), o.semester);
+  if(R.unknown || R.asNeeded) return null;
+  if(o.rotationSlot ? (R.slots || []).includes(o.rotationSlot) : R.has(o.subterm)) return null;
+  return { label: R.label };
+}
+
+/* Verification "Add section" for a section Owlnet lists but the scheduler
+   doesn't: the registrar already built it, so add a plain default (white,
+   unassigned, unsubmitted) row to Term Assignments — no change request. Slot
+   and length come from Owlnet's dates; Owlnet's section number is adopted. */
+function addOfferingFromOwlnet(code, sub, semester, year){
+  const c = (state.courses || []).find(x => canonicalCourseCode(x.code || "") === canonicalCourseCode(code));
+  if(!c){ toast(`${code} isn't in the rotation sheet, so it can't be added here — use a Change Request.`); return false; }
+  const exists = (state.offerings || []).some(o => !o.deleted && !o.canceled && o.courseId === c.id &&
+    o.semester === semester && Number(o.year) === Number(year) && o.subterm === sub && offeringModality(o) === "Online");
+  if(exists){ toast(`${code} already has an online section in that subterm.`); return false; }
+  const r = (state.owlnetSections || []).find(x => canonicalCourseCode(`${x.prefix || ""} ${x.course_number || ""}`) === canonicalCourseCode(code) &&
+    x.semester === semester && Number(x.acad_year) === Number(year) && _owlProgram(x) === "online" &&
+    (_verOwlSubterm(x.begin_date, semester, year) || "") === sub);
+  // Slot from Owlnet's span: ~5 weeks → A/B/C, ~10 → F/L, a full term → 16W.
+  let slot = primarySlotForSubterm(sub);
+  if(r && r.begin_date && r.end_date){
+    const weeks = (new Date(r.end_date) - new Date(r.begin_date)) / (7 * 864e5);
+    if(weeks >= 13) slot = weeks >= 15.5 ? "16W" : "15W";
+    else if(weeks >= 7.5) slot = sub === "2B" ? "L" : "F";
+  }
+  const o = newOffering({
+    courseId: c.id, courseCode: c.code, semester, subterm: sub, year: Number(year),
+    length: SLOT_LENGTH[slot] || "5 Weeks", rotationSlot: slot, instructor: "", notes: "", submitted: false,
+  });
+  o.modality = "Online";               // explicit — the rotation may not list it online this term
+  o.addedFromOwlnet = true;            // deliberate add, never "out-of-date rotation"
+  if(r && r.section) o.officialSection = String(r.section).trim();
+  state.offerings.push(o);
+  markLocallyTouched(o.id);
+  setDirty(true);
+  if(typeof flushToSupabase === "function") flushToSupabase();
+  if(typeof renderTerms === "function") renderTerms();
+  toast(`Added ${c.code}${o.officialSection ? " " + o.officialSection : ""} to Term Assignments (${semester} ${({ "1A":"A", "2B":"B", "3C":"C" }[sub] || sub)}) — unassigned.`);
+  return true;
+}
 /* Which program an Owlnet section belongs to. OU/OG divisions are the online
    program. SU (Semester Undergraduate) is the on-ground semester program — except
    online-program sections the registrar filed under SU by mistake, which keep the
@@ -8869,7 +8926,7 @@ function reconcileOwlnet(semester, year){
           flags.push({ sev:"warn", kind:"owlOnly", code, sub, sched:"No offering", owl:"Live", owlCodes,
             issue:"Live on Owlnet with no matching offering in the scheduler.",
             action:"Add the section to Term Assignments.",
-            fix:{ act:"add", code, sub, label:"Add section" } });
+            fix:{ act:"add", code, sub, label:"Add to Term Assignments" } });
         }
       } else if(active.length){
         const done = active.filter(_isDone);
@@ -8884,7 +8941,10 @@ function reconcileOwlnet(semester, year){
             added: active.some(o => o.isNewSection || o.addRequestId),
             issue:"Active in the scheduler but not listed on Owlnet." + (active.length > 1 ? ` (${active.length} rows here — check for a duplicate.)` : ""),
             action:"Publish to Owlnet, or cancel if it isn't running.",
-            fix:{ act:"cancel", oid: active[0].id, label:"Cancel section" } });
+            // Never sent to the registrar → nothing on Owlnet to cancel; just delete the row.
+            fix: active.every(o => !o.submitted && !o.registrarCompleted)
+              ? { act:"delete", oid: active[active.length - 1].id, label:"Delete row" }
+              : { act:"cancel", oid: active[0].id, label:"Cancel section" } });
         }
       }
     });
@@ -8925,6 +8985,23 @@ function reconcileOwlnet(semester, year){
     schF.forEach(f => { f.issue += R.has(f.sub) ? ` It's on the rotation (${R.label}) — Owlnet is missing it.`
                                     : f.added ? ` Off-rotation (rotation: ${R.label}) — an added section.`
                                               : ` Not on the current rotation (${R.label}) — this row was generated from an earlier version of the rotation and was never removed.`; });
+  });
+  // Rows generated from an OUT-OF-DATE rotation. Lone "scheduler only" flags
+  // already say so; flag the rest — notably ones Owlnet still lists.
+  const notedStale = new Set(flags.filter(f => f.kind === "schedOnly" && !dropped.has(f)).map(f => f.code + "|" + f.sub));
+  sched.forEach(o => {
+    if(o.canceled) return;
+    const code = _verCourseCode(o);
+    if(isHiddenCourse(code)) return;
+    const S = rotationStaleness(o);
+    if(!S || notedStale.has(code + "|" + (o.subterm || "?"))) return;
+    const onOwl = verifiedMap.has(o.id) || seatMap.has(o.id);
+    merged.push({ sev:"warn", kind:"stale", code, sub: o.subterm || "?",
+      sched: (_verIsStaff(o.instructor) ? "No instructor" : String(o.instructor).trim()) + (o.registrarCompleted ? " · DONE" : o.submitted ? " · SENT" : ""),
+      owl: onOwl ? "Live" : "Not listed", owlCodes:"", rotation: S.label,
+      issue: `From an out-of-date rotation: the current rotation lists ${S.label}, not ${semester} ${o.rotationSlot || _L(o.subterm)}.` +
+             (onOwl ? " Owlnet still lists it, so it may be running anyway." : ""),
+      action: onOwl ? "Confirm it's running; if so, update the rotation sheet." : "Delete the row if the course isn't running this term." });
   });
   // Online-program sections filed under Semester Undergraduate on Owlnet: they
   // verify fine above, but students searching Online Undergraduate won't see them.
@@ -9584,14 +9661,13 @@ async function renderVerification(){
       if(typeof openReinstateRequest === "function") openReinstateRequest(oid);
     } else if(act === "cancel" && oid){
       if(typeof cancelCourseOffering === "function"){ cancelCourseOffering(oid); renderVerification(); }
+    } else if(act === "delete" && oid){
+      if(typeof deleteOfferingAdmin === "function"){ deleteOfferingAdmin(oid); renderVerification(); }
     } else if(act === "add"){
-      const code = b.getAttribute("data-code") || "";
-      const c = (state.courses || []).find(x => canonicalCourseCode(x.code || "") === canonicalCourseCode(code));
-      if(c && typeof openRequestForCourse === "function"){ openRequestForCourse(c.id); }
-      else if(typeof openNewRequest === "function"){
-        const parts = code.split(/\s+/);
-        openNewRequest({ prefix:(parts[0]||"").toUpperCase(), number:parts.slice(1).join(" "), modality:"Online" });
-      } else { toast("Open a new Change Request to add this section.", "error"); }
+      // Owlnet already has it → add a plain unassigned row (no change request).
+      const code = b.getAttribute("data-code") || "", sub = b.getAttribute("data-sub") || "";
+      const t = state.verifyTerm || {};
+      if(addOfferingFromOwlnet(code, sub, t.semester, Number(t.year))) renderVerification();
     }
   });
 }
