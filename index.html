@@ -1157,8 +1157,8 @@
      left, sized to the share of seats taken: 10 of 20 enrolled = 50%, nobody
      enrolled = 0%. Higher specificity + !important so it survives the dark-mode
      rule that forces SENT/DONE rows transparent. */
-  .term-table { --enroll-tint: rgba(28, 122, 68, 0.10); }
-  html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.13); }
+  .term-table { --enroll-tint: rgba(28, 122, 68, 0.06); }
+  html.dark .term-table { --enroll-tint: rgba(90, 181, 125, 0.08); }
   .term-table tbody tr.has-enroll,
   html.dark .term-table tbody tr.has-enroll {
     background-image: linear-gradient(to right,
@@ -8563,25 +8563,52 @@ function _verNameParts(name){
   const s = String(name || "").replace(/\./g, "").trim();
   if(!s) return null;
   if(s.includes(",")){
+    // Owlnet form "Last, First Middle" — keep every given name, since people
+    // often go by their middle name.
     const i = s.indexOf(",");
+    const given = s.slice(i + 1).trim().toLowerCase().split(/\s+/).filter(Boolean);
     return { last: s.slice(0, i).trim().toLowerCase().split(/[\s-]+/).filter(Boolean),
-             first: (s.slice(i + 1).trim().toLowerCase().split(/\s+/)[0] || "") };
+             first: given[0] || "", given };
   }
   const t = s.toLowerCase().split(/\s+/).filter(Boolean);
-  if(t.length === 1) return { last: [t[0]], first: "" };
-  return { last: t.slice(1).flatMap(x => x.split("-")).filter(Boolean), first: t[0] };
+  if(t.length === 1) return { last: [t[0]], first: "", given: [] };
+  return { last: t.slice(1).flatMap(x => x.split("-")).filter(Boolean), first: t[0], given: [t[0]] };
+}
+// Common nicknames whose spelling shares no prefix/suffix with the full name.
+const _VER_NICK = {
+  bob:"robert", rob:"robert", robbie:"robert", bobby:"robert", bert:"robert",
+  bill:"william", billy:"william", will:"william", liam:"william",
+  jim:"james", jimmy:"james", jamie:"james", dick:"richard", rick:"richard", rich:"richard",
+  ted:"edward", ed:"edward", eddie:"edward", ned:"edward", jack:"john", johnny:"john",
+  dave:"david", joe:"joseph", joey:"joseph", andy:"andrew", drew:"andrew",
+  steve:"steven", chuck:"charles", charlie:"charles", hank:"henry", harry:"henry",
+  peggy:"margaret", maggie:"margaret", meg:"margaret", liz:"elizabeth", betty:"elizabeth",
+  kate:"katherine", katie:"katherine", kathy:"katherine", becky:"rebecca", patty:"patricia",
+  jennie:"jennifer", jenny:"jennifer", sandy:"sandra", sue:"susan", trish:"patricia",
+  tony:"anthony", toni:"antoinette", lisa:"elizabeth", bess:"elizabeth", polly:"mary",
+  nancy:"ann", sasha:"alexander", xander:"alexander", gus:"augustus",
+  sheb:"gulsebnem",
+};
+function _verFirstCompatible(x, y){
+  if(!x || !y) return true;
+  if(x === y || x[0] === y[0]) return true;
+  if(x.startsWith(y) || y.startsWith(x)) return true;                 // Lee / Leola
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  if(s.length >= 3 && l.endsWith(s)) return true;                     // Beth / Elizabeth, Drew / Andrew
+  const fx = _VER_NICK[x] || x, fy = _VER_NICK[y] || y;
+  return fx === fy || fx.startsWith(fy) || fy.startsWith(fx);          // Bob / Robert, Tony / Anthony
 }
 // Same person? Blank in the scheduler matches "Staff" on Owlnet; otherwise the
-// last name must agree and the first names must be compatible (same initial,
-// or one a prefix of the other — "Lee"/"Leola", "Tom"/"Thomas").
+// last name must agree and the scheduler's first name must be compatible with
+// one of Owlnet's given names (initial, prefix, suffix or a known nickname).
 function _verSameInstructor(schedName, owlName){
   const schedBlank = _verIsStaff(schedName), owlStaff = _verIsStaff(owlName);
   if(schedBlank || owlStaff) return schedBlank && owlStaff;
   const a = _verNameParts(schedName), b = _verNameParts(owlName);
   if(!a || !b) return false;
   if(!a.last.some(x => b.last.includes(x))) return false;
-  if(!a.first || !b.first) return true;
-  return a.first[0] === b.first[0] || a.first.startsWith(b.first) || b.first.startsWith(a.first);
+  if(!a.first || !b.given.length) return true;
+  return b.given.some(g => _verFirstCompatible(a.first, g));
 }
 // LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
 // the instructor drops the row back to DONE until the next verification.
@@ -8886,25 +8913,59 @@ function verifyStyleBlock(){
   </style>`;
 }
 
-/* Invoke the owlnet-scrape Edge Function (admin-only, server-side HTTP scrape),
-   then reload the table and re-render. termLabel null = the function's default
-   terms (Spring 2027 + Fall 2026). */
+/* Terms worth scraping: every Fall/Spring/Summer the scheduler has offerings for
+   that hasn't ended yet, in calendar order. Derived from the data so it rolls
+   forward on its own (no hard-coded years). */
+function _owlnetActiveTerms(){
+  const today = new Date().toISOString().slice(0, 10);
+  const seen = new Map();
+  (state.offerings || []).forEach(o => {
+    if(o.deleted || !["Fall","Spring","Summer"].includes(o.semester)) return;
+    const label = `${o.semester} ${o.year}`;
+    if(seen.has(label)) return;
+    const y = Number(o.year);
+    const end = termEndDate(o.semester, "3C", y) || termEndDate(o.semester, "1A", y) || "";
+    if(end && end < today) return;                     // term already over
+    seen.set(label, termStartDate(o.semester, "1A", y) || label);
+  });
+  return [...seen.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).map(e => e[0]);
+}
+
+/* Invoke the owlnet-scrape Edge Function (admin-only, server-side HTTP scrape)
+   once per active term — one term per request keeps each run short — then
+   reload the table and re-render (which re-verifies every term). A term Owlnet
+   hasn't published yet is skipped, not treated as a failure. */
 async function runOwlnetScrape(btn, termLabel){
   if(!isAdmin()){ toast("Admins only.", "error"); return; }
-  const old = btn ? btn.textContent : "";
-  if(btn){ btn.disabled = true; btn.textContent = "Scraping Owlnet…"; }
-  try{
-    const { data, error } = await sb.functions.invoke("owlnet-scrape", { body: termLabel ? { terms:[termLabel] } : {} });
-    if(error) throw error;
-    if(data && data.ok === false) throw new Error(data.error || "scrape failed");
-    const n = ((data && data.summary) || []).reduce((s, x) => s + (x.scraped || 0), 0);
-    toast(`Owlnet scrape complete — ${n} sections`);
-    await loadOwlnetSections(true);
-    renderVerification();
-  }catch(e){
-    toast("Scrape failed: " + ((e && e.message) ? e.message : String(e)), "error");
-    if(btn){ btn.disabled = false; btn.textContent = old; }
+  const terms = _owlnetActiveTerms();
+  if(termLabel && !terms.includes(termLabel)) terms.unshift(termLabel);
+  if(!terms.length){ toast("No current terms to scrape.", "error"); return; }
+  if(btn) btn.disabled = true;
+  let total = 0;
+  const done = [], skipped = [], failed = [];
+  for(const t of terms){
+    if(btn) btn.textContent = `Scraping ${t}…`;
+    try{
+      const { data, error } = await sb.functions.invoke("owlnet-scrape", { body: { terms: [t] } });
+      let msg = (data && data.ok === false) ? (data.error || "scrape failed") : "";
+      if(error){
+        try { const j = await error.context.json(); msg = (j && j.error) || error.message; }
+        catch(_) { msg = (error && error.message) || String(error); }
+      }
+      if(msg){
+        if(/not found in Owlnet/i.test(msg)) skipped.push(t); else failed.push(`${t} (${msg})`);
+        continue;
+      }
+      total += ((data && data.summary) || []).reduce((s, x) => s + (x.scraped || 0), 0);
+      done.push(t);
+    }catch(e){ failed.push(`${t} (${(e && e.message) || e})`); }
   }
+  await loadOwlnetSections(true);
+  renderVerification();
+  const parts = [done.length ? `Scraped ${done.join(", ")} — ${total} sections` : "Nothing scraped"];
+  if(skipped.length) parts.push(`not on Owlnet yet: ${skipped.join(", ")}`);
+  if(failed.length)  parts.push(`failed: ${failed.join("; ")}`);
+  toast(parts.join(" · "), failed.length ? "error" : undefined);
 }
 
 async function renderVerification(){

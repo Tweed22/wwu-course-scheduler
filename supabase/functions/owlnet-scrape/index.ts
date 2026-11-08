@@ -159,6 +159,9 @@ function toRecord(r: any, termLabel: string, divisionValue: string, runId: strin
     seats_open: intOrNull(seats[0]), seats_cap: intOrNull(seats[1]),
     status: r.status || null, begin_date: isoDate(r.begin), end_date: isoDate(r.end),
     credits: numOrNull(r.credits), source_run: runId,
+    // Explicit, so an upsert of an already-known section refreshes it (the
+    // column default only fires on insert).
+    scraped_at: new Date().toISOString(),
   };
 }
 

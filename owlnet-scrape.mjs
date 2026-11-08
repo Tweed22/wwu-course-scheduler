@@ -199,6 +199,7 @@ function toRecord(r, termLabel, division, runId) {
     end_date: isoDate(r.end),
     credits: numOrNull(r.credits),
     source_run: runId,
+    scraped_at: new Date().toISOString(), // refresh on upsert, not just insert
   };
 }
 
