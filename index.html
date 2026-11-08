@@ -8931,10 +8931,10 @@ function verifyOfferingsGrid(semester, year){
     (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
     !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
   const rows = (state.offerings || []).filter(o =>
-    !o.deleted && !o.canceled && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
+    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && offeringModality(o) === "Online");
   const cells = new Map();
-  const cell = (code, sub) => { const k = code + "|" + sub; if(!cells.has(k)) cells.set(k, { code, sub, sched:[], owl:[] }); return cells.get(k); };
-  rows.forEach(o => cell(_verCourseCode(o), o.subterm || "?").sched.push(o));
+  const cell = (code, sub) => { const k = code + "|" + sub; if(!cells.has(k)) cells.set(k, { code, sub, sched:[], canceled:[], owl:[] }); return cells.get(k); };
+  rows.forEach(o => { const c = cell(_verCourseCode(o), o.subterm || "?"); (o.canceled ? c.canceled : c.sched).push(o); });
   owl.forEach(r => cell(canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`), _verOwlSubterm(r.begin_date, semester, year) || "?").owl.push(r));
   // Rotation cells with nothing on either side are still worth a row.
   (state.courses || []).forEach(c => {
@@ -8955,15 +8955,45 @@ function verifyOfferingsGrid(semester, year){
                  : (s && w) ? (s > w ? "Scheduler has more" : "Owlnet has more")
                  : "On rotation only";
     const stat = o => o.registrarCompleted ? (isOwlnetLive(o) ? "LIVE" : "DONE") : (o.submitted ? "SENT" : "Not submitted");
-    out.push({ term: `${semester} ${year}`, code: c.code, subterm: L(c.sub),
+    const cx = c.canceled.length;
+    const schedRot = _rotAccuracy(R, c.sub, s > 0, cx > 0);
+    const owlRot   = _rotAccuracy(R, c.sub, w > 0, cx > 0 && !s);
+    out.push({ term: `${semester} ${year}`, code: c.code, sub: c.sub, subterm: L(c.sub),
       rotation: R.unknown ? "Not in sheet" : (onRot ? "Yes" : "No"), rotationAll: R.label,
-      schedCount: s, owlCount: w, status,
+      schedCount: s, canceledCount: cx, owlCount: w, status: (!s && !w && cx) ? "Canceled" : status,
+      schedRot, owlRot,
       schedDetail: c.sched.map(o => `${displaySectionFor(o) || "?"} ${(_verIsStaff(o.instructor) ? "(no instructor)" : String(o.instructor).trim())} [${stat(o)}]`).join("; "),
       owlDetail: c.owl.map(r => `${r.raw_code} — ${_verIsStaff(r.instructor) ? "Staff" : r.instructor} (${r.seats_open ?? "?"}/${r.seats_cap ?? "?"} open)`).join("; ") });
   });
-  const rank = { "On Owlnet only":0, "In scheduler only":1, "Scheduler has more":2, "Owlnet has more":3, "On rotation only":4, "Match":5 };
-  out.sort((a,b) => (rank[a.status]-rank[b.status]) || a.code.localeCompare(b.code) || a.subterm.localeCompare(b.subterm));
+  // Problems first: either side off the rotation, then cross-source status.
+  const bad = g => (g.schedRot.ok === false ? 2 : 0) + (g.owlRot.ok === false ? 1 : 0);
+  const rank = { "On Owlnet only":0, "In scheduler only":1, "Scheduler has more":2, "Owlnet has more":3, "On rotation only":4, "Canceled":5, "Match":6 };
+  out.sort((a,b) => (bad(b) - bad(a)) || (rank[a.status]-rank[b.status]) || a.code.localeCompare(b.code) || a.subterm.localeCompare(b.subterm));
   return out;
+}
+
+/* Is one source (the scheduler or Owlnet) accurate to the published rotation
+   for this course+subterm? The rotation says WHETHER a course runs in a
+   subterm (not how many sections), so presence is what's compared.
+     ok:true  — matches (offered & present, or not offered & absent)
+     ok:false — "Missing" (rotation offers it, absent) or "Not on rotation"
+     ok:null  — can't judge: canceled, course not in the sheet, or "as needed" */
+function _rotAccuracy(R, sub, present, canceled){
+  if(R.unknown)  return { ok:null,  text: present ? "Not in rotation sheet" : "—" };
+  if(R.asNeeded) return { ok:true,  text:"As needed" };
+  const onRot = R.has(sub);
+  if(onRot && present)  return { ok:true,  text:"Matches" };
+  if(onRot && canceled) return { ok:null,  text:"Canceled" };
+  if(onRot)             return { ok:false, text:"Missing" };
+  if(present)           return { ok:false, text:"Not on rotation" };
+  return { ok:true, text:"Matches" };
+}
+/* Pill for a rotation-accuracy verdict. */
+function verRotPill(v){
+  const t = (v && v.text) || "—";
+  const cls = !v || v.ok === null ? "neu" : (v.ok ? "rot-ok" : "rot-bad");
+  const mark = !v || v.ok === null ? "" : (v.ok ? "✓ " : "✗ ");
+  return `<span class="ver-pill ver-pill-${cls}">${mark}${(typeof escapeHtml==="function"?escapeHtml(t):t)}</span>`;
 }
 
 /* SheetJS, loaded only when someone actually downloads a report. */
@@ -9006,14 +9036,23 @@ async function downloadVerificationXlsx(btn){
         "Critical": cnt("crit"), "Mismatch": cnt("warn"), "Instructor": cnt("info"),
         "Offerings matching": grid.filter(g => g.status === "Match").length,
         "Offerings not matching": grid.filter(g => g.status !== "Match").length,
+        "Scheduler ≠ rotation": grid.filter(g => g.schedRot.ok === false).length,
+        "Owlnet ≠ rotation": grid.filter(g => g.owlRot.ok === false).length,
         "Owlnet last scraped": r.lastScraped ? new Date(r.lastScraped).toLocaleString() : "never" });
+      const gridBy = new Map(grid.map(g => [g.code + "|" + g.sub, g]));
+      const rotTxt = v => !v ? "" : (v.ok === true ? "✓ " : v.ok === false ? "✗ " : "") + v.text;
+      const rotFor = (f, which) => String(f.sub || "").split(" / ").filter(Boolean)
+        .map(s => { const g = gridBy.get(f.code + "|" + s); return g ? (String(f.sub).includes(" / ") ? `${L(s)}: ` : "") + rotTxt(g[which]) : ""; })
+        .filter(Boolean).join("; ");
       r.flags.forEach(f => flagRows.push({ "Term": t.label, "Severity": sevName[f.sev] || f.sev, "Course": f.code, "Subterm": L(f.sub),
         "Scheduler": f.sched || "", "Owlnet": f.owl || "", "Owlnet section(s)": f.owlCodes || "",
         "Rotation": f.rotation || _verRotation(f.code, t.semester).label,
+        "Scheduler vs rotation": rotFor(f, "schedRot"), "Owlnet vs rotation": rotFor(f, "owlRot"),
         "Issue": f.issue || "", "Suggested action": f.action || "" }));
-      grid.forEach(g => offerRows.push({ "Term": g.term, "Course": g.code, "Subterm": g.subterm, "Status": g.status,
-        "On rotation": g.rotation, "Rotation (all)": g.rotationAll, "Scheduler sections": g.schedCount, "Owlnet sections": g.owlCount,
-        "Scheduler detail": g.schedDetail, "Owlnet detail": g.owlDetail }));
+      grid.forEach(g => offerRows.push({ "Term": g.term, "Course": g.code, "Subterm": g.subterm,
+        "Scheduler vs rotation": rotTxt(g.schedRot), "Owlnet vs rotation": rotTxt(g.owlRot), "Status": g.status,
+        "On rotation": g.rotation, "Rotation (all)": g.rotationAll, "Scheduler sections": g.schedCount, "Canceled in scheduler": g.canceledCount,
+        "Owlnet sections": g.owlCount, "Scheduler detail": g.schedDetail, "Owlnet detail": g.owlDetail }));
       (state.offerings || []).filter(o => !o.deleted && (o.semester || "") === t.semester && Number(o.year) === t.year && offeringModality(o) === "Online")
         .filter(o => { const c = _verCourseCode(o); return !isHiddenCourse(c) && !VERIFY_EXCLUDED_PREFIXES.has(c.split(" ")[0]); })
         .forEach(o => {
@@ -9033,9 +9072,9 @@ async function downloadVerificationXlsx(btn){
       if(rows.length && ws["!ref"]) ws["!autofilter"] = { ref: ws["!ref"] };
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
-    add("Summary", summary, [14,15,22,10,8,9,10,11,18,22,22]);
-    add("Flags", flagRows, [13,11,10,9,28,22,24,22,70,50]);
-    add("Offerings", offerRows, [13,10,8,18,11,22,10,10,60,60]);
+    add("Summary", summary, [14,15,22,10,8,9,10,11,18,22,20,18,22]);
+    add("Flags", flagRows, [13,11,10,9,28,22,24,22,22,22,70,50]);
+    add("Offerings", offerRows, [13,10,8,22,22,18,11,22,10,12,10,60,60]);
     add("Sections", sectionRows, [13,10,8,8,10,24,13,24,9,6,10]);
     XLSX.writeFile(wb, `owlnet-verification-${new Date().toISOString().slice(0,10)}.xlsx`);
     toast("Verification report downloaded");
@@ -9052,8 +9091,33 @@ function _verFmtWhen(iso){
   catch(e){ return iso.slice(0,16).replace("T"," "); }
 }
 
-function verifyPanelHtml(terms, sel, r){
+function verifyPanelHtml(terms, sel, r, grid){
   const esc = (typeof escapeHtml === "function") ? escapeHtml : (s => String(s==null?"":s));
+  grid = grid || [];
+  const gridBy = new Map(grid.map(g => [g.code + "|" + g.sub, g]));
+  // Rotation verdicts for a flag (a merged subterm-mismatch flag spans subterms).
+  const rotCell = (f, which) => {
+    const subs = String(f.sub || "").split(" / ").filter(Boolean);
+    const parts = subs.map(s => { const g = gridBy.get(f.code + "|" + s); return g ? { s, v: g[which] } : null; }).filter(Boolean);
+    if(!parts.length) return verRotPill(null);
+    if(parts.length === 1) return verRotPill(parts[0].v);
+    return parts.map(p => `<div class="ver-rotline"><span class="ver-sub">${esc(({ "1A":"A", "2B":"B", "3C":"C" }[p.s] || p.s))}</span> ${verRotPill(p.v)}</div>`).join("");
+  };
+  const offBad = grid.filter(g => g.schedRot.ok === false || g.owlRot.ok === false);
+  const nSchedOff = grid.filter(g => g.schedRot.ok === false).length;
+  const nOwlOff   = grid.filter(g => g.owlRot.ok === false).length;
+  const view = state.verifyView === "offerings" ? "offerings" : "flags";
+  const offRowsHtml = grid.length ? grid.map(g => {
+    const f = (g.schedRot.ok === false ? "s" : "") + (g.owlRot.ok === false ? "o" : "");
+    return `<tr data-f="${f || "ok"}">
+      <td><div class="ver-code">${esc(g.code)}</div><div class="ver-sub">Subterm ${esc(g.subterm)}</div></td>
+      <td>${g.rotation === "Yes" ? '<span class="ver-pill ver-pill-live">On rotation</span>' : g.rotation === "No" ? '<span class="ver-pill ver-pill-abs">Not on rotation</span>' : '<span class="ver-pill ver-pill-neu">Not in sheet</span>'}<div class="ver-owlcode">${esc(g.rotationAll)}</div></td>
+      <td>${g.schedCount ? `${g.schedCount} section${g.schedCount>1?"s":""}` : '<span style="color:var(--text-muted)">none</span>'}${g.canceledCount ? ` <span class="ver-pill ver-pill-cxl">${g.canceledCount} canceled</span>` : ""}${g.schedDetail ? `<div class="ver-owlcode">${esc(g.schedDetail)}</div>` : ""}</td>
+      <td>${g.owlCount ? `${g.owlCount} section${g.owlCount>1?"s":""}` : '<span style="color:var(--text-muted)">none</span>'}${g.owlDetail ? `<div class="ver-owlcode">${esc(g.owlDetail)}</div>` : ""}</td>
+      <td>${verRotPill(g.schedRot)}</td>
+      <td>${verRotPill(g.owlRot)}</td>
+    </tr>`; }).join("") :
+    `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:26px;">No offerings for this term.</td></tr>`;
   const nCrit = r.flags.filter(f=>f.sev==="crit").length;
   const nWarn = r.flags.filter(f=>f.sev==="warn").length;
   const nInfo = r.flags.filter(f=>f.sev==="info").length;
@@ -9066,9 +9130,11 @@ function verifyPanelHtml(terms, sel, r){
       <td><div class="ver-code">${esc(f.code)}</div><div class="ver-sub">Subterm ${esc(f.sub)}</div></td>
       <td>${verPill(f.sched)}</td>
       <td>${verPill(f.owl)}${f.owlCodes?`<div class="ver-owlcode">${esc(f.owlCodes)}</div>`:""}</td>
+      <td>${rotCell(f, "schedRot")}</td>
+      <td>${rotCell(f, "owlRot")}</td>
       <td><div class="ver-issue">${esc(f.issue)}</div><div class="ver-action">→ ${esc(f.action)}</div>${f.fix ? `<button type="button" class="ver-fix-btn" data-verfix="${esc(f.fix.act)}" data-oid="${esc(f.fix.oid||"")}" data-code="${esc(f.fix.code||"")}" data-sub="${esc(f.fix.sub||"")}">${esc(f.fix.label||"Make change")}</button>` : ""}</td>
     </tr>`).join("") :
-    `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:26px;">No discrepancies — every Owlnet section matches the scheduler for this term.</td></tr>`;
+    `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:26px;">No discrepancies — every Owlnet section matches the scheduler for this term.</td></tr>`;
 
   return `
   ${verifyStyleBlock()}
@@ -9094,6 +9160,30 @@ function verifyPanelHtml(terms, sel, r){
     <div class="ver-tile ver-info"><div class="ver-k">Instructor</div><div class="ver-v">${nInfo}</div></div>
   </div>
 
+  <div class="ver-viewtabs" id="verViewTabs" role="tablist">
+    <button type="button" class="ver-vtab" data-vview="flags" aria-pressed="${view === "flags"}">Flags <b>${r.flags.length}</b></button>
+    <button type="button" class="ver-vtab" data-vview="offerings" aria-pressed="${view === "offerings"}">Offerings vs rotation <b>${offBad.length}</b> <small>off of ${grid.length}</small></button>
+  </div>
+
+  <div id="verOffView"${view === "offerings" ? "" : " hidden"}>
+  <div class="ver-chips" id="verOffChips">
+    <button type="button" class="ver-chip" data-ofilter="bad" aria-pressed="true">Off rotation ${offBad.length}</button>
+    <button type="button" class="ver-chip" data-ofilter="s" aria-pressed="false"><span class="ver-sw ver-sw-warn"></span>Scheduler ≠ rotation ${nSchedOff}</button>
+    <button type="button" class="ver-chip" data-ofilter="o" aria-pressed="false"><span class="ver-sw ver-sw-crit"></span>Owlnet ≠ rotation ${nOwlOff}</button>
+    <button type="button" class="ver-chip" data-ofilter="all" aria-pressed="false">All ${grid.length}</button>
+  </div>
+  <div class="ver-card">
+    <div class="ver-scroll">
+      <table class="ver-table">
+        <thead><tr><th>Course / subterm</th><th>Published rotation</th><th>Scheduler</th><th>Owlnet</th><th>Scheduler vs rotation</th><th>Owlnet vs rotation</th></tr></thead>
+        <tbody id="verOffRows">${offRowsHtml}</tbody>
+      </table>
+    </div>
+  </div>
+  <p class="ver-foot">The rotation says whether a course runs in a subterm, so presence is compared (not the number of sections). Missing = on the rotation but absent · Not on rotation = present in a subterm the rotation doesn't list (e.g. an added section) · Canceled sections are shown, not counted as missing.</p>
+  </div>
+
+  <div id="verFlagView"${view === "flags" ? "" : " hidden"}>
   <div class="ver-chips" id="verChips">
     <button type="button" class="ver-chip" data-filter="all" aria-pressed="true">All ${r.flags.length}</button>
     <button type="button" class="ver-chip" data-filter="crit" aria-pressed="false"><span class="ver-sw ver-sw-crit"></span>${sevName.crit} ${nCrit}</button>
@@ -9104,12 +9194,13 @@ function verifyPanelHtml(terms, sel, r){
   <div class="ver-card">
     <div class="ver-scroll">
       <table class="ver-table">
-        <thead><tr><th class="ver-sevcell"></th><th>Course / section</th><th>Scheduler</th><th>Owlnet</th><th>Issue &amp; suggested action</th></tr></thead>
+        <thead><tr><th class="ver-sevcell"></th><th>Course / section</th><th>Scheduler</th><th>Owlnet</th><th>Scheduler vs rotation</th><th>Owlnet vs rotation</th><th>Issue &amp; suggested action</th></tr></thead>
         <tbody id="verRows">${rowsHtml}</tbody>
       </table>
     </div>
   </div>
   <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected.</p>
+  </div>
   `;
 }
 function verPill(text){
@@ -9163,6 +9254,16 @@ function verifyStyleBlock(){
   #verifyRoot .ver-pill-cxl{background:rgba(192,57,43,.13);color:var(--danger)}
   #verifyRoot .ver-pill-act{background:rgba(28,122,68,.10);color:var(--wwu-green-dark)}
   #verifyRoot .ver-pill-abs,#verifyRoot .ver-pill-neu{background:rgba(128,128,128,.14);color:var(--text-muted)}
+  #verifyRoot .ver-pill-rot-ok{background:rgba(28,122,68,.12);color:var(--wwu-green-dark)}
+  #verifyRoot .ver-pill-rot-bad{background:rgba(192,57,43,.13);color:var(--danger)}
+  html.dark #verifyRoot .ver-pill-rot-ok{color:#5ab57d}
+  #verifyRoot .ver-rotline{display:flex;align-items:center;gap:6px;margin:2px 0}
+  #verifyRoot .ver-viewtabs{display:flex;gap:6px;margin:4px 0 12px;border-bottom:1px solid var(--border)}
+  #verifyRoot .ver-vtab{font:inherit;font-size:13.5px;font-weight:600;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-muted);padding:8px 12px;margin-bottom:-1px;cursor:pointer}
+  #verifyRoot .ver-vtab[aria-pressed="true"]{color:var(--wwu-green-dark);border-bottom-color:var(--wwu-green-dark)}
+  html.dark #verifyRoot .ver-vtab[aria-pressed="true"]{color:#5ab57d;border-bottom-color:#5ab57d}
+  #verifyRoot .ver-vtab b{font-weight:700;margin-left:3px}
+  #verifyRoot .ver-vtab small{font-weight:400;color:var(--text-muted)}
   #verifyRoot .ver-fix-btn{margin-top:8px;padding:4px 11px;font:inherit;font-size:12px;font-weight:600;color:#fff;background:var(--wwu-green);border:none;border-radius:6px;cursor:pointer}
   #verifyRoot .ver-fix-btn:hover{background:var(--wwu-green-dark)}
   #verifyRoot .ver-foot{font-size:12px;color:var(--text-muted);margin-top:12px}
@@ -9266,7 +9367,30 @@ async function renderVerification(){
     if(typeof flushToSupabase === "function") flushToSupabase();
     if(typeof renderTerms === "function") renderTerms();
   }
-  root.innerHTML = verifyPanelHtml(terms, sel, result);
+  root.innerHTML = verifyPanelHtml(terms, sel, result, verifyOfferingsGrid(sel.semester, Number(sel.year)));
+
+  // Flags ↔ Offerings-vs-rotation view tabs.
+  const vtabs = document.getElementById("verViewTabs");
+  if(vtabs) vtabs.addEventListener("click", (e) => {
+    const b = e.target.closest(".ver-vtab"); if(!b) return;
+    state.verifyView = b.getAttribute("data-vview");
+    vtabs.querySelectorAll(".ver-vtab").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    const fv = document.getElementById("verFlagView"), ov = document.getElementById("verOffView");
+    if(fv) fv.hidden = state.verifyView === "offerings";
+    if(ov) ov.hidden = state.verifyView !== "offerings";
+  });
+  // Offerings filter chips: off rotation (default) / scheduler ≠ / Owlnet ≠ / all.
+  const applyOffFilter = (f) => document.querySelectorAll("#verOffRows tr[data-f]").forEach(tr => {
+    const v = tr.getAttribute("data-f");
+    tr.hidden = !(f === "all" || (f === "bad" && v !== "ok") || (f !== "bad" && v.includes(f)));
+  });
+  applyOffFilter("bad");
+  const ochips = document.getElementById("verOffChips");
+  if(ochips) ochips.addEventListener("click", (e) => {
+    const b = e.target.closest(".ver-chip"); if(!b) return;
+    ochips.querySelectorAll(".ver-chip").forEach(c => c.setAttribute("aria-pressed", c === b ? "true" : "false"));
+    applyOffFilter(b.getAttribute("data-ofilter"));
+  });
 
   const ts = document.getElementById("verTermSel");
   if(ts) ts.addEventListener("change", () => { const p = ts.value.split("|"); state.verifyTerm = { semester:p[0], year:p[1] }; renderVerification(); });
