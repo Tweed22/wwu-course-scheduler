@@ -1305,6 +1305,14 @@
     font-weight: 600;
   }
   .term-table .btn-req-change:hover { background: #e9f2ed; }
+  /* "Change pending" — an open change request on a DONE section (amber). */
+  .term-table .chg-pending {
+    display: inline-flex; align-items: center; vertical-align: middle; box-sizing: border-box;
+    height: 26px; padding: 0 8px; border-radius: 4px; border: 1px dashed #c58f00;
+    background: #fff8e1; color: #8a6200; font-size: 11.5px; font-weight: 600; font-family: inherit;
+  }
+  .term-table .chg-pending { cursor: help; }
+  html.dark .term-table .chg-pending { background: rgba(240, 200, 70, 0.10); color: #f0c846; border-color: rgba(240, 200, 70, 0.55); }
   .term-subchip {
     padding: 6px 12px;
     border: 1px solid var(--border-strong);
@@ -6146,7 +6154,12 @@ function renderTermTable(list) {
     const instructorAttrs = isLocked ? ' readonly tabindex="-1"' : "";
     const instructorValue = o.canceled ? "Canceled" : (o.instructor || pendingInstr || "");
     const pendingInstrTitle = (pendingInstr && !o.instructor)
-      ? ` title="Pending (${pendingInstrResult.status})"` : "";
+      ? ` title="Pending (${pendingInstrResult.status})"`
+      : (pendingInstr && o.instructor && pendingInstr !== o.instructor)
+        ? ` title="${escapeHtml(`Change pending → ${pendingInstr} (${pendingInstrResult.status})`)}"`
+        : "";
+    // Open change request on this section (shown as "Change pending" on DONE rows).
+    const _openReq = o.registrarCompleted && !o.canceled ? openChangeRequestForOffering(o) : null;
     // Courses this user isn't attached to render the instructor as plain text
     // rather than a readonly input — there's then nothing to click into or
     // focus, which reads more clearly than a box that silently ignores typing.
@@ -6207,7 +6220,11 @@ function renderTermTable(list) {
         : `<button type="button" class="btn-reinstate" data-tact="reinstate" data-oid="${escapeHtml(o.id)}" title="Open a Change Request to re-instate this canceled section">Re-instate</button>`;
     } else if (o.registrarCompleted) {
       // Registrar has processed this section — allow a change request but no undo.
-      actionBtn = `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
+      // While one is already open, show a "Change pending" tag (details on
+      // hover) instead, so a second request isn't stacked on the same section.
+      actionBtn = _openReq
+        ? `${dlContractBtn}<span class="chg-pending" title="${escapeHtml(changePendingTitle(_openReq))}">Change pending</span>`
+        : `${dlContractBtn}<button type="button" class="btn-req-change" data-tact="request" data-cid="${escapeHtml(o.courseId)}" data-oid="${escapeHtml(o.id)}" title="Open a Change Request for this completed section">Request Change</button>`;
     } else if (o.submitted) {
       // Sent to registrar but not yet processed — allow undo back to unassigned,
       // but only for whoever submitted it (or its creator / a registrar/admin).
@@ -6236,6 +6253,8 @@ function renderTermTable(list) {
     if (notMine) {
       const keepRecall = o.submitted && !o.registrarCompleted && !o.canceled && canRecallOffering(o);
       if (!keepRecall) actionBtn = "";
+      // Still tell everyone a change is in flight — as plain, inert text.
+      if (_openReq) actionBtn = `<span class="chg-pending" title="${escapeHtml(changePendingTitle(_openReq))}">Change pending</span>`;
     }
     // Admin-only: delete this line from Term Assignments. Soft-delete — the row
     // is hidden everywhere and, because it stays in the data, the rotation sheet
@@ -7350,6 +7369,27 @@ function withdrawPendingInstructorFor(o) {
     markLocallyTouched(r.id);
     logRequestEvent(r, `Instructor assignment withdrawn by ${who} (submission recalled)`);
   }
+}
+
+/* The open change request filed against this exact section (newest first), or
+   null. Drives the "Change pending" chip on DONE rows: a request no longer
+   reopens a completed section, so this is how Term Assignments shows that a
+   change is on its way through approval / the Registrar. */
+function openChangeRequestForOffering(o) {
+  let best = null;
+  for (const r of (state.requests || [])) {
+    if (r.archived || !o || r.offeringId !== o.id) continue;
+    if (!PENDING_INSTR_STATUSES.has(r.status)) continue;
+    if (!best || String(r.date || "") >= String(best.date || "")) best = r;
+  }
+  return best;
+}
+function changePendingTitle(r) {
+  const what = (r.explanation || r.changeType || "Change requested").trim();
+  const who  = r.submitter ? ` by ${r.submitter}` : "";
+  const when = r.date ? ` on ${fmtDateShort(r.date)}` : "";
+  return `Change pending — ${what} (${r.status}; filed${who}${when}). ` +
+         `The section stays DONE; the Registrar applies the change when they finalize the request.`;
 }
 
 function pendingInstructorForOffering(o) {
@@ -12137,17 +12177,16 @@ function saveRequestFromModal() {
     logRequestEvent(draft, "Created");
     markLocallyTouched(draft.id);
     state.requests.push(draft);
-    // If the request targets a specific section that is already DONE
-    // (registrarCompleted), transition it back to SENT so it's clear a
-    // new change is pending and the registrar needs to act again.
+    // A request against a section the registrar already completed leaves the
+    // section DONE. It used to bounce the section back to SENT, which put a
+    // second, context-free item in the Registrar queue (listed under the
+    // section's ORIGINAL submit date) — and completing that item closed it
+    // without applying the change. The request is now the only Registrar item;
+    // Term Assignments shows "Change pending" (openChangeRequestForOffering)
+    // until the registrar finalizes it, which applies the change and re-stamps
+    // the section DONE.
     if (draft.offeringId) {
       const linkedO = state.offerings.find(o => o.id === draft.offeringId);
-      if (linkedO && linkedO.registrarCompleted) {
-        linkedO.registrarCompleted   = false;
-        linkedO.registrarCompletedAt = "";
-        linkedO.registrarCompletedBy = "";
-        markLocallyTouched(linkedO.id);
-      }
       // Re-instate Course: flip the canceled offering to SENT so it appears
       // in-progress rather than red/canceled while awaiting Registrar approval.
       if (draft.changeType === "Re-instate Course" && linkedO && linkedO.canceled) {
