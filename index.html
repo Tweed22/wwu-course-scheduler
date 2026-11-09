@@ -1162,15 +1162,17 @@
   /* Enrollment (from Owlnet). A small progress bar in the Enrollment cell,
      directly under the count and filled to the share of seats taken:
      10 of 20 enrolled = half full, nobody enrolled = empty track. */
-  .term-table { --enroll-bar: rgba(28, 122, 68, 0.75); --enroll-track: rgba(0, 0, 0, 0.08); }
-  html.dark .term-table { --enroll-bar: rgba(90, 181, 125, 0.85); --enroll-track: rgba(255, 255, 255, 0.10); }
+  .term-table { --enroll-bar: rgba(28, 122, 68, 0.75); --enroll-text: #1c7a44; --enroll-track: rgba(0, 0, 0, 0.08); }
+  html.dark .term-table { --enroll-bar: rgba(90, 181, 125, 0.85); --enroll-text: #5ab57d; --enroll-track: rgba(255, 255, 255, 0.10); }
   /* Row generated from an out-of-date rotation: amber edge + ⚠ beside the slot. */
   .term-table tbody tr.rot-stale td.code { box-shadow: inset 3px 0 0 #d9a400; }
   .rot-stale-ico { color: #b7791f; font-weight: 700; margin-left: 2px; cursor: help; }
   html.dark .rot-stale-ico { color: #e3b341; }
   /* Under 8 enrolled the bar turns yellow (low-enrollment warning); 8+ stays green. */
-  .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.90); }
-  html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); }
+  /* The count takes the bar's status color (text shades are a touch darker in
+     light mode so yellow stays readable on white). */
+  .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.90); --enroll-text: #a87b00; }
+  html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); --enroll-text: #f0c846; }
   .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
   .term-table .enroll-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; vertical-align: middle; }
   .term-table .enroll-bar {
@@ -1178,8 +1180,8 @@
     background: var(--enroll-track); overflow: hidden;
   }
   .term-table .enroll-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--enroll-bar); }
-  .term-table .enroll-num { font-weight: 600; }
-  .term-table .enroll-cap { font-weight: 400; color: var(--text-muted); }
+  .term-table .enroll-num { font-weight: 600; color: var(--enroll-text); }
+  .term-table .enroll-cap { font-weight: 400; color: var(--enroll-text); }
   .term-table .enroll-none { color: var(--text-muted); display: inline-block; min-width: 48px; text-align: center; }
   /* DONE = processed by the Registrar (blue). */
   .term-table .done-badge {
