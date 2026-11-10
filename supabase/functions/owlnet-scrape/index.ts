@@ -1,11 +1,16 @@
 // Supabase Edge Function: scrape Owlnet course search → public.owlnet_sections.
 // Server-side HTTP replay of the stateful Jenzabar/ASP.NET form (no browser) —
 // GET the advanced form (cookies + __VIEWSTATE), POST the search with the term +
-// division, page through via the ltrNav postback. Admin-only (checks the
-// caller's profiles.role). Invoked on-demand by the Verification panel's
-// "Scrape Owlnet" button.
+// division, page through via the ltrNav postback. Two callers:
+//  - the Verification panel's "Scrape Owlnet" button: a signed-in scheduler admin (profiles.role);
+//  - the scheduled pg_cron job (owlnet-scrape-scheduled, 2026-11-10: 7:30 AM, noon, 5 PM Central):
+//    sends x-cron-secret, checked against the vault secret by public.owlnet_cron_ok() — no body;
+//    scrapes every term Owlnet lists that hasn't ended and starts within ~9 months, one failed term
+//    not stopping the rest.
+// Deployed with verify_jwt off because the cron call carries no user JWT; both paths authenticate here.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+import { applyOwlnetToOfferings } from "./apply.ts";
 
 const OWLNET = "https://owlnet.williamwoods.edu/ICS/Course_Search.jnz";
 const ADV = OWLNET + "?portlet=Course_Schedules&screen=Advanced+Course+Search&screenType=next";
@@ -16,6 +21,20 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const DIVISIONS = [{ value: "OU" }, { value: "OG" }, { value: "SU" }];
 const HIDDEN = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
 const DEFAULT_TERMS = ["Spring 2027", "Fall 2026"];
+
+// Terms a scheduled run refreshes: listed in Owlnet's term dropdown, not yet over, starting within ~9 months.
+// Approximate WWU calendar: Spring Jan–mid May, Summer mid May–mid Aug, Fall mid Aug–Dec.
+function autoTerms(labels: string[], today = new Date()) {
+  const span: Record<string, [string, string]> = { Spring: ["01-05", "05-20"], Summer: ["05-10", "08-20"], Fall: ["08-10", "12-23"] };
+  const horizon = new Date(today.getTime() + 270 * 864e5);
+  return labels.filter((l) => {
+    const m = l.match(/^(Fall|Spring|Summer)\s+(\d{4})$/i);
+    if (!m) return false;
+    const sp = span[m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()];
+    const start = new Date(`${m[2]}-${sp[0]}T00:00:00Z`), end = new Date(`${m[2]}-${sp[1]}T23:59:59Z`);
+    return end >= today && start <= horizon;
+  });
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -183,21 +202,30 @@ Deno.serve(async (req) => {
     const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
     const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Admin-only.
-    const authHeader = req.headers.get("Authorization") || "";
-    const userClient = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: authHeader } } });
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return json({ error: "Not signed in" }, 401);
     const svc = createClient(SUPABASE_URL, SERVICE);
-    const { data: prof } = await svc.from("profiles").select("role").eq("id", user.id).maybeSingle();
-    if (!prof || prof.role !== "admin") return json({ error: "Admins only" }, 403);
+    // The scheduled job, or a signed-in scheduler admin.
+    const cronSecret = req.headers.get("x-cron-secret");
+    let auto = false;
+    if (cronSecret) {
+      const { data: ok } = await svc.rpc("owlnet_cron_ok", { p_secret: cronSecret });
+      if (ok !== true) return json({ error: "Bad cron secret" }, 403);
+      auto = true;
+    } else {
+      const authHeader = req.headers.get("Authorization") || "";
+      const userClient = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: authHeader } } });
+      const { data: { user } } = await userClient.auth.getUser();
+      if (!user) return json({ error: "Not signed in" }, 401);
+      const { data: prof } = await svc.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      if (!prof || prof.role !== "admin") return json({ error: "Admins only" }, 403);
+    }
 
     let terms = DEFAULT_TERMS;
-    try { const b = await req.json(); if (Array.isArray(b?.terms) && b.terms.length) terms = b.terms; } catch { /* no body */ }
+    if (auto) terms = autoTerms(Object.keys(termOptions(await httpGet(new Jar(), ADV))));
+    else try { const b = await req.json(); if (Array.isArray(b?.terms) && b.terms.length) terms = b.terms; } catch { /* no body */ }
 
     const runId = Date.now().toString();
     const summary: any[] = [];
-    for (const termLabel of terms) {
+    for (const termLabel of terms) try {
       const { semester } = termToSemYear(termLabel);
       if (!semester) { summary.push({ term: termLabel, error: "unrecognized term" }); continue; }
       const jar = new Jar();
@@ -229,8 +257,20 @@ Deno.serve(async (req) => {
       const { error: delErr } = await svc.from("owlnet_sections").delete()
         .eq("term_label", termLabel).or(`source_run.neq.${runId},source_run.is.null`);
       if (delErr) throw new Error("prune: " + delErr.message);
+      // Refresh the Owlnet fields Term Assignments shows (LIVE check, enrollment) — see apply.ts.
+      // Its failure never fails the scrape itself.
+      try {
+        const a = await applyOwlnetToOfferings(svc, semester, termToSemYear(termLabel).acad_year, records);
+        summary.push({ term: termLabel, offeringsMatched: a.matched, offeringsUpdated: a.updated });
+      } catch (e) {
+        summary.push({ term: termLabel, applyError: String((e as any)?.message ?? e) });
+      }
+    } catch (e) {
+      // the button reports the failure as before; a scheduled run notes it and moves on to the next term
+      if (!auto) throw e;
+      summary.push({ term: termLabel, error: String((e as any)?.message ?? e) });
     }
-    return json({ ok: true, runId, summary });
+    return json({ ok: true, runId, auto, terms, summary });
   } catch (e) {
     return json({ ok: false, error: String((e as any)?.message ?? e) }, 500);
   }

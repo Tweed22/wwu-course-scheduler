@@ -18,16 +18,28 @@ postback, parse rows, upsert to `owlnet_sections`, and prune stale rows so
 cancellations propagate. Admin-only (verifies the caller's `profiles.role`).
 Scrapes the selected term; the empty-state button scrapes the defaults.
 
-- Function source: `supabase/functions/owlnet-scrape/index.ts` (deployed to the
-  Supabase project — redeploy with `supabase functions deploy owlnet-scrape`).
-- No secrets to manage: it uses the project's built-in service role internally.
+- Function source: `supabase/functions/owlnet-scrape/index.ts` + `apply.ts`
+  (deployed to the Supabase project with **verify_jwt off** — the function
+  authenticates both callers itself; redeploy with
+  `supabase functions deploy owlnet-scrape --no-verify-jwt`).
+- It uses the project's built-in service role internally.
 - Owlnet reachability from Supabase egress is confirmed.
 
-### Scheduled (optional)
+### Scheduled runs (7:30 AM, 12:00 PM, 5:00 PM Central)
 
-To refresh nightly without a click, call the function on a schedule with pg_cron
-+ pg_net (POST to `/functions/v1/owlnet-scrape` with a service-role bearer), or
-just click the button when you want fresh data.
+- pg_cron job **`owlnet-scrape-scheduled`** runs every half hour (`0,30 * * * *`)
+  but only fires when Chicago local time is 07:30, 12:00 or 17:00, so DST is
+  handled. It POSTs to the function with header `x-cron-secret` (Vault secret
+  `owlnet_cron_secret`, checked by `public.owlnet_cron_ok()`, service-role only).
+- With no body it scrapes every term in Owlnet's dropdown that hasn't ended and
+  starts within ~9 months; one failing term (e.g. Fall 2026's HTTP 500) doesn't
+  stop the others. Results: `select * from net._http_response order by id desc`.
+- After each term, `apply.ts` refreshes the Owlnet fields Term Assignments shows
+  (LIVE instructor check + enrollment) on sections that carry Owlnet's official
+  section number, via `public.owlnet_patch_offerings` (server-side jsonb merge, so
+  no user edit is overwritten). New/renumbered/ambiguous sections and all the
+  flagging still come from the Verification panel.
+- Pause: `select cron.alter_job(job_id := (select jobid from cron.job where jobname = 'owlnet-scrape-scheduled'), active := false);`
 
 ## Fallback: local Playwright scraper
 
