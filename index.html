@@ -4390,17 +4390,43 @@ function scheduleSupabaseFlush() {
 // course_code), so they're excluded from the diff to avoid false positives.
 const _syncBaseOfferings = new Map(); // id -> canonical JSON as last known on the server
 const _syncBaseRequests  = new Map();
+// Postgres hands timestamps back as "2026-11-06T21:43:27.215+00:00"; the browser
+// writes "2026-11-06T21:43:27.215Z". Same instant, different text — and that
+// mismatch made every row a tab had completed look permanently "edited", so the
+// tab re-pushed it (whole) on every later save, carrying any stale fields with
+// it. Comparisons use the instant, not the spelling.
+const _TS_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)$/;
+function _normTs(v) {
+  if (typeof v !== "string" || v.length < 16 || !_TS_RE.test(v)) return v;
+  const t = Date.parse(v.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  return Number.isNaN(t) ? v : new Date(t).toISOString();
+}
+// Normalized copy with keys SORTED: the same fields arriving in a different
+// order (a realtime merge appends new keys at the end) must not read as a change.
+function _normTopLevel(obj) {
+  const out = {};
+  for (const k of Object.keys(obj).sort()) out[k] = _normTs(obj[k]);
+  return out;
+}
 function _canonRow(row) {
   if (!row) return "";
-  const clone = { ...row };
-  if (clone.data && typeof clone.data === "object") {
-    const d = { ...clone.data };
+  const clone = _normTopLevel(row);
+  if (clone.data && typeof clone.data === "object" && !Array.isArray(clone.data)) {
+    const d = _normTopLevel(clone.data);
     delete d.courseId;   // browser-local id, re-resolved on load
     delete d.courseCode; // derived from course_code
     clone.data = d;
   }
   return JSON.stringify(clone);
 }
+// The blob this tab last knew to be on the server for a row — the "base" of the
+// 3-way merge in handleRealtimeOffering (base vs. local edit vs. incoming).
+function _baseBlobFor(id) {
+  const s = _syncBaseOfferings.get(id);
+  if (!s) return null;
+  try { const r = JSON.parse(s); return (r && r.data) || null; } catch (e) { return null; }
+}
+const _jv = v => v === undefined ? "\u0000undef" : JSON.stringify(_normTs(v));
 function _baseOffering(o) { const r = offeringToRow(o); if (r && r.id) _syncBaseOfferings.set(r.id, _canonRow(r)); }
 function _baseRequest(r0) { const r = requestToRow(r0); if (r && r.id) _syncBaseRequests.set(r.id, _canonRow(r)); }
 
@@ -4592,22 +4618,20 @@ function startRealtime() {
     .on("postgres_changes",
         { event: "*", schema: "public", table: "term_date_overrides" },
         (payload) => handleRealtimeTermDate(payload))
-    .subscribe();
+    .subscribe((status) => {
+      // Realtime never replays what was missed while the socket was down, so
+      // after any outage (error / timeout / close) re-read once it's back.
+      if (status === "SUBSCRIBED") {
+        if (_realtimeHadOutage) refreshOfferingsFromServer(0);
+        _realtimeHadOutage = false;
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        _realtimeHadOutage = true;
+      }
+    });
 }
-// Fields that are merged field-by-field from realtime events. Structural fields
-// (id, courseId, courseCode, semester, subterm, year) are not listed because
-// they are set at row-creation time and never changed by any user action.
-const _OFFERING_MERGE_FIELDS = [
-  'instructor', 'notes', 'contractReturned',
-  'length', 'rotationSlot', 'deadline', 'fullTimeNeeded',
-  'dean', 'programManager',
-  'submitted', 'submittedAt', 'submittedBy',
-  'registrarCompleted', 'registrarCompletedAt', 'registrarCompletedBy',
-  'canceled', 'canceledAt', 'canceledBy', 'submittedByUid',
-  'pendingReinstate', 'reinstateRequestId',
-  'registrarNotes',
-  'modality', 'deleted', 'officialSection',
-];
+let _realtimeHadOutage = false;
+// (Realtime used to merge only a fixed list of fields — _OFFERING_MERGE_FIELDS.
+// It now merges every field the server sends; see the 3-way merge below.)
 function handleRealtimeOffering(payload) {
   const event = payload.eventType || payload.type;
   if (event === "DELETE") {
@@ -4624,6 +4648,7 @@ function handleRealtimeOffering(payload) {
   if (!row) return;
   const incoming = rowToOffering(row);
   if (!incoming) return;
+  const base = _baseBlobFor(incoming.id); // what we knew BEFORE this update (3-way merge base)
   _baseOffering(incoming); // the server now holds this — record it as the sync baseline
   const idx = state.offerings.findIndex(o => o.id === incoming.id);
 
@@ -4659,6 +4684,15 @@ function handleRealtimeOffering(payload) {
       local.canceledBy = incoming.canceledBy || local.canceledBy;
       changed = true;
     }
+    // The server-side guard (trg_offerings_guard) refuses to un-delete for
+    // non-admins and echoes the kept delete back — adopt it so this tab
+    // stops trying to push the undelete.
+    if (!local.deleted && incoming.deleted) {
+      local.deleted   = true;
+      local.deletedAt = incoming.deletedAt || local.deletedAt;
+      local.deletedBy = incoming.deletedBy || local.deletedBy;
+      changed = true;
+    }
     if (changed) {
       markLocallyTouched(incoming.id);
       scheduleSupabaseFlush();
@@ -4667,16 +4701,22 @@ function handleRealtimeOffering(payload) {
     return;
   }
 
-  // No recent atomic action on this row. Merge field-by-field so changes made
-  // by any user (dean, PM, registrar, admin) are applied immediately — except
-  // for the specific field this browser is actively typing, which is skipped to
-  // prevent keystrokes from being overwritten by an echo of the previous value.
+  // No recent atomic action on this row. Merge EVERY field the server sent —
+  // not just a fixed list. (A list left everything else — Owlnet verification,
+  // deletedBy/At, and so on — stale in this tab while its baseline moved on, so
+  // the row looked "edited" and the next save wrote the old values back.)
+  // 3-way merge: a field this tab changed and hasn't saved yet (local ≠ base)
+  // is kept, as is the field the user is typing in right now.
   if (idx >= 0) {
     const local = state.offerings[idx];
     let changed = false;
-    for (const f of _OFFERING_MERGE_FIELDS) {
-      if (fieldRecentlyEdited(incoming.id, f)) continue; // user is typing this field right now
-      if (incoming[f] !== local[f]) { local[f] = incoming[f]; changed = true; }
+    for (const f of Object.keys(incoming)) {
+      if (f === "courseId" || f === "courseCode") continue; // browser-local, re-resolved per tab
+      if (fieldRecentlyEdited(incoming.id, f)) continue;   // user is typing this field right now
+      const inV = _jv(incoming[f]), loV = _jv(local[f]);
+      if (inV === loV) continue;
+      if (base && loV !== _jv(base[f])) continue;            // unsaved local edit — keep it
+      local[f] = incoming[f]; changed = true;
     }
     if (changed) scheduleReRender();
   } else {
@@ -4711,6 +4751,14 @@ document.addEventListener("visibilitychange", () => {
   if (_hiddenSince && Date.now() - _hiddenSince > 5 * 60 * 1000) refreshOfferingsFromServer(0);
   _hiddenSince = 0;
 });
+// A tab that stays on screen can still miss events: Wi-Fi drops, the realtime
+// socket times out and reconnects. Catch up when the network comes back, when
+// realtime re-subscribes after an outage (see startRealtime), and every 10
+// minutes while visible as a backstop.
+window.addEventListener("online", () => { refreshOfferingsFromServer(0); });
+setInterval(() => {
+  if (document.visibilityState === "visible") refreshOfferingsFromServer(9 * 60 * 1000);
+}, 10 * 60 * 1000);
 
 function handleRealtimeRequest(payload) {
   const event = payload.eventType || payload.type;
