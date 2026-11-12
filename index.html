@@ -6324,7 +6324,9 @@ function renderTermTable(list) {
     //   • Editable section without instructor: Cancel Course
     // The button morphs in place as the user types into the instructor field
     // (see the keystroke handler in bindTermEvents that toggles class/text).
-    const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+    // Online = this SECTION is online (an on-ground section of a course that also
+    // runs online gets no online contract and a plain "Submit to Registrar").
+    const isOnline = !_og && (!!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length);
     // Download-contract icon button shown on SENT and DONE rows for online courses
     const _dlIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
     const dlContractBtn = (isOnline && !_og && o.instructor && o.instructor.trim())
@@ -6515,13 +6517,12 @@ function createAddCourseRequestForNewSection(o, opts = {}) {
   const def = SUBTERMS.find(s => s.semester === o.semester && s.subterm === o.subterm);
   const who = state.userName || (opts.submitter || "(unknown)");
   const sectionLabel = `section ${displaySectionFor(o)}`;
-  // On-Ground sections are always full-semester — never a 5/10-week sub-term.
-  const termLabel = ((c.onlineFall||[]).length || (c.onlineSpring||[]).length || (c.onlineSummer||[]).length)
-    ? termPhraseForOffering(o)
-    : `${o.semester} Semester`;
+  // The SECTION's modality decides (a course can run both ways). On-Ground
+  // sections are always full-semester — never a 5/10-week sub-term.
+  const isOnline = offeringModality(o) === "Online";
+  const termLabel = isOnline ? termPhraseForOffering(o) : `${o.semester} Semester`;
   const instr = (o.instructor || "").trim();
 
-  const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
   const addSectionType = !isOnline
     ? "Add Section"                                   // on-ground sections are never split
     : (opts.addSectionType || "Add Section & Split Enrollment");
@@ -6622,6 +6623,10 @@ function duplicateSection(offeringId) {
     instructor:     "",    // blank so a new instructor can be assigned
     notes:          "",
     submitted:      false,
+    // Same modality as the section it was added from — an extra section of an
+    // on-ground course (or lab) stays on-ground even when the course also runs online.
+    modality:       offeringModality(src),
+    owlnetLab:      !!src.owlnetLab,
   });
   // Mark as a manually-added section so the table shows "Request Change"
   // instead of "Submit to Registrar". No change request is auto-created;
@@ -6719,7 +6724,7 @@ function cancelCourseOffering(offeringId) {
   const draft = newRequest({
     submitter:   who,
     section:     c.section === "graduate" ? "Grad" : "Undergrad",
-    modality:    (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
+    modality:    offeringModality(o),   // this section's modality — the course may run both ways
     term:        o.semester,
     subterm:     reqSubtermLabelForOffering(o),
     year:        o.year,
@@ -7449,8 +7454,9 @@ function submitSectionToRegistrar(offeringId) {
   markLocallyTouched(o.id);
   setDirty(true);
   renderTerms();
-  /* Generate and download the contract PDF for online courses. */
-  const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
+  /* Generate and download the contract PDF for online sections (not an
+     on-ground section of a course that also runs online). */
+  const isOnline = offeringModality(o) === "Online";
   if (isOnline) {
     generateOnlineContractPDF(offeringId).catch(err => {
       console.error("Contract PDF generation failed:", err);
@@ -11118,8 +11124,7 @@ function bindTermEvents() {
         if (cell) {
           const hasInstructor = !!(o.instructor && o.instructor.trim());
           const oid = escapeHtml(o.id);
-          const _c2 = state.courses.find(x => x.id === o.courseId) || {};
-          const _online = !!(_c2.onlineFall||[]).length || !!(_c2.onlineSpring||[]).length || !!(_c2.onlineSummer||[]).length;
+          const _online = offeringModality(o) === "Online";   // this section, not the course
           if (o.isNewSection) {
             // New sections (with or without instructor) always route through Change Requests.
             cell.innerHTML = (hasInstructor && _online)
@@ -12405,7 +12410,7 @@ function openRequestModal(r, opts) {
     const _modalityLocked = !!(_linkedOffering && _linkedOffering.registrarCompleted);
     _modalitySel.disabled = _modalityLocked;
     _modalitySel.title = _modalityLocked
-      ? "Modality is locked — this section was finalized as Online by the Registrar"
+      ? `Modality is locked — this section was finalized as ${r.modality || "this modality"} by the Registrar`
       : "";
   }
   document.getElementById("rfld_term").value = r.term || "Fall";
@@ -12510,7 +12515,7 @@ function openReinstateRequest(offeringId) {
     number: parts[1] || "",
     sectionNumber: sectionNumberFor(o),
     section: c.section === "graduate" ? "Grad" : "Undergrad",
-    modality: (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
+    modality: offeringModality(o),   // this section's modality — the course may run both ways
     term: o.semester,
     subterm: reqSubtermLabelForOffering(o),
     year: o.year,
@@ -12541,7 +12546,9 @@ function openRequestForCourse(courseId, offeringId) {
     prefix:        parts[0] || "",
     number:        parts[1] || "",
     section:       c.section === "graduate" ? "Grad" : "Undergrad",
-    modality:      (c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground",
+    // From the section when there is one (a course can run both ways — an
+    // on-ground section's request must say On-Ground); else from the course.
+    modality:      o ? offeringModality(o) : ((c.onlineFall||[]).length || (c.onlineSpring||[]).length ? "Online" : "On-Ground"),
     courseId,
     offeringId:    offeringId || "",   // scopes instructor changes to this section
     sectionNumber: o ? sectionNumberFor(o) : "",
