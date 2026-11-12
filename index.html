@@ -582,19 +582,13 @@
   }
   .stats .item strong { color: var(--wwu-green); font-size: 15px; }
   .stats .item .label { color: var(--text-muted); margin-left: 4px; }
-  /* Term bar: info + buttons left, modality toggle centered, deadline right. */
-  .stats.term-bar { display: grid; grid-template-columns: 1fr auto 1fr; gap: 18px; }
-  .stats.term-bar .term-bar-left { display: flex; align-items: center; gap: 18px; flex-wrap: nowrap; white-space: nowrap; }
-  .stats.term-bar .term-bar-right { display: flex; justify-content: flex-end; }
-  .stats.term-bar .item.term-deadline-tile { margin-left: 0; }
-  @media (max-width: 900px) {
-    .stats.term-bar { grid-template-columns: 1fr; }
-    .stats.term-bar .term-bar-right { justify-content: flex-start; }
-  }
+  /* Modality toggle — right side of the term bar, with the assignment deadline
+     (when shown) to its right. */
   .stats .item.term-mod-tile {
-    display: inline-flex; padding: 0; overflow: hidden;
+    margin-left: auto; display: inline-flex; padding: 0; overflow: hidden;
     border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-2);
   }
+  .stats .item.term-mod-tile + .item.term-deadline-tile { margin-left: 0; }
   .stats .term-mod-tile .mod-seg {
     font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; margin: 0;
     border: none; border-radius: 0; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
@@ -2449,7 +2443,7 @@
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
       <button type="button" id="btnAdmPmUpload" class="primary" style="padding:6px 14px;">Upload</button>
-      <button type="button" id="btnAdmPmDownload" style="padding:6px 14px;">Download current</button>
+      <button type="button" id="btnAdmPmDownload" style="padding:6px 14px;" title="Every mapped course plus every scheduled course that still needs a PM — fill in the blanks and upload it back">Download (incl. missing PMs)</button>
       <button type="button" id="btnAdmPmClear" class="danger" style="padding:6px 14px;">Clear all</button>
       <span id="admPmStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
     </div>
@@ -6163,22 +6157,17 @@ function renderTermStats(list) {
   const mod = state.termFilter.modality || "";
   const modSeg = (v, label) => `<button type="button" class="mod-seg${mod === v ? " active" : ""}" data-mod="${v}" aria-pressed="${mod === v}">${label}</button>`;
   const modTile = `<div class="item term-mod-tile" role="group" aria-label="Modality" title="Show online sections, on-ground sections, or both">${modSeg("", "All")}${modSeg("Online", "Online")}${modSeg("On-Ground", "On-ground")}</div>`;
-  // Three zones so the modality toggle sits in the true center of the bar:
-  // term info + buttons on the left, toggle centered, deadline on the right.
-  const statsEl = document.getElementById("termStats");
-  statsEl.classList.add("term-bar");
-  statsEl.innerHTML = `
-    <div class="term-bar-left">
-      <div class="item term-label-tile">
-        <strong style="font-size:18px;">${labelText}</strong>
-        <span class="label">${calYear}</span>
-      </div>
-      ${startTile}
-      ${showAllBtn}
-      ${clearBtn}
+  // Modality toggle on the right, just before the assignment deadline.
+  document.getElementById("termStats").innerHTML = `
+    <div class="item term-label-tile">
+      <strong style="font-size:18px;">${labelText}</strong>
+      <span class="label">${calYear}</span>
     </div>
-    <div class="term-bar-center">${modTile}</div>
-    <div class="term-bar-right">${deadlineTile}</div>
+    ${startTile}
+    ${showAllBtn}
+    ${clearBtn}
+    ${modTile}
+    ${deadlineTile}
   `;
   // Wire up the Show All Courses / Hide Others toggle.
   const sab = document.getElementById("btnShowAllCourses");
@@ -10639,27 +10628,42 @@ async function uploadProgramManagersCsv() {
   if (fileInput) fileInput.value = "";
 }
 
+/* Every course the scheduler has sections for (not deleted), with how it's
+   offered — so the PM download also lists courses that still need a PM. */
+function scheduledCourseModalities() {
+  const out = {};   // code -> { online, onground, title }
+  (state.offerings || []).forEach(o => {
+    if (o.deleted) return;
+    const c = state.courses.find(x => x.id === o.courseId);
+    const code = canonicalCourseCode((c && c.code) || o.courseCode || "");
+    if (!code || isNurCode(code) || isHiddenCourse(code)) return;
+    const e = out[code] = out[code] || { online: false, onground: false, title: (c && c.title) || o.owlnetTitle || "" };
+    if (isOnGroundRow(o)) e.onground = true; else e.online = true;
+  });
+  return out;
+}
 function downloadProgramManagersCsv() {
   const safe = (s) => { s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const hasDeans = Object.keys(state.deanByCourse || {}).length > 0;
-  const hasPm2s  = Object.keys(state.pm2ByCourse  || {}).some(k => (state.pm2ByCourse[k] || "").trim());
-  const hasOg    = Object.keys(state.ogPmByCourse || {}).length > 0;
-  const header = ["Course Code", "Program Manager"];
-  if (hasPm2s)  header.push("Co-PM");
-  if (hasOg)    header.push("On-ground PM");
-  if (hasDeans) header.push("Dean");
+  const pmMap = state.pmByCourse || {}, pm2Map = state.pm2ByCourse || {}, ogMap = state.ogPmByCourse || {}, deanMap = state.deanByCourse || {};
+  const sched = scheduledCourseModalities();
+  // Column names are chosen so a re-upload reads them: Course Code, Program
+  // Manager, Co-PM, On-ground PM and Dean are picked up; Title, Offered as,
+  // Needs PM and School dean are for reading/filtering only and are ignored.
+  const header = ["Course Code", "Title", "Offered as", "Needs PM", "Program Manager", "Co-PM", "On-ground PM", "Dean", "School dean (default)"];
   const lines = [header.join(",")];
-  const allCodes = [...new Set([...Object.keys(state.pmByCourse || {}), ...Object.keys(state.ogPmByCourse || {}), ...Object.keys(state.deanByCourse || {})])].sort();
+  const allCodes = [...new Set([...Object.keys(pmMap), ...Object.keys(ogMap), ...Object.keys(deanMap), ...Object.keys(sched)])].sort();
+  let missing = 0;
   for (const code of allCodes) {
-    const pm   = (state.pmByCourse   || {})[code] || "";
-    const pm2  = (state.pm2ByCourse  || {})[code] || "";
-    const og   = (state.ogPmByCourse || {})[code] || "";
-    const dean = (state.deanByCourse || {})[code] || "";
-    const cells = [safe(code), safe(pm)];
-    if (hasPm2s)  cells.push(safe(pm2));
-    if (hasOg)    cells.push(safe(og));
-    if (hasDeans) cells.push(safe(dean));
-    lines.push(cells.join(","));
+    const s = sched[code];
+    const pm = pmMap[code] || "", og = ogMap[code] || "";
+    // Online sections need the course's PM; on-ground sections need an
+    // on-ground PM or, failing that, the course's PM.
+    const needs = !!s && ((s.online && !pm) || (s.onground && !og && !pm));
+    if (needs) missing++;
+    const offered = !s ? "" : (s.online && s.onground ? "Both" : (s.onground ? "On-ground" : "Online"));
+    const title = (s && s.title) || ((state.courses.find(c => canonicalCourseCode(c.code) === code) || {}).title) || "";
+    const schoolDean = DEAN_BY_SCHOOL[SCHOOL_BY_PREFIX[code.split(" ")[0]] || ""] || "";
+    lines.push([code, title, offered, needs ? "Yes" : "", pm, pm2Map[code] || "", og, deanMap[code] || "", schoolDean].map(safe).join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -10669,6 +10673,9 @@ function downloadProgramManagersCsv() {
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  toast(missing
+    ? `Downloaded — ${missing} course${missing === 1 ? "" : "s"} need a PM (filter "Needs PM" = Yes). Fill them in and upload the file back.`
+    : "Downloaded — every scheduled course has a PM.");
 }
 
 async function clearChangeLogByDateRange() {
