@@ -19,8 +19,11 @@
 
 type Owl = {
   prefix: string; course_number: string; section: string; suffix: string; division: string;
-  instructor: string | null; seats_open: number | null; seats_cap: number | null;
+  instructor: string | null; seats_open: number | null; seats_cap: number | null; meeting?: string | null;
 };
+// "FUL L" = an on-ground lab, imported as its own row (data.owlnetLab) — it can
+// share course + section number with the lecture, so it's part of the match key.
+const isLab = (r: Owl) => /(^|\s)L$/i.test(String(r.suffix || "").trim());
 
 const ONLINE_SUFFIXES = new Set(["OLC", "GPS"]);   // OWLNET_ONLINE_SUFFIXES in index.html
 const IGNORED_SUFFIXES = new Set(["CIC"]);         // OWLNET_IGNORED_SUFFIXES (consortium)
@@ -100,7 +103,7 @@ export async function applyOwlnetToOfferings(svc: any, semester: string, year: n
   const idx = new Map<string, Owl[]>();
   for (const r of records) {
     if (IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase())) continue;
-    const k = `${canonCode(`${r.prefix} ${r.course_number}`)}|${program(r)}|${normSec(r.section)}`;
+    const k = `${canonCode(`${r.prefix} ${r.course_number}`)}|${program(r)}|${normSec(r.section)}|${isLab(r) ? "L" : ""}`;
     if (!idx.has(k)) idx.set(k, []);
     idx.get(k)!.push(r);
   }
@@ -117,7 +120,7 @@ export async function applyOwlnetToOfferings(svc: any, semester: string, year: n
     const sec = String(d.officialSection || "").trim();
     if (!sec) continue;
     const prog = o.modality === "Online" ? "online" : "semester";
-    const rows = idx.get(`${canonCode(o.course_code)}|${prog}|${normSec(sec)}`) || [];
+    const rows = idx.get(`${canonCode(o.course_code)}|${prog}|${normSec(sec)}|${d.owlnetLab ? "L" : ""}`) || [];
     if (rows.length !== 1) continue;            // gone, renumbered or ambiguous — leave for the panel
     matched++;
     const r = rows[0];
@@ -138,6 +141,10 @@ export async function applyOwlnetToOfferings(svc: any, semester: string, year: n
     if ((d.owlnetSeatsOpen ?? null) !== wantOpen || (d.owlnetSeatsCap ?? null) !== wantCap) {
       patch.owlnetSeatsOpen = wantOpen;
       patch.owlnetSeatsCap = wantCap;
+    }
+    // On-ground rows show Owlnet's day / time / room (the Meets column).
+    if (prog === "semester" && String(d.owlnetMeeting ?? "") !== String(r.meeting ?? "")) {
+      patch.owlnetMeeting = r.meeting || "";
     }
     if (Object.keys(patch).length) patches.push({ id: o.id, patch });
   }

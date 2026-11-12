@@ -32,3 +32,6 @@ grant execute on function public.owlnet_patch_offerings(jsonb) to service_role;
 --   to_char(now() at time zone 'America/Chicago','HH24:MI') in ('07:30','12:00','17:00');
 --   POSTs to /functions/v1/owlnet-scrape with x-cron-secret from Vault secret
 --   'owlnet_cron_secret' (checked by public.owlnet_cron_ok(text)).
+
+-- 2026-11-12 (migration "cpm_onground_program_manager"): on-ground PM per course.
+alter table public.course_program_managers add column if not exists onground_program_manager text;

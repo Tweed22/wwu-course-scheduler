@@ -1173,6 +1173,17 @@
      light mode so yellow stays readable on white). */
   .term-table tbody tr.enroll-low { --enroll-bar: rgba(217, 164, 0, 0.90); --enroll-text: #a87b00; }
   html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); --enroll-text: #f0c846; }
+  /* On-ground view: no Program Manager column (PM/dean live on the Admin page);
+     Length becomes "Meets" (day / time / room from Owlnet) and needs more room. */
+  .term-table.ta-table.og-view th[data-tsort="pm"],
+  .term-table.ta-table.og-view td.pm-cell { display: none; }
+  .term-table.ta-table.meets-wide th[data-tsort="length"] { width: 168px !important; }
+  .term-table.ta-table.meets-wide th[data-tsort="code"] { width: 186px !important; }
+  .term-table td.length-cell.meets { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .term-table .lab-tag {
+    display: inline-block; margin-left: 5px; font-size: 10.5px; font-weight: 600; line-height: 1.4;
+    padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--text-muted); vertical-align: middle;
+  }
   .term-table .enroll-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
   .term-table .enroll-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; vertical-align: middle; }
   .term-table .enroll-bar {
@@ -2111,10 +2122,18 @@
 </section>
 
 <section id="viewTerms" class="view active">
-  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto;">
+  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto auto;">
     <div>
       <label for="tfSearch">Search</label>
       <input id="tfSearch" type="text" placeholder="Course, instructor, dean, PM…">
+    </div>
+    <div>
+      <label for="tfModality">Modality</label>
+      <select id="tfModality">
+        <option value="">All</option>
+        <option value="Online">Online</option>
+        <option value="On-Ground">On-ground</option>
+      </select>
     </div>
     <div>
       <label for="tfLevel">Level</label>
@@ -2409,6 +2428,9 @@
       Upload the master course list CSV. The parser auto-detects columns: <code>Course Number &amp; Prefix</code> (course code), <code>Program Manager</code>, optionally a second PM (<code>Co-PM</code> or <code>Program Manager 2</code>), and optionally <code>Dean</code> (overrides the school-based Dean assignment). A simple CSV (<code>Course Code</code>, <code>Program Manager</code>, <code>Co-PM</code>, <code>Dean</code>) also works. A co-PM has the exact same access as the primary PM.
       A header row is detected automatically. Each upload <strong>replaces</strong> the entire mapping. The PM and Dean columns on the Term Assignments page read from this list automatically. <strong>Note:</strong> the <code>Dean</code> column requires running <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS dean text;</code> and the second PM requires <code>ALTER TABLE course_program_managers ADD COLUMN IF NOT EXISTS program_manager_2 text;</code> in Supabase once.
     </p>
+    <p style="margin:0 0 12px 0;color:var(--text-muted);font-size:12.5px;line-height:1.5;">
+      <strong>On-ground courses:</strong> set the <em>On-ground PM</em> and <em>Dean</em> right in the table below (changes save as you leave the box). A course's on-ground sections use its On-ground PM when one is set, otherwise the same PM as its online sections; the dean defaults to the school's dean. The CSV can carry an <code>On-ground PM</code> column too — if an upload doesn't include one, the on-ground PMs already set are kept.
+    </p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <input type="file" id="admPmCsv" accept=".csv,text/csv" style="font-size:13px;">
       <button type="button" id="btnAdmPmUpload" class="primary" style="padding:6px 14px;">Upload</button>
@@ -2416,19 +2438,30 @@
       <button type="button" id="btnAdmPmClear" class="danger" style="padding:6px 14px;">Clear all</button>
       <span id="admPmStatus" style="color:var(--text-muted);font-size:12.5px;"></span>
     </div>
-    <div class="table-wrap" style="margin-top:12px;max-height:340px;overflow-y:auto;">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+      <input id="admPmFilter" type="text" placeholder="Filter by course or name…" style="font-size:13px;padding:5px 9px;width:220px;">
+      <label style="font-size:12.5px;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="admPmOgOnly"> On-ground courses with no PM <span id="admPmOgCount"></span>
+      </label>
+      <span style="flex:1"></span>
+      <input id="admPmAddCode" type="text" placeholder="Add a course (e.g. BIO 125)" style="font-size:13px;padding:5px 9px;width:190px;">
+      <button type="button" id="btnAdmPmAdd" style="padding:5px 12px;">Add</button>
+    </div>
+    <datalist id="admPmPeople"></datalist>
+    <div class="table-wrap" style="margin-top:10px;max-height:380px;overflow-y:auto;">
       <table class="term-table">
         <thead>
           <tr>
-            <th style="width:160px;">Course Code</th>
+            <th style="width:120px;">Course Code</th>
             <th>Program Manager</th>
             <th>Co-PM</th>
-            <th>Dean (override)</th>
+            <th title="Program manager for this course's on-ground sections. Blank = same as the online PM.">On-ground PM</th>
+            <th title="Overrides the school-based dean for this course (online and on-ground).">Dean (override)</th>
             <th style="width:90px;">Actions</th>
           </tr>
         </thead>
         <tbody id="admPmTbody">
-          <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
+          <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet.</td></tr>
         </tbody>
       </table>
     </div>
@@ -3484,11 +3517,13 @@ function reconcileCourses(fresh) {
   for (const c of state.courses) {
     const incoming = freshByCode.get(c.code);
     if (incoming) {
-      merged.push(Object.assign({}, c, incoming, { id: c.id, removedFromRotation: false }));
+      merged.push(Object.assign({}, c, incoming, { id: c.id, removedFromRotation: false, synthetic: false }));
     } else {
       // No longer in sheet — drop unless an offering still references it.
+      // A synthetic course (an imported on-ground course the sheet never listed)
+      // was never "removed", so it isn't flagged.
       const referenced = state.offerings.some(o => o.courseId === c.id);
-      if (referenced) merged.push(Object.assign({}, c, { removedFromRotation: true }));
+      if (referenced) merged.push(Object.assign({}, c, { removedFromRotation: !c.synthetic }));
     }
   }
   const seen = new Set(merged.map(c => c.code));
@@ -3737,7 +3772,7 @@ const state = {
   reqFilters: { search:"", status:"", type:"", termYear:"", submitter:"" },
   editingRequestId: null,
   offerings: [],
-  termFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", showOnly: "", level: "", myCoursesOnly: true },
+  termFilter: { semester: "Fall", subterm: "1A", year: 2026, search: "", showOnly: "", level: "", modality: "", myCoursesOnly: true },
   termSortKey: "code",
   termSortDir: 1,
   // semesterFilter can be "" (show all), "Fall", "Spring", or "Summer". When
@@ -4228,7 +4263,10 @@ function rowToOffering(row) {
   // courseId no longer matches anything.
   if (row.course_code) {
     o.courseCode = row.course_code;
-    const byCode = (state.courses || []).find(c => c.code === row.course_code);
+    let byCode = (state.courses || []).find(c => c.code === row.course_code);
+    // An imported on-ground section of a course the rotation sheet doesn't list
+    // still needs a course record to show up (see ensureCourseForCode).
+    if (!byCode && o.importedFromOwlnet && Array.isArray(state.courses)) byCode = ensureCourseForCode(row.course_code, o.owlnetTitle);
     if (byCode) o.courseId = byCode.id;
   }
   // Ownership identity (authoritative from the DB columns) for UI gating.
@@ -4322,12 +4360,14 @@ async function loadFromSupabase() {
     state.pmByCourse   = {};
     state.pm2ByCourse  = {};
     state.deanByCourse = {};
+    state.ogPmByCourse = {};
     for (const row of (pmRes.data || [])) {
       if (row && row.course_code) {
         const key = canonicalCourseCode(row.course_code);   // normalize to "PREFIX NUMBER" uppercase
         if (!state.pmByCourse[key]) state.pmByCourse[key] = row.program_manager || "";
         if (!state.pm2ByCourse[key]) state.pm2ByCourse[key] = row.program_manager_2 || "";
         if (row.dean && !state.deanByCourse[key]) state.deanByCourse[key] = row.dean;
+        if (row.onground_program_manager && !state.ogPmByCourse[key]) state.ogPmByCourse[key] = row.onground_program_manager;
       }
     }
     state.termDateOverrides = {};
@@ -4806,18 +4846,23 @@ function handleRealtimePM(payload) {
       if (state.pmByCourse)   delete state.pmByCourse[key];
       if (state.pm2ByCourse)  delete state.pm2ByCourse[key];
       if (state.deanByCourse) delete state.deanByCourse[key];
+      if (state.ogPmByCourse) delete state.ogPmByCourse[key];
     }
   } else if (payload.new && payload.new.course_code) {
     const key = canonicalCourseCode(payload.new.course_code);
     state.pmByCourse   = state.pmByCourse   || {};
     state.pm2ByCourse  = state.pm2ByCourse  || {};
     state.deanByCourse = state.deanByCourse || {};
+    state.ogPmByCourse = state.ogPmByCourse || {};
     state.pmByCourse[key] = payload.new.program_manager || "";
     state.pm2ByCourse[key] = payload.new.program_manager_2 || "";
     if (payload.new.dean) state.deanByCourse[key] = payload.new.dean;
     else delete state.deanByCourse[key];
+    if (payload.new.onground_program_manager) state.ogPmByCourse[key] = payload.new.onground_program_manager;
+    else delete state.ogPmByCourse[key];
   }
   scheduleReRender();
+  if (state.view === "admin" && typeof renderAdminPmTable === "function") renderAdminPmTable();
 }
 function handleRealtimeTermDate(payload) {
   const event = payload.eventType || payload.type;
@@ -5002,18 +5047,27 @@ function pmForOffering(o) {
   if (state.pmByCourse) {
     const course = (state.courses || []).find(c => c.id === o.courseId);
     const code = (course && course.code) || o.courseCode || "";
+    // On-ground sections use the course's on-ground PM when one is set
+    // (Admin page), else the same PM as the online sections.
+    if (isOnGroundRow(o)) { const og = ogPmForCode(code); if (og) return og; }
     const pm = pmForCode(code);
     if (pm) return pm;
   }
   return o.programManager || "";
 }
 // Second (co-)program manager for an offering: CSV mapping first, then any
-// value recorded on the offering itself.
+// value recorded on the offering itself. An explicit on-ground PM replaces the
+// online pair for on-ground sections.
 function pm2ForOffering(o) {
   if (!o) return "";
   const course = (state.courses || []).find(c => c.id === o.courseId);
   const code = (course && course.code) || o.courseCode || "";
+  if (isOnGroundRow(o) && ogPmForCode(code)) return "";
   return pm2ForCode(code) || o.programManager2 || "";
+}
+function ogPmForCode(code) {
+  if (!state.ogPmByCourse) return "";
+  return state.ogPmByCourse[code] || state.ogPmByCourse[canonicalCourseCode(code)] || "";
 }
 // Every program manager attached to an offering (primary + co-PM), de-duped.
 function pmsForOffering(o) {
@@ -5668,6 +5722,9 @@ function syncOfferingsFromRotation(defaultYear, semesterFilter, opts) {
   const haveSubterm = new Set(); // code|semester|subterm|year  — for display dedup
   for (const o of state.offerings) {
     if (o.isNewSection) continue;  // extra sections don't block rotation slots
+    // On-ground sections are a separate schedule — they must never stop the
+    // rotation from generating a course's ONLINE row in the same subterm.
+    if (offeringModality(o) === "On-Ground") continue;
     const c = state.courses.find(x => x.id === o.courseId);
     const code = (c && c.code) || o.courseCode || "";
     if (!code) continue;
@@ -5772,6 +5829,9 @@ function rollOverCompletedAssignments(now) {
     // Canceled offerings stay canceled (a deliberate close-out, not a
     // future-term assignment).
     if (o.canceled) continue;
+    // On-ground sections imported from Owlnet are re-imported each term from
+    // the registrar's schedule; the old term's rows stay as history.
+    if (o.importedFromOwlnet) continue;
     // o.year is the ACADEMIC year; the academic year turns over at Fall.
     // termLastEndDate() takes the academic year and converts Spring/Summer to
     // the following calendar year internally, so the 10-week test lines up for
@@ -5949,6 +6009,7 @@ function applyTermFilters(list) {
   const s = (state.termFilter.search || "").trim().toLowerCase();
   const so = state.termFilter.showOnly;
   const lvl = state.termFilter.level;
+  const mod = state.termFilter.modality || "";
   // Pre-compute the current user's name once for the my-courses filter.
   const myName = state.termFilter.myCoursesOnly
     ? (state.userName || "").trim().toLowerCase()
@@ -5958,6 +6019,7 @@ function applyTermFilters(list) {
     if (!c) return false;
     // Voucher-arranged courses are hidden from the scheduler entirely.
     if (isHiddenCourse((c && c.code) || o.courseCode)) return false;
+    if (mod && (isOnGroundRow(o) ? "On-Ground" : "Online") !== mod) return false;
     // My-courses filter: only show offerings where the signed-in user is the
     // dean or program manager.  Skipped when myName is empty (no name set yet).
     if (myName) {
@@ -6160,12 +6222,25 @@ function renderTermTable(list) {
       };
     }
   }
+  // On-ground view: the PM column is hidden and Length becomes "Meets"
+  // (day / time / room from Owlnet). In the mixed view, on-ground rows show
+  // Meets in that same column and a blank PM cell.
+  const _modView = state.termFilter.modality || "";
+  const _tbl = tb.closest("table");
+  const _anyMeets = list.some(o => isOnGroundRow(o) && o.owlnetMeeting);
+  if (_tbl) {
+    _tbl.classList.toggle("og-view", _modView === "On-Ground");
+    _tbl.classList.toggle("meets-wide", _modView === "On-Ground" || (_modView === "" && _anyMeets));
+    const lh = _tbl.querySelector('th[data-tsort="length"]');
+    if (lh) lh.textContent = _modView === "On-Ground" ? "Meets" : (_modView === "" && _anyMeets ? "Length / Meets" : "Length");
+  }
   if (!list.length) {
     tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">No offerings in this subterm match the current filters. Try <code>Re-sync now</code> in the rotation banner if you recently edited rotation data.</td></tr>`;
     return;
   }
   tb.innerHTML = list.map(o => {
     const c = state.courses.find(x => x.id === o.courseId) || { code: "?", title: "(deleted)" };
+    const _og = isOnGroundRow(o);
     const prefix = (c.code || "").split(" ")[0];
     const school = SCHOOL_BY_PREFIX[prefix] || "";
     const classes = [];
@@ -6233,7 +6308,7 @@ function renderTermTable(list) {
     const isOnline = !!(c.onlineFall||[]).length || !!(c.onlineSpring||[]).length || !!(c.onlineSummer||[]).length;
     // Download-contract icon button shown on SENT and DONE rows for online courses
     const _dlIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-    const dlContractBtn = (isOnline && o.instructor && o.instructor.trim())
+    const dlContractBtn = (isOnline && !_og && o.instructor && o.instructor.trim())
       ? `<button type="button" class="btn-dl-contract" data-tact="gencontract" data-oid="${escapeHtml(o.id)}" title="Re-generate and download course contract PDF">${_dlIcon} Contract</button>`
       : "";
     let actionBtn;
@@ -6350,12 +6425,14 @@ function renderTermTable(list) {
       <tr data-oid="${escapeHtml(o.id)}"${clsAttr}>
         <td class="code">
           ${sectionActionBtn}
-          ${orphanBadge}${escapeHtml(c.code)}${(o.officialSection||"").trim() ? ` <span class="section-num official" title="Official section number (from Owlnet)">${escapeHtml((o.officialSection||"").trim())}</span>` : ""}${subtermLabel}${submittedBadge}${canceledBadge}
+          ${orphanBadge}${escapeHtml(c.code)}${(o.officialSection||"").trim() ? ` <span class="section-num official" title="Official section number (from Owlnet)">${escapeHtml((o.officialSection||"").trim())}</span>` : ""}${o.owlnetLab ? ` <span class="lab-tag" title="Lab section">Lab</span>` : ""}${subtermLabel}${submittedBadge}${canceledBadge}
         </td>
-        <td class="title-cell">${escapeHtml(c.title || "")}</td>
-        <td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}${_stale ? ` <span class="rot-stale-ico" title="${escapeHtml(`Out-of-date rotation: this row was generated from an earlier rotation. The current rotation sheet lists ${_stale.label}. Delete it if the course isn't running this term.`)}">⚠</span>` : ""}</td>
+        <td class="title-cell">${escapeHtml(c.title || o.owlnetTitle || "")}</td>
+        ${(_og && o.owlnetMeeting)
+          ? `<td class="length-cell meets" title="${escapeHtml(o.owlnetMeeting)}">${escapeHtml(formatOwlnetMeets(o.owlnetMeeting) || "—")}</td>`
+          : `<td class="length-cell">${escapeHtml(o.length || "")}${o.rotationSlot && !["15W","16W","AN"].includes(o.rotationSlot) ? ` <span style="color:var(--text-muted);font-size:11px;">(${escapeHtml(o.rotationSlot)})</span>` : ""}${_stale ? ` <span class="rot-stale-ico" title="${escapeHtml(`Out-of-date rotation: this row was generated from an earlier rotation. The current rotation sheet lists ${_stale.label}. Delete it if the course isn't running this term.`)}">⚠</span>` : ""}</td>`}
         <td class="dean-cell" title="Dean" style="display:none;">${escapeHtml(deanForOffering(o) || "—")}</td>
-        <td class="pm-cell" style="padding-left:18px;" title="Program Manager(s) — set on the Admin page via CSV upload">${escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
+        <td class="pm-cell" style="padding-left:18px;" title="${_og ? "On-ground program manager — set on the Admin page" : "Program Manager(s) — set on the Admin page via CSV upload"}">${_og ? "" : escapeHtml(pmsForOffering(o).join(", ") || "—")}</td>
         <td class="enroll-cell">${_enr
           ? `<span class="enroll-wrap" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet"><span class="enroll-num">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span><span class="enroll-bar"><span class="enroll-bar-fill" style="width:${_enr.pct}%"></span></span></span>`
           : `<span class="enroll-none" title="No Owlnet enrollment yet — scrape Owlnet from the Verification tab">—</span>`}</td>
@@ -8884,6 +8961,280 @@ function _owlProgram(r){
   if(div !== "SU") return "online";
   return OWLNET_ONLINE_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) ? "online" : "semester";
 }
+
+/* ─── On-ground (semester program) sections from Owlnet ───────────────────────
+   The on-ground schedule is imported from Owlnet's Semester Undergraduate list
+   (FUL / 1FUL sections, plus "FUL L" labs as their own rows) — see the
+   Verification panel's "On-ground import" tab. */
+function isOnGroundRow(o){ return !!o && offeringModality(o) === "On-Ground"; }
+const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
+function _owlIsOgImport(r){
+  if(_owlProgram(r) !== "semester") return false;
+  const suf = String(r.suffix || "").trim().toUpperCase();
+  if(!/FUL/.test(suf) || OWLNET_IGNORED_SUFFIXES.has(suf)) return false;
+  const code = canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`);
+  return !isHiddenCourse(code) && !VERIFY_EXCLUDED_PREFIXES.has(String(r.prefix || "").toUpperCase());
+}
+
+// Building → short code for the Meets column ("MWF 10:00-10:50 BUR 206").
+// Keys are Owlnet's building names, lowercased. Unknown buildings fall back to
+// their initials.
+const BUILDING_CODES = {
+  "burton building": "BUR",
+  "kemper art center building": "KAC",
+  "cox science and language building": "COX",
+  "academic building": "ACB",
+  "center for human performance building": "CHP",
+  "dulany": "DUL",
+  "equestrian upper barn": "UPB",
+  "equestrian upha indoor riding arena": "UPHA",
+  "equestrian roland arena building 1": "ROW",
+  "weider fitness center": "WFC",
+};
+/* Owlnet meeting text → "MWF 10:00-10:50 BUR 206". Owlnet writes
+   "MWF 10:00 AM-10:50 AM; Main Campus, Burton Building, Burton Bldg Classroom 206",
+   or just the schedule ("TR 3:25 PM-4:40 PM;"), or just the place, or
+   "BY ARRANGEMENT; To Be Announced, …". */
+function formatOwlnetMeets(raw){
+  const s = String(raw || "").replace(/\s+/g, " ").trim();
+  if(!s) return "";
+  if(/course offered on-?line/i.test(s)) return "Online";
+  let sched = "", loc = "";
+  const semi = s.indexOf(";");
+  if(semi >= 0){ sched = s.slice(0, semi).trim(); loc = s.slice(semi + 1).trim(); }
+  else if(/^([MTWRFSU]+\s+\d|BY ARRANGEMENT)/i.test(s)) sched = s;
+  else loc = s;
+  const out = [];
+  const byArr = /^BY ARRANGEMENT/i.test(sched);
+  if(byArr) out.push("By arrangement");
+  else if(sched){
+    const m = sched.match(/^([MTWRFSU]+)\s+(\d{1,2}:\d{2})\s*[AP]M\s*-\s*(\d{1,2}:\d{2})\s*[AP]M/i);
+    out.push(m ? `${m[1]} ${m[2]}-${m[3]}` : sched);
+  }
+  if(loc){
+    const parts = loc.split(",").map(x => x.trim()).filter(Boolean);
+    const building = parts.length >= 3 ? parts[1] : (parts[0] || "");
+    const roomStr  = parts[parts.length - 1] || "";
+    if(/to be announced/i.test(building) || /to be announced/i.test(roomStr)){
+      if(!byArr) out.push("TBA");
+    } else {
+      const code = BUILDING_CODES[building.toLowerCase()] ||
+        building.split(/\s+/).filter(w => /^[A-Za-z]/.test(w) && !/^(of|and|the|building|bldg)$/i.test(w)).map(w => w[0].toUpperCase()).join("").slice(0, 4);
+      const rm = (roomStr.match(/(\d+[A-Z]?)\s*$/) || [])[1] || "";
+      out.push([code, rm].filter(Boolean).join(" "));
+    }
+  }
+  return out.filter(Boolean).join(" ");
+}
+
+/* Owlnet instructor text → the scheduler's "First Last". Owlnet writes
+   "Last, First Middle", and runs team-taught sections together:
+   "Bielawski, Alanna Kay Smith, Melissa Jeanne Haben, Elizabeth". */
+function owlnetPeople(raw){
+  const s = String(raw || "").replace(/\s+/g, " ").trim();
+  if(!s || _verIsStaff(s)) return [];
+  const parts = s.split(/\s*,\s*/);
+  if(parts.length < 2) return [{ last: s, given: [], owl: s }];
+  const people = [];
+  let last = parts[0];
+  for(let i = 1; i < parts.length; i++){
+    const words = parts[i].split(" ").filter(Boolean);
+    const nextLast = i < parts.length - 1 ? (words.pop() || "") : "";
+    people.push({ last, given: words, owl: `${last}, ${words.join(" ")}`.trim() });
+    last = nextLast;
+  }
+  return people;
+}
+// Same person, judged strictly enough to REUSE an existing spelling: last name
+// shared, and first names equal, a known nickname pair, or one a 3+ letter
+// prefix of the other (Greg / Gregory, Zach / Zachary).
+function _strictSamePerson(schedName, owlPerson){
+  const a = _verNameParts(schedName), b = _verNameParts(owlPerson);
+  if(!a || !b || !a.first || !b.first) return false;
+  if(!a.last.some(x => b.last.includes(x))) return false;
+  const x = a.first, y = b.first;
+  if(x === y) return true;
+  const fx = _VER_NICK[x] || x, fy = _VER_NICK[y] || y;
+  if(fx === fy) return true;
+  const [sh, lo] = x.length <= y.length ? [x, y] : [y, x];
+  return sh.length >= 3 && lo.startsWith(sh);
+}
+function knownInstructorNames(){
+  const set = new Set();
+  (state.offerings || []).forEach(o => {
+    const n = String(o.instructor || "").trim();
+    if(n && !n.includes(",") && !_verIsStaff(n)) set.add(n);
+  });
+  return [...set];
+}
+// courseKnown = names already used on this same course (any term, either
+// modality): matched as loosely as Verification does (Lee ↔ Leola), since the
+// course itself is strong evidence it's the same person. Other names need the
+// strict check.
+function owlnetNameToSched(raw, known, courseKnown){
+  const people = owlnetPeople(raw);
+  if(!people.length) return "";
+  return people.map(p => {
+    const near = (courseKnown || []).filter(k => _verSameInstructor(k, p.owl));
+    if(near.length === 1) return near[0];
+    const hits = (known || []).filter(k => _strictSamePerson(k, p.owl));
+    if(hits.length === 1) return hits[0];
+    const first = String(p.given[0] || "").replace(/\.$/, "");
+    return first ? `${first} ${p.last}` : p.last;
+  }).join(", ");
+}
+
+/* The in-seat rotation's word on a course this term (frequency only — the
+   rotation has no on-ground sections or subterms). */
+function _ogRotationCheck(code, semester, year){
+  const c = (state.courses || []).find(x => canonicalCourseCode(x.code) === code);
+  if(!c || c.synthetic) return { ok:null, text:"Not in the rotation sheet" };
+  const v = String(c["og" + semester] || "").trim();
+  if(!v) return { ok:false, text:`Not on the ${semester} in-seat rotation` };
+  const y = Number(year);
+  if(/odd/i.test(v))  return y % 2 === 1 ? { ok:true, text:v } : { ok:false, text:`Rotation says ${v}; ${y} is even` };
+  if(/even/i.test(v)) return y % 2 === 0 ? { ok:true, text:v } : { ok:false, text:`Rotation says ${v}; ${y} is odd` };
+  return { ok:true, text:v };
+}
+
+/* Pair Owlnet on-ground sections with the scheduler's on-ground rows for one
+   term: section number first (lab-aware), then instructor, then a lone 1:1
+   leftover. Returns what an import would do with every section. */
+function planOnGroundImport(semester, year){
+  const owl = (state.owlnetSections || []).filter(r =>
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlIsOgImport(r));
+  const rows = (state.offerings || []).filter(o =>
+    !o.deleted && (o.semester || "") === semester && Number(o.year) === Number(year) && isOnGroundRow(o));
+  const byOwl = {}, bySched = {};
+  owl.forEach(r => { const c = canonicalCourseCode(`${r.prefix || ""} ${r.course_number || ""}`); (byOwl[c] = byOwl[c] || []).push(r); });
+  rows.forEach(o => { const c = _verCourseCode(o); (bySched[c] = bySched[c] || []).push(o); });
+  const known = knownInstructorNames();
+  const byCourseNames = {};
+  (state.offerings || []).forEach(o => {
+    const n = String(o.instructor || "").trim();
+    if(!n || n.includes(",") || _verIsStaff(n)) return;
+    const c = _verCourseCode(o);
+    (byCourseNames[c] = byCourseNames[c] || new Set()).add(n);
+  });
+  const items = [];
+  const codes = [...new Set([...Object.keys(byOwl), ...Object.keys(bySched)])].sort();
+  codes.forEach(code => {
+    const pool = (byOwl[code] || []).slice().sort((a, b) => String(a.section).localeCompare(String(b.section)) || String(a.suffix).localeCompare(String(b.suffix)));
+    const left = (bySched[code] || []).slice();
+    const pairs = [];
+    const take = (o, i) => { pairs.push([o, pool[i]]); pool.splice(i, 1); left.splice(left.indexOf(o), 1); };
+    left.slice().forEach(o => {
+      const sec = String(o.officialSection || "").trim();
+      if(!sec) return;
+      const i = pool.findIndex(r => _verNormSec(r.section) === _verNormSec(sec) && _owlIsLab(r) === !!o.owlnetLab);
+      if(i >= 0) take(o, i);
+    });
+    left.slice().forEach(o => {
+      const i = pool.findIndex(r => _verSameInstructor(o.instructor, r.instructor));
+      if(i >= 0) take(o, i);
+    });
+    if(left.length === 1 && pool.length === 1) take(left[0], 0);
+    const rot = _ogRotationCheck(code, semester, year);
+    pairs.forEach(([o, r]) => items.push({ kind:"match", code, o, r, rot, name: o.instructor || "" }));
+    pool.forEach(r => {
+      const name = owlnetNameToSched(r.instructor, known, [...(byCourseNames[code] || [])]);
+      items.push({ kind:"add", code, r, rot, name, live: !!name });
+    });
+    left.forEach(o => items.push({ kind:"schedOnly", code, o, rot, name: o.instructor || "" }));
+  });
+  const n = k => items.filter(i => i.kind === k).length;
+  return {
+    items, owlCount: owl.length,
+    addLive: items.filter(i => i.kind === "add" && i.live).length,
+    addStaff: items.filter(i => i.kind === "add" && !i.live).length,
+    matched: n("match"), schedOnly: n("schedOnly"),
+    labs: owl.filter(_owlIsLab).length,
+    imported: rows.some(o => o.importedFromOwlnet),
+  };
+}
+// A course the rotation sheet doesn't list (e.g. IFL 130) still needs a course
+// record so its imported sections show up. Synthetic: title from Owlnet, no
+// online rotation, never flagged as "removed from rotation".
+function ensureCourseForCode(code, title){
+  const canon = canonicalCourseCode(code);
+  let c = (state.courses || []).find(x => canonicalCourseCode(x.code) === canon);
+  if(c) return c;
+  const num = parseInt(canon.split(" ")[1], 10);
+  c = { id: "c-" + Math.random().toString(36).slice(2, 9), code: canon, title: title || canon, synthetic: true,
+        section: (!isNaN(num) && num >= 500) ? "graduate" : "undergrad", level: courseLevel(num),
+        ogFall: "", ogSpring: "", ogSummer: "", onlineFall: [], onlineSpring: [], onlineSummer: [], onlineExtra: [] };
+  state.courses.push(c);
+  return c;
+}
+
+/* Write the import: add new on-ground rows (DONE + LIVE when Owlnet names an
+   instructor, plain unassigned rows when it says Staff — both with Meets and
+   enrollment filled in) and fill Owlnet details onto matched existing rows.
+   Never changes an existing row's instructor or workflow state. */
+function runOnGroundImport(semester, year){
+  if(!isAdmin()){ toast("Admins only.", "error"); return; }
+  const plan = planOnGroundImport(semester, year);
+  const adds = plan.items.filter(i => i.kind === "add");
+  const matches = plan.items.filter(i => i.kind === "match");
+  if(!adds.length && !matches.length){ toast("Nothing to import for this term."); return; }
+  if(!confirm(`Import the on-ground schedule for ${semester} ${year}?\n\n` +
+    `• Add ${plan.addLive} section(s) as LIVE (instructor from Owlnet)\n` +
+    `• Add ${plan.addStaff} unassigned section(s) (Owlnet shows Staff)\n` +
+    `• Fill Owlnet details onto ${matches.length} existing row(s)\n\nNothing is removed.`)) return;
+  const now = new Date().toISOString();
+  const seatsOf = r => ({ owlnetSeatsOpen: r.seats_open != null ? Number(r.seats_open) : null,
+                          owlnetSeatsCap:  r.seats_cap  != null ? Number(r.seats_cap)  : null });
+  let added = 0, updated = 0;
+  adds.forEach(it => {
+    const r = it.r;
+    const c = ensureCourseForCode(it.code, r.title);
+    const o = newOffering({
+      courseId: c.id, courseCode: c.code, semester, year: Number(year),
+      subterm: "1A", rotationSlot: "16W", length: "16 Weeks",
+      instructor: it.name || "", notes: "",
+    });
+    Object.assign(o, {
+      modality: "On-Ground", importedFromOwlnet: true, importedAt: now,
+      officialSection: String(r.section || "").trim(), owlnetLab: _owlIsLab(r),
+      owlnetMeeting: r.meeting || "", owlnetTitle: r.title || "",
+    }, seatsOf(r));
+    if(it.live){
+      Object.assign(o, {
+        submitted: true, submittedAt: now, submittedBy: "Owlnet import",
+        registrarCompleted: true, registrarCompletedAt: now, registrarCompletedBy: "Owlnet import",
+        owlnetVerified: true, owlnetVerifiedInstructor: o.instructor, owlnetInstructor: r.instructor || "", owlnetVerifiedAt: now,
+      });
+    }
+    state.offerings.push(o);
+    markLocallyTouched(o.id);
+    added++;
+  });
+  matches.forEach(({ o, r }) => {
+    let ch = false;
+    const set = (k, v) => { if(o[k] !== v){ o[k] = v; ch = true; } };
+    if(!String(o.officialSection || "").trim()) set("officialSection", String(r.section || "").trim());
+    if(o.modality !== "On-Ground") set("modality", "On-Ground");
+    set("owlnetMeeting", r.meeting || "");
+    set("owlnetLab", _owlIsLab(r));
+    if(!o.owlnetTitle && r.title) set("owlnetTitle", r.title);
+    const s = seatsOf(r);
+    if(!o.canceled){ set("owlnetSeatsOpen", s.owlnetSeatsOpen); set("owlnetSeatsCap", s.owlnetSeatsCap); }
+    const isV = !o.canceled && _verSameInstructor(o.instructor, r.instructor);
+    if(!!o.owlnetVerified !== isV || (isV && o.owlnetVerifiedInstructor !== String(o.instructor || ""))){
+      o.owlnetVerified = isV;
+      o.owlnetVerifiedInstructor = isV ? String(o.instructor || "") : "";
+      o.owlnetInstructor = isV ? String(r.instructor || "") : "";
+      o.owlnetVerifiedAt = isV ? now : "";
+      ch = true;
+    }
+    if(ch){ markLocallyTouched(o.id); updated++; }
+  });
+  setDirty(true);
+  if(typeof flushToSupabase === "function") flushToSupabase();
+  if(typeof renderTerms === "function") renderTerms();
+  toast(`On-ground import: added ${added} section${added === 1 ? "" : "s"}, updated ${updated} existing row${updated === 1 ? "" : "s"}.`);
+  renderVerification();
+}
 function reconcileOwlnet(semester, year){
   const owl = (state.owlnetSections || []).filter(r =>
     (r.semester || "") === semester && Number(r.acad_year) === Number(year) &&
@@ -9370,7 +9721,8 @@ async function downloadVerificationXlsx(btn){
    subterm isn't compared). Same instructor rule as online: only DONE sections. */
 function reconcileOnGround(semester, year){
   const owlG = (state.owlnetSections || []).filter(r =>
-    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlProgram(r) === "semester");
+    (r.semester || "") === semester && Number(r.acad_year) === Number(year) && _owlProgram(r) === "semester" &&
+    !OWLNET_IGNORED_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()));
   const res = { flags:[], adopted:[], verified:0, checked:0, matched:0, owlCount: owlG.length };
   if(!owlG.length) return res;          // SU not scraped for this term yet — judge nothing
   const owlOnline = new Set((state.owlnetSections || []).filter(r =>
@@ -9410,13 +9762,29 @@ function reconcileOnGround(semester, year){
         action: hint ? "Fix the section's modality here, or have the registrar add the on-ground section." : "Registrar: check Owlnet — add the section, or cancel it here if it isn't running." });
       return;
     }
-    // Pair by instructor (blank ↔ Staff).
-    const pool = W.slice(), unpaired = [];
+    // Pair by Owlnet section number first (imported rows and adopted ones carry
+    // it, lab-aware) so two sections with the same instructor can't swap their
+    // enrollment; then by instructor (blank ↔ Staff).
+    const pool = W.slice(), unpaired = [], secMismatch = [];
+    const bySecLeft = [];
     active.forEach(o => {
+      const sec = String(o.officialSection || "").trim();
+      const i = sec ? pool.findIndex(r => _verNormSec(r.section) === _verNormSec(sec) && _owlIsLab(r) === !!o.owlnetLab) : -1;
+      if(i < 0){ bySecLeft.push(o); return; }
+      const r = pool[i]; pool.splice(i, 1); seatMap.set(o.id, r);
+      if(_verSameInstructor(o.instructor, r.instructor)) verifiedMap.set(o.id, r.instructor || "");
+      else if(o.registrarCompleted) secMismatch.push([o, r]);
+    });
+    bySecLeft.forEach(o => {
       const i = pool.findIndex(r => _verSameInstructor(o.instructor, r.instructor));
       if(i >= 0){ verifiedMap.set(o.id, pool[i].instructor || ""); seatMap.set(o.id, pool[i]); pool.splice(i, 1); }
       else unpaired.push(o);
     });
+    secMismatch.forEach(([o, r]) => res.flags.push({ ...base, sev:"info",
+      sched: nm(o.instructor) + " · DONE", owl: owlNm(r.instructor), owlCodes: r.raw_code,
+      issue: _verIsStaff(r.instructor) ? "On-ground section completed by the registrar, but Owlnet still shows Staff."
+                                       : "On-ground section completed by the registrar, but Owlnet lists a different instructor.",
+      action: _verIsStaff(r.instructor) ? "Registrar: enter the instructor in Owlnet." : "Confirm which instructor is correct." }));
     res.matched++;
     if(active.length === 1 && W.length === 1){
       const want = String(W[0].section || "").trim();
@@ -9429,8 +9797,8 @@ function reconcileOnGround(semester, year){
         issue:`The scheduler has ${active.length} on-ground sections; Owlnet lists ${W.length}.` + (unpaired.length ? ` Unmatched here: ${unpaired.map(o => nm(o.instructor) + st(o)).join("; ")}.` : ""),
         action:"Remove the duplicate here, or have the registrar add the missing section." });
     } else {
-      // Owlnet having MORE on-ground sections isn't flagged (the scheduler only
-      // holds on-ground sections changed through it). Instructor check: DONE only.
+      // Owlnet having MORE on-ground sections is flagged below, and only for
+      // terms whose on-ground schedule has been imported. Instructor check: DONE only.
       unpaired.filter(o => o.registrarCompleted).forEach(o => {
         const staffOnly = pool.length > 0 && pool.every(r => _verIsStaff(r.instructor));
         res.flags.push({ ...base, sev:"info", sched: nm(o.instructor) + " · DONE", owl: pool.map(r => owlNm(r.instructor)).join(", ") || "—", owlCodes,
@@ -9456,8 +9824,20 @@ function reconcileOnGround(semester, year){
     const wantOpen = (sr && sr.seats_open != null) ? Number(sr.seats_open) : null;
     const wantCap  = (sr && sr.seats_cap  != null) ? Number(sr.seats_cap)  : null;
     if((o.owlnetSeatsOpen ?? null) !== wantOpen || (o.owlnetSeatsCap ?? null) !== wantCap){ o.owlnetSeatsOpen = wantOpen; o.owlnetSeatsCap = wantCap; changed = true; }
+    // Day / time / room follow Owlnet (the Meets column).
+    if(sr && (sr.meeting || "") !== (o.owlnetMeeting || "")){ o.owlnetMeeting = sr.meeting || ""; changed = true; }
     if(changed && !res.adopted.includes(o.id)) res.adopted.push(o.id);
   });
+  // Once a term's on-ground schedule has been imported, a section Owlnet lists
+  // that the scheduler doesn't have is new — flag it (never auto-added).
+  const plan = planOnGroundImport(semester, year);
+  if(plan.imported){
+    plan.items.filter(i => i.kind === "add").forEach(i => res.flags.push({
+      ground:true, code:i.code, sub:"Semester", sev:"warn",
+      sched:"Not in scheduler", owl: i.live ? "Live" : "Staff", owlCodes: i.r.raw_code,
+      issue:`New on-ground section on Owlnet${i.live ? ` (${i.name})` : ""} — not in the scheduler.`,
+      action:"Add it from the On-ground import tab, or have the registrar remove it if it isn't running." }));
+  }
   return res;
 }
 
@@ -9467,7 +9847,106 @@ function _verFmtWhen(iso){
   catch(e){ return iso.slice(0,16).replace("T"," "); }
 }
 
-function verifyPanelHtml(terms, sel, r, grid){
+/* "On-ground import" tab: what importing Owlnet's on-ground (FUL) schedule for
+   the selected term would do, section by section. Nothing is written until the
+   Import button is pressed. */
+function _ogEnroll(r){
+  if(!r || r.seats_cap == null || r.seats_open == null) return "";
+  const cap = Number(r.seats_cap), open = Number(r.seats_open);
+  return `${Math.max(0, cap - open)} / ${cap}`;
+}
+function ogImportPanelHtml(plan, sel){
+  const esc = (typeof escapeHtml === "function") ? escapeHtml : (s => String(s==null?"":s));
+  if(!plan.owlCount && !plan.items.length){
+    return `<div class="ver-empty">Owlnet has no on-ground (Semester Undergraduate) sections for ${esc(sel.semester)} ${esc(sel.year)} yet.</div>`;
+  }
+  const rot = i => i.rot.ok === false ? `<span class="ver-pill ver-pill-rot-bad">${esc(i.rot.text)}</span>`
+               : i.rot.ok === null ? `<span class="ver-pill ver-pill-neu">${esc(i.rot.text)}</span>`
+               : `<span class="ver-pill ver-pill-rot-ok">${esc(i.rot.text)}</span>`;
+  const order = { add:0, match:1, schedOnly:2 };
+  const items = plan.items.slice().sort((a, b) => (order[a.kind] - order[b.kind]) || a.code.localeCompare(b.code) ||
+    String((a.r || {}).section || (a.o || {}).officialSection || "").localeCompare(String((b.r || {}).section || (b.o || {}).officialSection || "")));
+  const rows = items.map(i => {
+    const r = i.r || {}, o = i.o || {};
+    const will = i.kind === "add" ? (i.live ? '<span class="ver-pill ver-pill-live">Add · LIVE</span>' : '<span class="ver-pill ver-pill-neu">Add · unassigned</span>')
+               : i.kind === "match" ? '<span class="ver-pill ver-pill-act">Match existing row</span>'
+               : '<span class="ver-pill ver-pill-abs">In scheduler only</span>';
+    const sec = i.kind === "schedOnly" ? `${i.code} ${o.officialSection || ""}`.trim() : (r.raw_code || "");
+    const who = i.kind === "add" ? (i.name ? esc(i.name) : '<span style="color:var(--text-muted)">— Owlnet: Staff</span>')
+              : `${esc(o.instructor || "—")}${o.registrarCompleted ? " · DONE" : (o.submitted ? " · SENT" : "")}`;
+    const owlWho = (i.kind !== "schedOnly" && r.instructor && !(i.kind === "add" && !i.live)) ? `<div class="ver-owlcode">Owlnet: ${esc(r.instructor)}</div>` : "";
+    const note = i.kind === "schedOnly" ? '<div class="ver-owlcode">Not on Owlnet — left as is (Verification flags it)</div>'
+               : (r && _owlIsLab(r) ? '<div class="ver-owlcode">Lab — its own row</div>' : "");
+    const k = i.kind + (i.rot.ok === false ? " rot" : "");
+    return `<tr data-k="${k}">
+      <td><div class="ver-code">${esc(sec)}</div>${note}</td>
+      <td>${will}</td>
+      <td>${who}${owlWho}</td>
+      <td style="white-space:nowrap">${esc(r.meeting ? formatOwlnetMeets(r.meeting) : (o.owlnetMeeting ? formatOwlnetMeets(o.owlnetMeeting) : "—"))}</td>
+      <td style="white-space:nowrap">${esc(_ogEnroll(r) || "—")}</td>
+      <td>${rot(i)}</td></tr>`;
+  }).join("");
+  const nRot = plan.items.filter(i => i.rot.ok === false).length;
+  const nAdd = plan.addLive + plan.addStaff;
+  const btnLabel = nAdd ? `Import ${nAdd} section${nAdd === 1 ? "" : "s"}` : (plan.matched ? `Update ${plan.matched} existing row${plan.matched === 1 ? "" : "s"}` : "Nothing to import");
+  return `
+  <div class="ver-tiles">
+    <div class="ver-tile"><div class="ver-k">On Owlnet (FUL)</div><div class="ver-v">${plan.owlCount} <small>incl. ${plan.labs} lab${plan.labs === 1 ? "" : "s"}</small></div></div>
+    <div class="ver-tile ver-ok"><div class="ver-k">Add as LIVE</div><div class="ver-v">${plan.addLive}</div></div>
+    <div class="ver-tile"><div class="ver-k">Add unassigned</div><div class="ver-v">${plan.addStaff} <small>Owlnet shows Staff</small></div></div>
+    <div class="ver-tile ver-info"><div class="ver-k">Already in scheduler</div><div class="ver-v">${plan.matched}${plan.schedOnly ? ` <small>+ ${plan.schedOnly} not on Owlnet</small>` : ""}</div></div>
+  </div>
+  <div class="ver-chips" id="verImpChips">
+    <button type="button" class="ver-chip" data-ifilter="all" aria-pressed="true">All ${plan.items.length}</button>
+    <button type="button" class="ver-chip" data-ifilter="add" aria-pressed="false">To add ${nAdd}</button>
+    <button type="button" class="ver-chip" data-ifilter="match" aria-pressed="false">Matched ${plan.matched}</button>
+    <button type="button" class="ver-chip" data-ifilter="rot" aria-pressed="false"><span class="ver-sw ver-sw-warn"></span>Rotation flags ${nRot}</button>
+    ${plan.schedOnly ? `<button type="button" class="ver-chip" data-ifilter="schedOnly" aria-pressed="false">Scheduler only ${plan.schedOnly}</button>` : ""}
+  </div>
+  <div class="ver-card"><div class="ver-scroll">
+    <table class="ver-table">
+      <thead><tr><th>Owlnet section</th><th>Will</th><th>Instructor in scheduler</th><th>Meets</th><th>Enrollment</th><th>In-seat rotation</th></tr></thead>
+      <tbody id="verImpRows">${rows || '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:26px;">Nothing to import.</td></tr>'}</tbody>
+    </table>
+  </div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+    <button type="button" id="verImportRun" class="ver-btn ver-btn-primary"${(nAdd || plan.matched) ? "" : " disabled"}>${esc(btnLabel)}</button>
+    <button type="button" id="verImportXlsx" class="ver-btn">Download preview (Excel)</button>
+  </div>
+  <p class="ver-foot">Imported sections land in Term Assignments as semester-long on-ground rows with Owlnet's section number, day/time/room and enrollment. With an instructor on Owlnet they come in DONE and verified (LIVE); "Staff" comes in as an unassigned row to assign the usual way. Matched rows keep their instructor and workflow state — only Owlnet's details are filled in. Nothing is removed. After the import, sections that later appear on Owlnet are flagged in Verification, not added automatically.</p>`;
+}
+async function downloadOnGroundPreviewXlsx(btn, plan, sel){
+  const label = btn ? btn.textContent : "";
+  try{
+    if(btn){ btn.disabled = true; btn.textContent = "Preparing…"; }
+    const XLSX = await _loadXlsxLib();
+    const will = i => i.kind === "add" ? (i.live ? "Add · LIVE" : "Add · unassigned (Staff)") : i.kind === "match" ? "Match existing row" : "In scheduler only";
+    const rows = plan.items.map(i => {
+      const r = i.r || {}, o = i.o || {};
+      return {
+        "Course": i.code,
+        "Owlnet section": r.raw_code || "",
+        "Will": will(i),
+        "Instructor in scheduler": i.kind === "add" ? (i.name || "") : (o.instructor || ""),
+        "Owlnet instructor": r.instructor || "",
+        "Meets": formatOwlnetMeets(r.meeting || o.owlnetMeeting || ""),
+        "Owlnet meeting (raw)": r.meeting || "",
+        "Enrolled / seats": _ogEnroll(r),
+        "Lab": r.suffix && _owlIsLab(r) ? "Yes" : "",
+        "In-seat rotation": i.rot.text,
+        "Rotation OK": i.rot.ok === false ? "No" : (i.rot.ok === null ? "" : "Yes"),
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{wch:10},{wch:18},{wch:24},{wch:26},{wch:30},{wch:26},{wch:60},{wch:14},{wch:6},{wch:34},{wch:11}];
+    XLSX.utils.book_append_sheet(wb, ws, "On-ground import");
+    XLSX.writeFile(wb, `onground-import-preview-${sel.semester}-${sel.year}.xlsx`);
+  }catch(e){ toast("Couldn't build the Excel file: " + ((e && e.message) || e), "error"); }
+  finally{ if(btn){ btn.disabled = false; btn.textContent = label; } }
+}
+
+function verifyPanelHtml(terms, sel, r, grid, og){
   const esc = (typeof escapeHtml === "function") ? escapeHtml : (s => String(s==null?"":s));
   grid = grid || [];
   const gridBy = new Map(grid.map(g => [g.code + "|" + g.sub, g]));
@@ -9482,7 +9961,8 @@ function verifyPanelHtml(terms, sel, r, grid){
   const offBad = grid.filter(g => g.schedRot.ok === false || g.owlRot.ok === false);
   const nSchedOff = grid.filter(g => g.schedRot.ok === false).length;
   const nOwlOff   = grid.filter(g => g.owlRot.ok === false).length;
-  const view = state.verifyView === "offerings" ? "offerings" : "flags";
+  const view = ["offerings", "import"].includes(state.verifyView) ? state.verifyView : "flags";
+  const ogAdd = og ? og.addLive + og.addStaff : 0;
   const offRowsHtml = grid.length ? grid.map(g => {
     const f = (g.schedRot.ok === false ? "s" : "") + (g.owlRot.ok === false ? "o" : "");
     return `<tr data-f="${f || "ok"}">
@@ -9539,7 +10019,10 @@ function verifyPanelHtml(terms, sel, r, grid){
   <div class="ver-viewtabs" id="verViewTabs" role="tablist">
     <button type="button" class="ver-vtab" data-vview="flags" aria-pressed="${view === "flags"}">Flags <b>${r.flags.length}</b></button>
     <button type="button" class="ver-vtab" data-vview="offerings" aria-pressed="${view === "offerings"}">Offerings vs rotation <b>${offBad.length}</b> <small>off of ${grid.length}</small></button>
+    ${og ? `<button type="button" class="ver-vtab" data-vview="import" aria-pressed="${view === "import"}">On-ground import <b>${ogAdd}</b> <small>to add</small></button>` : ""}
   </div>
+
+  ${og ? `<div id="verImportView"${view === "import" ? "" : " hidden"}>${ogImportPanelHtml(og, sel)}</div>` : ""}
 
   <div id="verOffView"${view === "offerings" ? "" : " hidden"}>
   <div class="ver-chips" id="verOffChips">
@@ -9576,7 +10059,7 @@ function verifyPanelHtml(terms, sel, r, grid){
       </table>
     </div>
   </div>
-  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected · On-ground: sections the scheduler holds as On-Ground are checked against Owlnet's Semester Undergraduate list (on-ground courses only on Owlnet aren't flagged).</p>
+  <p class="ver-foot">Online Undergraduate + Online Graduate · Owlnet's official section numbers are adopted automatically onto matched sections · Critical = canceled here but still live on Owlnet, or completed by the registrar but missing from Owlnet · Instructor checks apply only to sections the registrar has completed (DONE) — before that, Owlnet showing Staff is expected · On-ground: sections the scheduler holds as On-Ground are checked against Owlnet's Semester Undergraduate list; once a term's on-ground schedule is imported, new Owlnet sections are flagged too.</p>
   </div>
   `;
 }
@@ -9744,18 +10227,35 @@ async function renderVerification(){
     if(typeof flushToSupabase === "function") flushToSupabase();
     if(typeof renderTerms === "function") renderTerms();
   }
-  root.innerHTML = verifyPanelHtml(terms, sel, result, verifyOfferingsGrid(sel.semester, Number(sel.year)));
+  const ogPlan = planOnGroundImport(sel.semester, Number(sel.year));
+  root.innerHTML = verifyPanelHtml(terms, sel, result, verifyOfferingsGrid(sel.semester, Number(sel.year)), ogPlan);
 
-  // Flags ↔ Offerings-vs-rotation view tabs.
+  // Flags / Offerings-vs-rotation / On-ground import view tabs.
   const vtabs = document.getElementById("verViewTabs");
   if(vtabs) vtabs.addEventListener("click", (e) => {
     const b = e.target.closest(".ver-vtab"); if(!b) return;
     state.verifyView = b.getAttribute("data-vview");
     vtabs.querySelectorAll(".ver-vtab").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
-    const fv = document.getElementById("verFlagView"), ov = document.getElementById("verOffView");
-    if(fv) fv.hidden = state.verifyView === "offerings";
+    const fv = document.getElementById("verFlagView"), ov = document.getElementById("verOffView"), iv = document.getElementById("verImportView");
+    if(fv) fv.hidden = state.verifyView !== "flags";
     if(ov) ov.hidden = state.verifyView !== "offerings";
+    if(iv) iv.hidden = state.verifyView !== "import";
   });
+  // On-ground import: filter chips, Excel preview, and the import itself.
+  const ichips = document.getElementById("verImpChips");
+  if(ichips) ichips.addEventListener("click", (e) => {
+    const b = e.target.closest(".ver-chip"); if(!b) return;
+    ichips.querySelectorAll(".ver-chip").forEach(c => c.setAttribute("aria-pressed", c === b ? "true" : "false"));
+    const f = b.getAttribute("data-ifilter");
+    document.querySelectorAll("#verImpRows tr[data-k]").forEach(tr => {
+      const k = tr.getAttribute("data-k").split(" ");
+      tr.hidden = !(f === "all" || k.includes(f));
+    });
+  });
+  const ix = document.getElementById("verImportXlsx");
+  if(ix) ix.addEventListener("click", () => downloadOnGroundPreviewXlsx(ix, ogPlan, sel));
+  const ir = document.getElementById("verImportRun");
+  if(ir) ir.addEventListener("click", () => runOnGroundImport(sel.semester, Number(sel.year)));
   // Offerings filter chips: off rotation (default) / scheduler ≠ / Owlnet ≠ / all.
   const applyOffFilter = (f) => document.querySelectorAll("#verOffRows tr[data-f]").forEach(tr => {
     const v = tr.getAttribute("data-f");
@@ -9827,27 +10327,75 @@ function renderAdmin() {
   renderAdminTermTable();
 }
 
+// Course codes that have on-ground sections in the scheduler.
+function onGroundCourseCodes() {
+  const set = new Set();
+  (state.offerings || []).forEach(o => { if (!o.deleted && isOnGroundRow(o)) set.add(_verCourseCode(o)); });
+  return set;
+}
 function renderAdminPmTable() {
   const tb = document.getElementById("admPmTbody");
   if (!tb) return;
-  const entries = Object.entries(state.pmByCourse || {})
-    .sort(([a], [b]) => a.localeCompare(b));
-  if (!entries.length) {
-    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">No program managers mapped yet. Upload a CSV above to get started.</td></tr>`;
+  const pm = state.pmByCourse || {}, pm2 = state.pm2ByCourse || {}, dean = state.deanByCourse || {}, og = state.ogPmByCourse || {};
+  const ogCodes = onGroundCourseCodes();
+  const filt = ((document.getElementById("admPmFilter") || {}).value || "").trim().toLowerCase();
+  const ogOnly = !!(document.getElementById("admPmOgOnly") || {}).checked;
+  const noPm = [...ogCodes].filter(c => !og[c] && !pm[c]);
+  const cnt = document.getElementById("admPmOgCount");
+  if (cnt) cnt.textContent = `(${noPm.length})`;
+  // Every mapped course, plus courses added in this session, plus — with the
+  // checkbox — on-ground courses that have no PM at all yet.
+  let list = [...new Set([...Object.keys(pm), ...Object.keys(og), ...Object.keys(dean), ...(state._admPmExtra || []), ...(ogOnly ? noPm : [])])].sort();
+  if (ogOnly) list = list.filter(c => ogCodes.has(c) && !og[c] && !pm[c]);
+  if (filt) list = list.filter(c => `${c} ${pm[c] || ""} ${pm2[c] || ""} ${og[c] || ""} ${dean[c] || ""}`.toLowerCase().includes(filt));
+  const people = new Set([...Object.values(pm), ...Object.values(pm2), ...Object.values(og), ...Object.values(dean), ...Object.values(DEAN_BY_SCHOOL)].filter(Boolean));
+  const dl = document.getElementById("admPmPeople");
+  if (dl) dl.innerHTML = [...people].sort().map(p => `<option value="${escapeHtml(p)}">`).join("");
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">${ogOnly ? "Every on-ground course has a program manager." : (filt ? "No courses match the filter." : "No program managers mapped yet. Upload a CSV above to get started.")}</td></tr>`;
     return;
   }
-  tb.innerHTML = entries.map(([code, pm]) => {
-    const pm2  = (state.pm2ByCourse  || {})[code] || "";
-    const dean = (state.deanByCourse || {})[code] || "";
+  const inp = "font:inherit;font-size:12.5px;padding:3px 7px;width:100%;max-width:200px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);";
+  tb.innerHTML = list.map(code => {
+    const defDean = DEAN_BY_SCHOOL[SCHOOL_BY_PREFIX[code.split(" ")[0]] || ""] || "";
     return `
     <tr data-pmcode="${escapeHtml(code)}">
-      <td><strong>${escapeHtml(code)}</strong></td>
-      <td>${escapeHtml(pm)}</td>
-      <td style="color:${pm2 ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(pm2 || "—")}</td>
-      <td style="color:${dean ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(dean || "—")}</td>
+      <td><strong>${escapeHtml(code)}</strong>${ogCodes.has(code) ? ` <span class="lab-tag" title="Has on-ground sections in the scheduler">On-ground</span>` : ""}</td>
+      <td style="color:${pm[code] ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(pm[code] || "—")}</td>
+      <td style="color:${pm2[code] ? "var(--text)" : "var(--text-muted)"};">${escapeHtml(pm2[code] || "—")}</td>
+      <td><input type="text" class="adm-pm-edit" data-field="og" list="admPmPeople" value="${escapeHtml(og[code] || "")}" placeholder="${escapeHtml(pm[code] ? "Same as online" : "Assign…")}" style="${inp}"></td>
+      <td><input type="text" class="adm-pm-edit" data-field="dean" list="admPmPeople" value="${escapeHtml(dean[code] || "")}" placeholder="${escapeHtml(defDean ? defDean + " (school)" : "School default")}" style="${inp}"></td>
       <td><button type="button" class="btn-pm-del" style="font-size:11px;padding:3px 8px;color:var(--danger);background:transparent;border:1px solid var(--border);border-radius:4px;cursor:pointer;">Remove</button></td>
     </tr>`;
   }).join("");
+}
+// Save one inline edit (On-ground PM or Dean) for a course, keeping the
+// course's other mapping columns as they are. All-empty → the row is removed.
+async function saveAdminPmField(code, field, value) {
+  const v = String(value || "").trim();
+  const pm = state.pmByCourse || {}, pm2 = state.pm2ByCourse || {}, dean = state.deanByCourse || {}, og = state.ogPmByCourse || {};
+  const next = {
+    program_manager: pm[code] || "",
+    program_manager_2: pm2[code] || null,
+    dean: field === "dean" ? (v || null) : (dean[code] || null),
+    onground_program_manager: field === "og" ? (v || null) : (og[code] || null),
+  };
+  if ((field === "dean" && (dean[code] || "") === v) || (field === "og" && (og[code] || "") === v)) return;
+  let error;
+  if (!next.program_manager && !next.program_manager_2 && !next.dean && !next.onground_program_manager) {
+    ({ error } = await sb.from("course_program_managers").delete().eq("course_code", code));
+  } else {
+    ({ error } = await sb.from("course_program_managers").upsert({ course_code: code, ...next }, { onConflict: "course_code" }));
+  }
+  if (error) { _err("Saving the mapping failed", error); renderAdminPmTable(); return; }
+  state.ogPmByCourse = state.ogPmByCourse || {}; state.deanByCourse = state.deanByCourse || {};
+  if (next.onground_program_manager) state.ogPmByCourse[code] = next.onground_program_manager; else delete state.ogPmByCourse[code];
+  if (next.dean) state.deanByCourse[code] = next.dean; else delete state.deanByCourse[code];
+  if (!next.program_manager && !next.program_manager_2 && !next.dean && !next.onground_program_manager) {
+    delete state.pmByCourse[code]; if (state.pm2ByCourse) delete state.pm2ByCourse[code];
+  } else if (!(code in state.pmByCourse)) state.pmByCourse[code] = "";
+  reRenderAll();
+  toast(`${code}: ${field === "og" ? "on-ground PM" : "dean"} ${v ? "set to " + v : "cleared"}.`);
 }
 
 function renderAdminTermTable() {
@@ -9912,11 +10460,37 @@ function bindAdminEvents() {
       if (error) { _err("Remove PM failed", error); return; }
       delete state.pmByCourse[code];
       if (state.deanByCourse) delete state.deanByCourse[code];
+      if (state.pm2ByCourse)  delete state.pm2ByCourse[code];
+      if (state.ogPmByCourse) delete state.ogPmByCourse[code];
+      state._admPmExtra = (state._admPmExtra || []).filter(c => c !== code);
       renderAdminPmTable();
       reRenderAll();
       toast(`Removed PM mapping for ${code}.`);
     });
+    // Inline On-ground PM / Dean edits save when the box is left.
+    pmTbody.addEventListener("change", (e) => {
+      const inp = e.target.closest("input.adm-pm-edit");
+      if (!inp) return;
+      const row = inp.closest("tr[data-pmcode]");
+      if (row) saveAdminPmField(row.dataset.pmcode, inp.dataset.field, inp.value);
+    });
   }
+  const pmFilter = $("admPmFilter");
+  if (pmFilter) pmFilter.addEventListener("input", renderAdminPmTable);
+  const pmOgOnly = $("admPmOgOnly");
+  if (pmOgOnly) pmOgOnly.addEventListener("change", renderAdminPmTable);
+  const pmAdd = $("btnAdmPmAdd"), pmAddCode = $("admPmAddCode");
+  const addCourseRow = () => {
+    const code = canonicalCourseCode((pmAddCode && pmAddCode.value) || "");
+    if (!/^[A-Z]{2,5} \d{2,4}[A-Z]?$/.test(code)) { toast("Enter a course code like BIO 125.", "error"); return; }
+    state._admPmExtra = [...new Set([...(state._admPmExtra || []), code])];
+    if (pmAddCode) pmAddCode.value = "";
+    if (pmFilter) pmFilter.value = code;
+    if (pmOgOnly) pmOgOnly.checked = false;
+    renderAdminPmTable();
+  };
+  if (pmAdd) pmAdd.addEventListener("click", addCourseRow);
+  if (pmAddCode) pmAddCode.addEventListener("keydown", (e) => { if (e.key === "Enter") addCourseRow(); });
   // Clear change log by date range.
   const backupBtn = $("btnAdmBackup");
   if (backupBtn) backupBtn.addEventListener("click", exportScheduleBackup);
@@ -9939,32 +10513,37 @@ async function uploadProgramManagersCsv() {
   // Supports the simple 2-column format (Course Code, Program Manager) and the
   // full master-list format (School, Course Number & Prefix, Credits, Title,
   // Program Manager, Dean).  The Dean column is optional.
-  let codeCol = 0, pmCol = 1, pm2Col = -1, deanCol = -1;
+  let codeCol = 0, pmCol = 1, pm2Col = -1, deanCol = -1, ogCol = -1;
   const headerLike = /course|code|program|manager|pm|school|prefix|credit|title|dean/i;
   const firstRow = rows[0] || [];
   if (firstRow.length >= 2 && firstRow.some(cell => headerLike.test(cell))) {
     const hdrs = firstRow.map(h => String(h).trim().toLowerCase());
     const detectedCode = hdrs.findIndex(h => /course\s*(number|code|prefix)|number\s*&?\s*prefix/.test(h));
-    // Detect the co-PM column first so the primary PM detector can skip it.
-    const detectedPm2  = hdrs.findIndex(h => /co.?pm|program\s*(manager|mgr)\s*2|^pm\s*2$|second\s*(program\s*)?(manager|mgr|pm)/.test(h));
-    const detectedPm   = hdrs.findIndex((h, i) => i !== detectedPm2 && /program\s*(manager|mgr)|^pm$/.test(h));
+    // Detect the on-ground and co-PM columns first so the primary PM detector can skip them.
+    const detectedOg   = hdrs.findIndex(h => /on.?ground/.test(h));
+    const detectedPm2  = hdrs.findIndex((h, i) => i !== detectedOg && /co.?pm|program\s*(manager|mgr)\s*2|^pm\s*2$|second\s*(program\s*)?(manager|mgr|pm)/.test(h));
+    const detectedPm   = hdrs.findIndex((h, i) => i !== detectedPm2 && i !== detectedOg && /program\s*(manager|mgr)|^pm$/.test(h));
     const detectedDean = hdrs.findIndex(h => /^dean$|^dean\s/.test(h));
     if (detectedCode >= 0) codeCol  = detectedCode;
     if (detectedPm   >= 0) pmCol    = detectedPm;
     if (detectedPm2  >= 0) pm2Col   = detectedPm2;
     if (detectedDean >= 0) deanCol  = detectedDean;
+    if (detectedOg   >= 0) ogCol    = detectedOg;
     rows.shift();
   }
   const pmMapping   = {};
   const pm2Mapping  = {};
   const deanMapping = {};
+  // On-ground PMs set on the Admin page survive an upload that doesn't carry them.
+  const ogMapping   = ogCol >= 0 ? {} : { ...(state.ogPmByCourse || {}) };
   const skipped = [];
   for (const r of rows) {
-    const minCol = deanCol >= 0 ? Math.max(codeCol, pmCol, deanCol) : Math.max(codeCol, pmCol);
-    if (!r || r.length <= minCol) continue;
+    if (!r || r.length <= Math.max(codeCol, pmCol)) continue;
     const code = (r[codeCol] || "").trim();
     const pm   = (r[pmCol]   || "").trim();
-    if (!code || !pm) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
+    const ogv  = ogCol   >= 0 ? (r[ogCol]   || "").trim() : "";
+    const dv   = deanCol >= 0 ? (r[deanCol] || "").trim() : "";
+    if (!code || (!pm && !ogv && !dv)) { if (code || pm) skipped.push(`${code}|${pm}`); continue; }
     // Normalize to canonical uppercase "PREFIX NUMBER" form so lookups are
     // case-insensitive and section numbers are stripped (e.g. "acc 240 01" → "ACC 240").
     const normCode = canonicalCourseCode(code);
@@ -9973,11 +10552,11 @@ async function uploadProgramManagersCsv() {
       const pm2 = (r[pm2Col] || "").trim();
       if (pm2) pm2Mapping[normCode] = pm2;
     }
-    if (deanCol >= 0) {
-      const dean = (r[deanCol] || "").trim();
-      if (dean) deanMapping[normCode] = dean;
-    }
+    if (dv)  deanMapping[normCode] = dv;
+    if (ogv) ogMapping[normCode] = ogv;
   }
+  // A course that only has a preserved on-ground PM still needs its row.
+  Object.keys(ogMapping).forEach(c => { if (!(c in pmMapping)) pmMapping[c] = ""; });
   const codes = Object.keys(pmMapping);
   if (!codes.length) { if (statusEl) statusEl.textContent = "No usable rows found in the CSV."; return; }
   const hasDean = Object.keys(deanMapping).length > 0;
@@ -9989,7 +10568,7 @@ async function uploadProgramManagersCsv() {
   if (delRes.error) { _err("Clear existing PM mapping failed", delRes.error); return; }
   const hasPm2 = Object.keys(pm2Mapping).length > 0;
   const rowsToInsert = codes.map(code => {
-    const row = { course_code: code, program_manager: pmMapping[code] };
+    const row = { course_code: code, program_manager: pmMapping[code] || "", onground_program_manager: ogMapping[code] || null };
     if (hasPm2)  row.program_manager_2 = pm2Mapping[code] || null;
     if (hasDean) row.dean = deanMapping[code] || null;
     return row;
@@ -10013,6 +10592,7 @@ async function uploadProgramManagersCsv() {
   state.pmByCourse   = { ...pmMapping };
   state.pm2ByCourse  = { ...pm2Mapping };
   state.deanByCourse = { ...deanMapping };
+  state.ogPmByCourse = { ...ogMapping };
   renderAdminPmTable();
   reRenderAll();
   if (statusEl) {
@@ -10029,15 +10609,21 @@ function downloadProgramManagersCsv() {
   const safe = (s) => { s = String(s ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const hasDeans = Object.keys(state.deanByCourse || {}).length > 0;
   const hasPm2s  = Object.keys(state.pm2ByCourse  || {}).some(k => (state.pm2ByCourse[k] || "").trim());
+  const hasOg    = Object.keys(state.ogPmByCourse || {}).length > 0;
   const header = ["Course Code", "Program Manager"];
   if (hasPm2s)  header.push("Co-PM");
+  if (hasOg)    header.push("On-ground PM");
   if (hasDeans) header.push("Dean");
   const lines = [header.join(",")];
-  for (const [code, pm] of Object.entries(state.pmByCourse || {}).sort(([a], [b]) => a.localeCompare(b))) {
+  const allCodes = [...new Set([...Object.keys(state.pmByCourse || {}), ...Object.keys(state.ogPmByCourse || {}), ...Object.keys(state.deanByCourse || {})])].sort();
+  for (const code of allCodes) {
+    const pm   = (state.pmByCourse   || {})[code] || "";
     const pm2  = (state.pm2ByCourse  || {})[code] || "";
+    const og   = (state.ogPmByCourse || {})[code] || "";
     const dean = (state.deanByCourse || {})[code] || "";
     const cells = [safe(code), safe(pm)];
     if (hasPm2s)  cells.push(safe(pm2));
+    if (hasOg)    cells.push(safe(og));
     if (hasDeans) cells.push(safe(dean));
     lines.push(cells.join(","));
   }
@@ -10096,7 +10682,9 @@ async function clearAllProgramManagers() {
   const delRes = await sb.from("course_program_managers").delete().neq("course_code", "__never__");
   if (delRes.error) { _err("Clear PM mapping failed", delRes.error); return; }
   state.pmByCourse   = {};
+  state.pm2ByCourse  = {};
   state.deanByCourse = {};
+  state.ogPmByCourse = {};
   renderAdminPmTable();
   reRenderAll();
   toast("All PM + Dean mappings cleared.");
@@ -10362,6 +10950,7 @@ function bindTermEvents() {
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
+  document.getElementById("tfModality").addEventListener("change", (e) => { state.termFilter.modality = e.target.value; renderTerms(); });
   document.getElementById("tfShowOnly").addEventListener("change", (e) => { state.termFilter.showOnly = e.target.value; renderTerms(); });
 
   // Subterm chips
