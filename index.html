@@ -128,12 +128,12 @@
   }
   html.dark .modal header { border-bottom-color: var(--border); }
   /* Generic buttons — keep them readable on dark. */
-  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.add-section-btn):not(.term-subchip):not(.term-semester-chip):not(.qf-chip):not(.view-tabs button) {
+  html.dark button:not(.primary):not(.danger):not(.send):not(.approve):not(.reject):not(.finalize):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.add-section-btn):not(.term-subchip):not(.term-semester-chip):not(.qf-chip):not(.mod-seg):not(.view-tabs button) {
     background: var(--surface-2);
     color: var(--text);
     border-color: var(--border);
   }
-  html.dark button:not(.primary):not(.danger):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.term-subchip):not(.view-tabs button):hover {
+  html.dark button:not(.primary):not(.danger):not(.btn-submit):not(.btn-req-change):not(.btn-dl-contract):not(.term-subchip):not(.mod-seg):not(.view-tabs button):hover {
     border-color: #6ba5d4;
     color: #93c5fd;
   }
@@ -582,6 +582,22 @@
   }
   .stats .item strong { color: var(--wwu-green); font-size: 15px; }
   .stats .item .label { color: var(--text-muted); margin-left: 4px; }
+  /* Modality toggle — far right of the term bar (after the deadline when shown). */
+  .stats .item.term-mod-tile {
+    margin-left: auto; display: inline-flex; padding: 0; overflow: hidden;
+    border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-2);
+  }
+  .stats .item.term-deadline-tile + .item.term-mod-tile { margin-left: 0; }
+  .stats .term-mod-tile .mod-seg {
+    font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; margin: 0;
+    border: none; border-radius: 0; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  .stats .term-mod-tile .mod-seg + .mod-seg { border-left: 1px solid var(--border-strong); }
+  .stats .term-mod-tile .mod-seg:hover { background: #eef1f0; }
+  .stats .term-mod-tile .mod-seg.active { background: var(--wwu-green-dark); color: #fff; }
+  html.dark .stats .term-mod-tile .mod-seg { color: var(--text); }
+  html.dark .stats .term-mod-tile .mod-seg:hover { background: rgba(255,255,255,0.06); color: #93c5fd; }
+  html.dark .stats .term-mod-tile .mod-seg.active { background: #2e5d99; color: #e0e0e0; }
   /* Assignment-deadline tile: pushed to the right, right-aligned, no border —
      emphasis comes from larger/bolder accent-colored numerals and an uppercase
      label. */
@@ -2122,18 +2138,10 @@
 </section>
 
 <section id="viewTerms" class="view active">
-  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto auto;">
+  <div class="toolbar" style="grid-template-columns: 1fr auto auto auto;">
     <div>
       <label for="tfSearch">Search</label>
       <input id="tfSearch" type="text" placeholder="Course, instructor, dean, PM…">
-    </div>
-    <div>
-      <label for="tfModality">Modality</label>
-      <select id="tfModality">
-        <option value="">All</option>
-        <option value="Online">Online</option>
-        <option value="On-Ground">On-ground</option>
-      </select>
     </div>
     <div>
       <label for="tfLevel">Level</label>
@@ -6144,6 +6152,10 @@ function renderTermStats(list) {
       <strong>${escapeHtml(fmtDateShort(deadlineISO))}</strong>
       <span class="label">assignment deadline</span>
     </div>` : "";
+  // Modality toggle (All / Online / On-ground) — far right of this bar.
+  const mod = state.termFilter.modality || "";
+  const modSeg = (v, label) => `<button type="button" class="mod-seg${mod === v ? " active" : ""}" data-mod="${v}" aria-pressed="${mod === v}">${label}</button>`;
+  const modTile = `<div class="item term-mod-tile" role="group" aria-label="Modality" title="Show online sections, on-ground sections, or both">${modSeg("", "All")}${modSeg("Online", "Online")}${modSeg("On-Ground", "On-ground")}</div>`;
   document.getElementById("termStats").innerHTML = `
     <div class="item term-label-tile">
       <strong style="font-size:18px;">${labelText}</strong>
@@ -6153,10 +6165,15 @@ function renderTermStats(list) {
     ${showAllBtn}
     ${clearBtn}
     ${deadlineTile}
+    ${modTile}
   `;
   // Wire up the Show All Courses / Hide Others toggle.
   const sab = document.getElementById("btnShowAllCourses");
   if (sab) sab.addEventListener("click", () => { state.termFilter.myCoursesOnly = !state.termFilter.myCoursesOnly; renderTerms(); });
+  document.querySelectorAll("#termStats .mod-seg").forEach(b => b.addEventListener("click", () => {
+    state.termFilter.modality = b.dataset.mod || "";
+    renderTerms();
+  }));
   // Wire up the Clear button. We do this here rather than in bindTermEvents
   // because the button is recreated on every renderTermStats.
   const cb = document.getElementById("btnClearTerm");
@@ -10950,7 +10967,6 @@ function bindTermEvents() {
   // Filters
   document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
-  document.getElementById("tfModality").addEventListener("change", (e) => { state.termFilter.modality = e.target.value; renderTerms(); });
   document.getElementById("tfShowOnly").addEventListener("change", (e) => { state.termFilter.showOnly = e.target.value; renderTerms(); });
 
   // Subterm chips
