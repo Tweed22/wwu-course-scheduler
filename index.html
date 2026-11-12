@@ -582,12 +582,13 @@
   }
   .stats .item strong { color: var(--wwu-green); font-size: 15px; }
   .stats .item .label { color: var(--text-muted); margin-left: 4px; }
-  /* Modality toggle — far right of the term bar (after the deadline when shown). */
+  /* Modality toggle — right side of the term bar, with the assignment deadline
+     (when shown) to its right. */
   .stats .item.term-mod-tile {
     margin-left: auto; display: inline-flex; padding: 0; overflow: hidden;
     border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-2);
   }
-  .stats .item.term-deadline-tile + .item.term-mod-tile { margin-left: 0; }
+  .stats .item.term-mod-tile + .item.term-deadline-tile { margin-left: 0; }
   .stats .term-mod-tile .mod-seg {
     font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; margin: 0;
     border: none; border-radius: 0; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
@@ -6164,8 +6165,8 @@ function renderTermStats(list) {
     ${startTile}
     ${showAllBtn}
     ${clearBtn}
-    ${deadlineTile}
     ${modTile}
+    ${deadlineTile}
   `;
   // Wire up the Show All Courses / Hide Others toggle.
   const sab = document.getElementById("btnShowAllCourses");
@@ -9188,8 +9189,12 @@ function ensureCourseForCode(code, title){
    instructor, plain unassigned rows when it says Staff — both with Meets and
    enrollment filled in) and fill Owlnet details onto matched existing rows.
    Never changes an existing row's instructor or workflow state. */
-function runOnGroundImport(semester, year){
+async function runOnGroundImport(semester, year){
   if(!isAdmin()){ toast("Admins only.", "error"); return; }
+  // Re-read every section first: a tab that missed realtime events (asleep,
+  // offline, or open while another admin imported) must not plan from — or
+  // write back — a stale copy, or import the same sections twice.
+  if(typeof refreshOfferingsFromServer === "function") await refreshOfferingsFromServer(0);
   const plan = planOnGroundImport(semester, year);
   const adds = plan.items.filter(i => i.kind === "add");
   const matches = plan.items.filter(i => i.kind === "match");
