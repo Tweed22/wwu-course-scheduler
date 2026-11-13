@@ -589,6 +589,9 @@
     border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-2);
   }
   .stats .item.term-mod-tile + .item.term-deadline-tile { margin-left: 0; }
+  /* Typed confirmation (e.g. Clear term): the action stays disabled until the word is typed. */
+  #typedConfirmDialog button:disabled { opacity: 0.45; cursor: not-allowed; }
+  #typedConfirmDialog { z-index: 300; align-items: center; }   /* above the sticky app bar, centered */
   .stats .term-mod-tile .mod-seg {
     font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; margin: 0;
     border: none; border-radius: 0; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
@@ -6188,21 +6191,69 @@ function renderTermStats(list) {
 // term is rebuilt exactly as a fresh load from the Google Sheet would
 // produce it. Extra sections (§02, §03 added via the "+" button), canceled
 // sections, and manually-tweaked rows are all wiped.
-function clearTermAssignments(semester, year) {
+/* A confirmation the user must TYPE a word into before the action button
+   enables — for destructive admin actions. Resolves true only on confirm. */
+function confirmByTyping({ title, bodyHtml, word = "CLEAR", confirmLabel = "Confirm" }) {
+  return new Promise(resolve => {
+    let bd = document.getElementById("typedConfirmDialog");
+    if (!bd) {
+      bd = document.createElement("div");
+      bd.id = "typedConfirmDialog";
+      bd.className = "modal-backdrop";
+      document.body.appendChild(bd);
+    }
+    bd.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="tcdTitle" style="max-width:520px;width:100%;">
+        <header>
+          <h2 id="tcdTitle" style="font-size:16px;">${escapeHtml(title)}</h2>
+          <button type="button" class="close" data-tcd="cancel" aria-label="Close">×</button>
+        </header>
+        <div class="body" style="padding:16px 18px;">
+          <div style="font-size:13.5px;line-height:1.55;">${bodyHtml}</div>
+          <label for="tcdInput" style="display:block;margin:16px 0 6px;font-size:13px;font-weight:600;">Type <code style="font-size:13px;">${escapeHtml(word)}</code> to confirm</label>
+          <input id="tcdInput" type="text" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;font-size:14px;padding:7px 9px;">
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+            <button type="button" data-tcd="cancel" style="padding:7px 14px;">Cancel</button>
+            <button type="button" class="danger" id="tcdOk" disabled style="padding:7px 14px;background:var(--danger);color:#fff;border:1px solid var(--danger);border-radius:6px;font-weight:600;">${escapeHtml(confirmLabel)}</button>
+          </div>
+        </div>
+      </div>`;
+    bd.classList.add("open");
+    const inp = bd.querySelector("#tcdInput"), ok = bd.querySelector("#tcdOk");
+    let settled = false;
+    const done = (v) => { if (settled) return; settled = true; bd.classList.remove("open"); bd.onclick = null; resolve(v); };
+    inp.addEventListener("input", () => { ok.disabled = inp.value.trim() !== word; });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !ok.disabled) done(true);
+      if (e.key === "Escape") done(false);
+    });
+    ok.addEventListener("click", () => { if (!ok.disabled) done(true); });
+    bd.querySelectorAll('[data-tcd="cancel"]').forEach(b => b.addEventListener("click", () => done(false)));
+    bd.onclick = (e) => { if (e.target === bd) done(false); };
+    setTimeout(() => inp.focus(), 30);
+  });
+}
+
+async function clearTermAssignments(semester, year) {
   if (!isAdmin()) return;
   const affected = state.offerings.filter(o => o.semester === semester && o.year === year);
   if (!affected.length) {
     toast(`No offerings to clear in ${semester} ${year}.`);
     return;
   }
-  const ok = window.confirm(
-    `Reset ${semester} ${year} to its default state?\n\n` +
-    `Every offering in this term will be deleted (${affected.length} section${affected.length === 1 ? "" : "s"}), ` +
-    `then the term will be rebuilt from the rotation sheet. That clears all instructor assignments, ` +
-    `program manager / notes overrides, submission and registrar status, AND removes any extra sections ` +
-    `(§02, §03, …) plus any canceled sections.\n\n` +
-    `This cannot be undone.`
-  );
+  const nOg = affected.filter(o => !o.deleted && isOnGroundRow(o)).length;
+  const ok = await confirmByTyping({
+    title: `Clear ${semester} ${year}?`,
+    confirmLabel: `Clear ${semester} ${year}`,
+    bodyHtml:
+      `<p style="margin:0 0 10px;">Every section in ${escapeHtml(semester)} ${escapeHtml(String(year))} will be <strong>deleted</strong> ` +
+      `(${affected.length} section${affected.length === 1 ? "" : "s"}), then the term is rebuilt from the rotation sheet. ` +
+      `That clears all instructor assignments, program manager / notes overrides, submission and registrar status, ` +
+      `and removes any extra sections (§02, §03, …) and canceled sections.</p>` +
+      (nOg ? `<p style="margin:0 0 10px;color:var(--danger);"><strong>${nOg} on-ground section${nOg === 1 ? "" : "s"}</strong> will be deleted and are <strong>not</strong> rebuilt by the rotation — ` +
+             `students' on-ground plans in the advising app depend on them. Re-import them afterwards from Verification → On-ground import.</p>` : "") +
+      `<p style="margin:0;"><strong>This cannot be undone.</strong></p>`,
+  });
   if (!ok) return;
   const removedCount = affected.length;
   // Drop every offering for this (semester, year) from local state. The
