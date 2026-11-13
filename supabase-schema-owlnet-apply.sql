@@ -28,8 +28,8 @@ revoke all on function public.owlnet_patch_offerings(jsonb) from public, anon, a
 grant execute on function public.owlnet_patch_offerings(jsonb) to service_role;
 
 -- The schedule itself (set up 2026-11-10 by the Degree Planner session):
---   pg_cron job 'owlnet-scrape-scheduled', '0,30 * * * *', fires only when
---   to_char(now() at time zone 'America/Chicago','HH24:MI') in ('07:30','12:00','17:00');
+--   pg_cron job 'owlnet-scrape-scheduled', '0 * * * *' (changed 2026-11-13), fires only when
+--   extract(hour from now() at time zone 'America/Chicago') between 6 and 18  (hourly 6 AM-6 PM CT);
 --   POSTs to /functions/v1/owlnet-scrape with x-cron-secret from Vault secret
 --   'owlnet_cron_secret' (checked by public.owlnet_cron_ok(text)).
 

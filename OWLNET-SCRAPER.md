@@ -25,11 +25,11 @@ Scrapes the selected term; the empty-state button scrapes the defaults.
 - It uses the project's built-in service role internally.
 - Owlnet reachability from Supabase egress is confirmed.
 
-### Scheduled runs (7:30 AM, 12:00 PM, 5:00 PM Central)
+### Scheduled runs (hourly, 6:00 AM – 6:00 PM Central)
 
-- pg_cron job **`owlnet-scrape-scheduled`** runs every half hour (`0,30 * * * *`)
-  but only fires when Chicago local time is 07:30, 12:00 or 17:00, so DST is
-  handled. It POSTs to the function with header `x-cron-secret` (Vault secret
+- pg_cron job **`owlnet-scrape-scheduled`** runs at the top of every hour
+  (`0 * * * *`) but only fires when the Chicago-local hour is 6 through 18
+  (6 AM – 6 PM, 13 runs a day), so DST is handled. (Was 7:30 / noon / 5 PM until 2026-11-13.) It POSTs to the function with header `x-cron-secret` (Vault secret
   `owlnet_cron_secret`, checked by `public.owlnet_cron_ok()`, service-role only).
 - With no body it scrapes every term in Owlnet's dropdown that hasn't ended and
   starts within ~9 months; one failing term (e.g. Fall 2026's HTTP 500) doesn't
