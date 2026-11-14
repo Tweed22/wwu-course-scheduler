@@ -10026,6 +10026,383 @@ async function downloadOnGroundPreviewXlsx(btn, plan, sel){
   finally{ if(btn){ btn.disabled = false; btn.textContent = label; } }
 }
 
+/* ─── Faculty loads (Verification → "Faculty loads") ───────────────────────────
+   Per semester, every instructor's teaching across online AND on-ground, checked
+   against the load limits:
+     • Adjuncts (and staff): at most 9 load hours of MADE sections a semester —
+       tutorials (fewer than 8 students) don't count.
+     • Full-time: at most 6 MADE load hours beyond their contracted load (a
+       contracted load of 0 means the standard 12).
+   Load hours and section status follow the contracting apps (ogc_* / onc_*): a
+   section's faculty hours × that instructor's share (team-taught split), with the
+   apps' overrides; internships, independent studies, voucher and Connections
+   courses don't count. Where the contracting apps have the section (today: only
+   Fall 2026) their record is used; otherwise the scheduler's assignment + Owlnet
+   enrollment + credit hours, split evenly across a team. Two numbers: made now,
+   and "if every section makes". Close = within 3 hours of the limit. */
+const LOAD_ADJUNCT_LIMIT = 9, LOAD_FT_OVERLOAD_LIMIT = 6, LOAD_CLOSE_WITHIN = 3;
+const _LD_DEFAULTS = {
+  full_enrollment_threshold: 8, full_time_load_credits: 12, always_made_prefixes: ["EQR"],
+  voucher_prefixes: ["DIS"], voucher_courses: ["EDU 799", "EDU 790"], internship_courses: [],
+  internship_title_match: "Internship", connections_courses: [], connections_title_match: "Connections",
+  fixed_faculty_hours: {}, credit_hour_subjects: [], ignored_delivery_codes: ["CIC"], online_codes: ["OLC", "GPS"],
+};
+const _ldUp = v => (Array.isArray(v) ? v : (v ? [v] : [])).map(x => String(x).replace(/\s+/g, " ").trim().toUpperCase()).filter(Boolean);
+function _ldTermCode(semester, year){
+  return ({ Fall:"FA", Spring:"SP", Summer:"SU" }[semester] || "") + String(year).slice(-2);
+}
+// Load the contracting apps' faculty list, settings and section records (cached).
+async function loadContractData(force){
+  if(state.contract && !force) return state.contract;
+  const [fac, set, ogc, onc] = await Promise.all([
+    selectAll("ogc_faculty"), selectAll("ogc_settings"), selectAll("ogc_courses"), selectAll("onc_sections"),
+  ]);
+  const err = [fac, set, ogc, onc].find(r => r && r.error);
+  if(err) throw new Error((err.error && err.error.message) || "contract data read failed");
+  const settings = { ..._LD_DEFAULTS };
+  (set.data || []).forEach(s => { settings[s.key] = s.value; });
+  state.contract = { faculty: (fac.data || []).filter(f => f.is_active !== false), settings,
+                     ogc: ogc.data || [], onc: onc.data || [], loadedAt: Date.now() };
+  return state.contract;
+}
+// Section status the way the contracting apps classify it, reduced to what the
+// limits care about. Only "made" counts now; "tutorial"/"none"/"unknown" would
+// count if they make; everything else never counts.
+function _ldClassify(s, S){
+  const ov = String(s.statusOverride || "");
+  if(ov === "Made" || ov === "Applied to Contract") return "made";
+  if(ov === "Tutorial") return "tutorial";
+  if(ov === "Internship") return "internship";
+  if(ov === "Connections") return "connections";
+  if(ov === "Voucher") return "voucher";
+  if(ov === "Not contracted") return "notcontracted";
+  if(ov === "Combined") return "combined";
+  if(ov === "No Enrollment") return "none";
+  const code = String(s.code || "").toUpperCase(), subj = code.split(" ")[0], title = String(s.title || "").toLowerCase();
+  if(_ldUp(S.ignored_delivery_codes).includes(String(s.delivery || "").toUpperCase())) return "notcontracted";
+  const enr = s.enrollment;
+  if(_ldUp(S.internship_courses).includes(code) || (S.internship_title_match && title.includes(String(S.internship_title_match).toLowerCase()))) return "internship";
+  if(_ldUp(S.connections_courses).includes(code) || (S.connections_title_match && title.includes(String(S.connections_title_match).toLowerCase()))) return "connections";
+  if(_ldUp(S.voucher_prefixes).includes(subj) || _ldUp(S.voucher_courses).includes(code)) return "voucher";
+  if(s.courseType === "independent_study" || /independent stud/.test(title)) return "indstudy";
+  if(_ldUp(S.always_made_prefixes).includes(subj) && enr > 0) return "made";
+  if(enr == null) return "unknown";
+  const thr = Number(S.full_enrollment_threshold) || 8;
+  if(enr >= thr) return "made";
+  return enr > 0 ? "tutorial" : "none";
+}
+const _LD_COUNTS_IF_MADE = new Set(["made", "tutorial", "none", "unknown"]);
+const _LD_STATUS_LABEL = { made:"Made", tutorial:"Tutorial", none:"No enrollment", unknown:"Enrollment unknown",
+  internship:"Internship", connections:"Connections", voucher:"Voucher", indstudy:"Independent study",
+  notcontracted:"Not contracted", combined:"Combined" };
+function _ldFixedHours(code, S){
+  const map = S.fixed_faculty_hours;
+  if(!map || typeof map !== "object") return null;
+  const hit = Object.entries(map).find(([k]) => String(k).replace(/\s+/g, " ").trim().toUpperCase() === code);
+  return hit && !isNaN(Number(hit[1])) ? Number(hit[1]) : null;
+}
+// The on-ground contracting app's loadHoursOf(): faculty hours × share, overrides first.
+function _ldOgcLoadHours(c, S, status){
+  if(c.load_hours_override != null && c.load_hours_override !== "" && !isNaN(Number(c.load_hours_override))) return Number(c.load_hours_override);
+  let fh;
+  if(c.faculty_hours_override != null && c.faculty_hours_override !== "" && !isNaN(Number(c.faculty_hours_override))) fh = Number(c.faculty_hours_override);
+  else {
+    const code = canonicalCourseCode(c.course_code || ""), fixed = _ldFixedHours(code, S);
+    if(fixed != null) fh = fixed;
+    else if(status === "internship") fh = 3;
+    else if(_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) fh = Number(c.credit_hours) || 0;
+    else fh = (c.faculty_hours == null || isNaN(Number(c.faculty_hours))) ? (Number(c.credit_hours) || 0) : Number(c.faculty_hours);
+  }
+  const pct = (c.pct_toward_load == null || isNaN(Number(c.pct_toward_load))) ? 1 : Number(c.pct_toward_load);
+  return fh * pct;
+}
+const _ldName = f => `${f.first_name || ""} ${f.last_name || ""}`.replace(/\s+/g, " ").trim();
+// Match one scheduler name to a contracting-app faculty record. Candidates on the
+// same section in the contracting apps are tried first (disambiguates "Smith").
+function _ldMatchFaculty(name, faculty, prefer){
+  const n = String(name || "").trim();
+  if(!n || _verIsStaff(n)) return null;
+  const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
+  const pools = [prefer || [], faculty];
+  for(const pool of pools){
+    if(!pool.length) continue;
+    const exact = pool.filter(f => norm(_ldName(f)) === norm(n));
+    if(exact.length === 1) return exact[0];
+    const loose = pool.filter(f => _verSameInstructor(n, `${f.last_name}, ${f.first_name}`));
+    if(loose.length === 1) return loose[0];
+    // A bare last name ("Bielawski") — unique within the pool.
+    if(!/\s/.test(n)){
+      const byLast = pool.filter(f => norm(f.last_name || "") === norm(n));
+      if(byLast.length === 1) return byLast[0];
+    }
+  }
+  return null;
+}
+// "Alanna Bielawski, Melissa Smith" / "Bielawski, Smith, Haben" → people. A single
+// "Last, First" (one comma, matches one person whole) stays one person.
+function _ldSplitInstructors(text, faculty, prefer){
+  const t = String(text || "").trim();
+  if(!t || _verIsStaff(t)) return [];
+  if(!/[,;\/&]|\band\b/i.test(t)) return [t];
+  if((t.match(/,/g) || []).length === 1 && _ldMatchFaculty(t, faculty, prefer)) return [t];
+  return t.split(/\s*(?:[,;\/&]|\band\b)\s*/i).map(x => x.trim()).filter(x => x && !_verIsStaff(x));
+}
+
+function computeFacultyLoads(semester, year){
+  const C = state.contract || { faculty: [], settings: { ..._LD_DEFAULTS }, ogc: [], onc: [] };
+  const S = C.settings, faculty = C.faculty, term = _ldTermCode(semester, year);
+  const onlineCodes = _ldUp(S.online_codes);
+  const progOfDelivery = d => onlineCodes.includes(String(d || "").toUpperCase()) ? "online" : "semester";
+  const facById = new Map(faculty.map(f => [f.id, f]));
+  // Contracting-app records for this term, keyed by course + section + program.
+  const cRows = [
+    ...C.ogc.filter(c => c.term_code === term).map(c => ({ src:"ogc", c, prog: progOfDelivery(c.delivery) })),
+    ...C.onc.filter(c => c.term_code === term && !c.excluded).map(c => ({ src:"onc", c, prog: progOfDelivery(c.delivery) })),
+  ];
+  const cKey = (code, sec, prog) => `${canonicalCourseCode(code)}|${_verNormSec(sec)}|${prog}`;
+  const cByKey = new Map();
+  cRows.forEach(x => { const k = cKey(x.c.course_code, x.c.section, x.prog); if(!cByKey.has(k)) cByKey.set(k, []); cByKey.get(k).push(x); });
+  const used = new Set();                // contract rows already accounted for
+  const sections = [];                   // one entry per (section, instructor)
+  const owlCredits = (code, sec, prog, lab) => {
+    const r = (state.owlnetSections || []).find(w => w.semester === semester && Number(w.acad_year) === Number(year) &&
+      canonicalCourseCode(`${w.prefix} ${w.course_number}`) === code && _verNormSec(w.section) === _verNormSec(sec) &&
+      (_owlProgram(w) === "online" ? "online" : "semester") === prog && _owlIsLab(w) === !!lab);
+    return r && r.credits != null ? Number(r.credits) : null;
+  };
+  // 1) Scheduler sections (online + on-ground).
+  (state.offerings || []).forEach(o => {
+    if(o.deleted || o.canceled || o.semester !== semester || Number(o.year) !== Number(year)) return;
+    const code = _verCourseCode(o);
+    if(!code || isHiddenCourse(code)) return;
+    const prog = isOnGroundRow(o) ? "semester" : "online";
+    const sec = String(o.officialSection || "").trim();
+    const crs = (state.courses || []).find(x => x.id === o.courseId) || {};
+    const rowsHere = sec ? (cByKey.get(cKey(code, sec, prog)) || []) : [];
+    const prefer = rowsHere.map(x => facById.get(x.c.faculty_id)).filter(Boolean);
+    const names = _ldSplitInstructors(o.instructor, faculty, prefer);
+    if(!names.length) return;
+    const enrOwl = (o.owlnetSeatsCap != null && o.owlnetSeatsOpen != null) ? Math.max(0, Number(o.owlnetSeatsCap) - Number(o.owlnetSeatsOpen)) : null;
+    const credits = owlCredits(code, sec, prog, o.owlnetLab) ?? (Number(crs.credits) || 3);
+    names.forEach(nm => {
+      const f = _ldMatchFaculty(nm, faculty, prefer);
+      const hit = f ? rowsHere.find(x => x.c.faculty_id === f.id && !used.has(x)) : null;
+      const base = { code, sec, prog, title: crs.title || o.owlnetTitle || "", sub: o.subterm, slot: o.rotationSlot,
+                     name: f ? _ldName(f) : nm, fac: f, oid: o.id };
+      if(hit){
+        used.add(hit);
+        const c = hit.c;
+        const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
+                                 statusOverride: c.status_override, courseType: c.course_type }, S);
+        const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st)
+                  : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
+        sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
+      } else {
+        const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
+        const hrs = (st === "internship" ? 3 : (_ldFixedHours(code, S) ?? credits)) / names.length;
+        sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, source: names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler" });
+      }
+    });
+  });
+  // 2) Contracting-app records the scheduler doesn't have (e.g. Fall 2026 on-ground).
+  cRows.forEach(x => {
+    if(used.has(x)) return;
+    const c = x.c, f = facById.get(c.faculty_id);
+    if(!f) return;
+    // The online app and the on-ground app can both list the same online section.
+    if(x.src === "onc" && cRows.some(y => y.src === "ogc" && y.c.faculty_id === c.faculty_id &&
+         cKey(y.c.course_code, y.c.section, y.prog) === cKey(c.course_code, c.section, x.prog))) return;
+    const code = canonicalCourseCode(c.course_code || "");
+    if(isHiddenCourse(code)) return;
+    const st = _ldClassify({ code, title: c.title, enrollment: c.enrollment, delivery: c.delivery,
+                             statusOverride: c.status_override, courseType: c.course_type }, S);
+    const hrs = x.src === "ogc" ? _ldOgcLoadHours(c, S, st) : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || 0));
+    sections.push({ code, sec: c.section, prog: x.prog, title: c.title || "", sub: c.subterm || "", slot: "",
+                    name: _ldName(f), fac: f, enrollment: c.enrollment, status: st, hours: hrs,
+                    source: (x.src === "ogc" ? "On-ground contracting app" : "Online contracting app") + " only" });
+  });
+  // 3) Roll up per instructor.
+  const people = new Map();
+  sections.forEach(s => {
+    const key = s.fac ? "f:" + s.fac.id : "n:" + s.name.toLowerCase();
+    if(!people.has(key)) people.set(key, { key, name: s.name, fac: s.fac, sections: [] });
+    people.get(key).sections.push(s);
+  });
+  const ftDefault = Number(S.full_time_load_credits) || 12;
+  const rnd = n => Math.round(n * 100) / 100;
+  const statusOf = (excess, limit) => excess > limit + 1e-9 ? "over" : (Math.abs(excess - limit) < 1e-9 ? "at" : (excess >= limit - LOAD_CLOSE_WITHIN - 1e-9 ? "close" : "ok"));
+  const rows = [...people.values()].map(p => {
+    const now = rnd(p.sections.filter(s => s.status === "made").reduce((a, s) => a + s.hours, 0));
+    const all = rnd(p.sections.filter(s => _LD_COUNTS_IF_MADE.has(s.status)).reduce((a, s) => a + s.hours, 0));
+    const tut = rnd(p.sections.filter(s => s.status === "tutorial").reduce((a, s) => a + s.hours, 0));
+    const type = !p.fac ? "unknown" : (p.fac.faculty_type === "full_time" ? "full_time" : "adjunct");
+    let contract = null, limitTotal = null, sNow = "unknown", sAll = "unknown";
+    if(type === "adjunct"){
+      limitTotal = LOAD_ADJUNCT_LIMIT;
+      sNow = statusOf(now, LOAD_ADJUNCT_LIMIT); sAll = statusOf(all, LOAD_ADJUNCT_LIMIT);
+    } else if(type === "full_time"){
+      contract = Number(p.fac.contracted_load) > 0 ? Number(p.fac.contracted_load) : ftDefault;
+      limitTotal = contract + LOAD_FT_OVERLOAD_LIMIT;
+      sNow = statusOf(now - contract, LOAD_FT_OVERLOAD_LIMIT); sAll = statusOf(all - contract, LOAD_FT_OVERLOAD_LIMIT);
+    }
+    return { ...p, type, contract, contractDefault: type === "full_time" && !(Number(p.fac.contracted_load) > 0),
+             now, all, tut, limitTotal, sNow, sAll, staff: !!(p.fac && p.fac.faculty_type === "staff") };
+  });
+  const rank = { over:0, at:1, close:2, ok:3, unknown:4 };
+  rows.sort((a, b) => (Math.min(rank[a.sNow], rank[a.sAll]) - Math.min(rank[b.sNow], rank[b.sAll])) || (b.all - a.all) || a.name.localeCompare(b.name));
+  return { rows, term, hasContractTerm: cRows.length > 0 };
+}
+
+function _ldPill(s){
+  const map = { over:["ver-pill-cxl","Over"], at:["ver-pill-at","At limit"], close:["ver-pill-close","Close"], ok:["ver-pill-live","OK"], unknown:["ver-pill-neu","Not in faculty list"] };
+  const [cls, label] = map[s] || map.unknown;
+  return `<span class="ver-pill ${cls}">${label}</span>`;
+}
+function facultyLoadsHtml(res, terms, sel){
+  const esc = escapeHtml;
+  const fmt = n => (Math.round(n * 100) / 100).toString();
+  const flagged = res.rows.filter(r => ["over","at","close"].includes(r.sNow) || ["over","at","close"].includes(r.sAll));
+  const n = k => res.rows.filter(r => r.sNow === k || r.sAll === k).length;
+  const termOpts = terms.map(t => `<option value="${esc(t)}"${t === `${sel.semester} ${sel.year}` ? " selected" : ""}>${esc(t)}</option>`).join("");
+  const body = res.rows.map((r, i) => {
+    const typeLbl = r.type === "full_time" ? "Full-time" : (r.type === "adjunct" ? (r.staff ? "Staff (as adjunct)" : "Adjunct") : "—");
+    const contract = r.type === "full_time" ? `${fmt(r.contract)}${r.contractDefault ? ' <span class="ver-sub" style="display:inline">(default)</span>' : ""}` : "—";
+    const limit = r.type === "full_time" ? `${fmt(r.limitTotal)} <span class="ver-sub" style="display:inline">(${fmt(r.contract)} + 6)</span>` : (r.type === "adjunct" ? "9" : "—");
+    const f = [r.sNow, r.sAll].filter(x => ["over","at","close"].includes(x));
+    const filt = [...new Set([...f, r.type, f.length ? "flagged" : "fine"])].join(" ");
+    const secRows = r.sections.slice().sort((a, b) => a.code.localeCompare(b.code)).map(s => `
+      <tr><td class="ver-code" style="font-size:12px">${esc(s.code)} ${esc(s.sec || "")}</td>
+        <td>${esc(s.prog === "online" ? "Online" : "On-ground")}${s.slot && !["16W","15W"].includes(s.slot) ? ` · ${esc(s.slot)}` : ""}</td>
+        <td>${s.enrollment == null ? "—" : esc(String(s.enrollment))}</td>
+        <td>${esc(_LD_STATUS_LABEL[s.status] || s.status)}</td>
+        <td>${fmt(s.hours)}${s.status === "made" ? "" : (_LD_COUNTS_IF_MADE.has(s.status) ? ' <span class="ver-sub" style="display:inline">(if it makes)</span>' : ' <span class="ver-sub" style="display:inline">(never counts)</span>')}</td>
+        <td class="ver-sub">${esc(s.source)}</td></tr>`).join("");
+    return `
+    <tr class="ld-row" data-ld="${i}" data-f="${esc(filt)}" style="cursor:pointer">
+      <td><div style="font-weight:600">${esc(r.name)}</div><div class="ver-sub">${r.sections.length} section${r.sections.length === 1 ? "" : "s"} · click for detail</div></td>
+      <td>${esc(typeLbl)}</td><td>${contract}</td>
+      <td style="font-variant-numeric:tabular-nums"><b>${fmt(r.now)}</b></td>
+      <td style="font-variant-numeric:tabular-nums">${fmt(r.all)}</td>
+      <td>${limit}</td>
+      <td>${_ldPill(r.sNow)}</td><td>${_ldPill(r.sAll)}</td>
+      <td style="font-variant-numeric:tabular-nums">${r.tut ? fmt(r.tut) : "—"}</td>
+    </tr>
+    <tr class="ld-detail" data-ldd="${i}" data-f="${esc(filt)}" hidden><td colspan="9" style="background:var(--surface-2)">
+      <table class="ver-table" style="min-width:0;font-size:12.5px"><thead><tr><th>Section</th><th>Delivery</th><th>Enrolled</th><th>Status</th><th>Load hrs</th><th>Source</th></tr></thead><tbody>${secRows}</tbody></table>
+    </td></tr>`;
+  }).join("");
+  return `
+  <div class="ver-controls" style="margin-bottom:12px">
+    <label class="ver-fieldlbl" for="ldTermSel">Semester</label>
+    <select id="ldTermSel">${termOpts}</select>
+    <button type="button" id="ldRefresh" class="ver-btn">Reload contract data</button>
+    <button type="button" id="ldExcel" class="ver-btn">Download Excel</button>
+    <span class="ver-checked">${res.hasContractTerm ? `Using the contracting apps' ${esc(res.term)} records where they exist` : `The contracting apps have no ${esc(res.term)} records yet — using scheduler assignments, Owlnet enrollment and credit hours`}</span>
+  </div>
+  <div class="ver-tiles">
+    <div class="ver-tile ver-crit"><div class="ver-k">Over</div><div class="ver-v">${n("over")}</div></div>
+    <div class="ver-tile ver-warn"><div class="ver-k">At limit</div><div class="ver-v">${n("at")}</div></div>
+    <div class="ver-tile ver-info"><div class="ver-k">Close (within 3)</div><div class="ver-v">${n("close")}</div></div>
+    <div class="ver-tile"><div class="ver-k">Instructors</div><div class="ver-v">${res.rows.length} <small>${res.rows.filter(r => r.type === "unknown").length} not in faculty list</small></div></div>
+  </div>
+  <div class="ver-chips" id="ldChips">
+    <button type="button" class="ver-chip" data-lf="flagged" aria-pressed="true">Flagged ${flagged.length}</button>
+    <button type="button" class="ver-chip" data-lf="over" aria-pressed="false"><span class="ver-sw ver-sw-crit"></span>Over ${n("over")}</button>
+    <button type="button" class="ver-chip" data-lf="at" aria-pressed="false"><span class="ver-sw ver-sw-warn"></span>At limit ${n("at")}</button>
+    <button type="button" class="ver-chip" data-lf="close" aria-pressed="false"><span class="ver-sw ver-sw-info"></span>Close ${n("close")}</button>
+    <button type="button" class="ver-chip" data-lf="adjunct" aria-pressed="false">Adjunct</button>
+    <button type="button" class="ver-chip" data-lf="full_time" aria-pressed="false">Full-time</button>
+    <button type="button" class="ver-chip" data-lf="unknown" aria-pressed="false">Not in faculty list ${res.rows.filter(r => r.type === "unknown").length}</button>
+    <button type="button" class="ver-chip" data-lf="all" aria-pressed="false">All ${res.rows.length}</button>
+  </div>
+  <div class="ver-card"><div class="ver-scroll">
+    <table class="ver-table">
+      <thead><tr><th>Instructor</th><th>Type</th><th>Contract</th><th>Made now</th><th>If all make</th><th>Limit</th><th>Status now</th><th>If all make</th><th>Tutorials</th></tr></thead>
+      <tbody id="ldRows">${body || '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:26px;">No assignments for this semester.</td></tr>'}</tbody>
+    </table>
+  </div></div>
+  <p class="ver-foot">Load hours per semester (all 5-week, 10-week, full-semester and on-ground sections). Adjuncts and staff: at most 9 hours of made sections (8+ students; EQR always made). Full-time: at most 6 made hours beyond their contracted load (0 = the standard ${esc(String(Number((state.contract || {}).settings ? state.contract.settings.full_time_load_credits : 12) || 12))}). Tutorials (under 8), internships, independent studies, voucher and Connections courses don't count. Hours follow the contracting apps (faculty hours × each instructor's share, with their overrides); sections the apps don't have yet use credit hours, split evenly when team-taught. Close = within 3 hours of the limit.</p>`;
+}
+async function renderFacultyLoadsView(){
+  const box = document.getElementById("verLoadsView");
+  if(!box) return;
+  const terms = _owlnetActiveTerms();
+  if(!state.loadTerm || !terms.includes(`${state.loadTerm.semester} ${state.loadTerm.year}`)){
+    const vt = state.verifyTerm && `${state.verifyTerm.semester} ${state.verifyTerm.year}`;
+    const pick = terms.includes(vt) ? vt : terms[0];
+    if(!pick){ box.innerHTML = '<div class="ver-empty">No current semesters with assignments.</div>'; return; }
+    const [sem, yr] = pick.split(" ");
+    state.loadTerm = { semester: sem, year: Number(yr) };
+  }
+  if(!state.contract) box.innerHTML = '<p style="color:var(--text-muted);padding:16px;">Loading faculty and contract records…</p>';
+  try { await loadContractData(); }
+  catch(e){ box.innerHTML = `<div class="ver-empty">Couldn't read the contracting apps' records (${escapeHtml(String((e && e.message) || e))}). Faculty loads need access to the on-ground and online contracting apps.</div>`; return; }
+  const sel = state.loadTerm;
+  const res = computeFacultyLoads(sel.semester, Number(sel.year));
+  state._lastLoads = res;
+  box.innerHTML = facultyLoadsHtml(res, terms, sel);
+  const apply = f => document.querySelectorAll("#ldRows tr[data-f]").forEach(tr => {
+    const k = tr.getAttribute("data-f").split(" ");
+    const show = f === "all" || k.includes(f);
+    if(tr.classList.contains("ld-detail")) { if(!show) tr.hidden = true; }
+    else tr.hidden = !show;
+  });
+  apply("flagged");
+  const chips = document.getElementById("ldChips");
+  if(chips) chips.addEventListener("click", e => {
+    const b = e.target.closest(".ver-chip"); if(!b) return;
+    chips.querySelectorAll(".ver-chip").forEach(c => c.setAttribute("aria-pressed", c === b ? "true" : "false"));
+    apply(b.getAttribute("data-lf"));
+  });
+  const rowsEl = document.getElementById("ldRows");
+  if(rowsEl) rowsEl.addEventListener("click", e => {
+    const tr = e.target.closest("tr.ld-row"); if(!tr) return;
+    const d = rowsEl.querySelector(`tr[data-ldd="${tr.getAttribute("data-ld")}"]`);
+    if(d) d.hidden = !d.hidden;
+  });
+  const ts = document.getElementById("ldTermSel");
+  if(ts) ts.addEventListener("change", () => { const [s, y] = ts.value.split(" "); state.loadTerm = { semester: s, year: Number(y) }; renderFacultyLoadsView(); });
+  const rf = document.getElementById("ldRefresh");
+  if(rf) rf.addEventListener("click", async () => { rf.disabled = true; rf.textContent = "Reloading…"; state.contract = null; await renderFacultyLoadsView(); });
+  const xl = document.getElementById("ldExcel");
+  if(xl) xl.addEventListener("click", () => downloadFacultyLoadsXlsx(xl, res, sel));
+}
+async function downloadFacultyLoadsXlsx(btn, res, sel){
+  const label = btn ? btn.textContent : "";
+  try{
+    if(btn){ btn.disabled = true; btn.textContent = "Preparing…"; }
+    const XLSX = await _loadXlsxLib();
+    const word = { over:"Over", at:"At limit", close:"Close", ok:"OK", unknown:"Not in faculty list" };
+    const r2 = n => Math.round(n * 100) / 100;
+    const people = res.rows.map(r => ({
+      "Instructor": r.name,
+      "Type": r.type === "full_time" ? "Full-time" : (r.type === "adjunct" ? (r.staff ? "Staff (as adjunct)" : "Adjunct") : "Not in faculty list"),
+      "Contracted load": r.type === "full_time" ? r.contract : "",
+      "Contract is default 12": r.contractDefault ? "Yes" : "",
+      "Made now (load hrs)": r2(r.now), "If all make (load hrs)": r2(r.all),
+      "Limit (total hrs)": r.limitTotal ?? "",
+      "Status now": word[r.sNow], "Status if all make": word[r.sAll],
+      "Tutorial hrs (not counted)": r2(r.tut), "Sections": r.sections.length,
+    }));
+    const secs = [];
+    res.rows.forEach(r => r.sections.forEach(s => secs.push({
+      "Instructor": r.name, "Course": s.code, "Section": s.sec || "", "Delivery": s.prog === "online" ? "Online" : "On-ground",
+      "Enrolled": s.enrollment ?? "", "Status": _LD_STATUS_LABEL[s.status] || s.status, "Load hrs": r2(s.hours),
+      "Counts now": s.status === "made" ? "Yes" : "", "Counts if it makes": _LD_COUNTS_IF_MADE.has(s.status) ? "Yes" : "",
+      "Source": s.source,
+    })));
+    const wb = XLSX.utils.book_new();
+    const ws1 = XLSX.utils.json_to_sheet(people);
+    ws1["!cols"] = [{wch:26},{wch:18},{wch:14},{wch:12},{wch:16},{wch:18},{wch:14},{wch:14},{wch:16},{wch:20},{wch:9}];
+    XLSX.utils.book_append_sheet(wb, ws1, "Faculty loads");
+    const ws2 = XLSX.utils.json_to_sheet(secs);
+    ws2["!cols"] = [{wch:26},{wch:10},{wch:8},{wch:10},{wch:9},{wch:18},{wch:9},{wch:10},{wch:16},{wch:30}];
+    XLSX.utils.book_append_sheet(wb, ws2, "Sections");
+    XLSX.writeFile(wb, `faculty-loads-${sel.semester}-${sel.year}.xlsx`);
+  }catch(e){ toast("Couldn't build the Excel file: " + ((e && e.message) || e), "error"); }
+  finally{ if(btn){ btn.disabled = false; btn.textContent = label; } }
+}
+
 function verifyPanelHtml(terms, sel, r, grid, og){
   const esc = (typeof escapeHtml === "function") ? escapeHtml : (s => String(s==null?"":s));
   grid = grid || [];
@@ -10041,7 +10418,7 @@ function verifyPanelHtml(terms, sel, r, grid, og){
   const offBad = grid.filter(g => g.schedRot.ok === false || g.owlRot.ok === false);
   const nSchedOff = grid.filter(g => g.schedRot.ok === false).length;
   const nOwlOff   = grid.filter(g => g.owlRot.ok === false).length;
-  const view = ["offerings", "import"].includes(state.verifyView) ? state.verifyView : "flags";
+  const view = ["offerings", "import", "loads"].includes(state.verifyView) ? state.verifyView : "flags";
   const ogAdd = og ? og.addLive + og.addStaff : 0;
   const offRowsHtml = grid.length ? grid.map(g => {
     const f = (g.schedRot.ok === false ? "s" : "") + (g.owlRot.ok === false ? "o" : "");
@@ -10100,9 +10477,11 @@ function verifyPanelHtml(terms, sel, r, grid, og){
     <button type="button" class="ver-vtab" data-vview="flags" aria-pressed="${view === "flags"}">Flags <b>${r.flags.length}</b></button>
     <button type="button" class="ver-vtab" data-vview="offerings" aria-pressed="${view === "offerings"}">Offerings vs rotation <b>${offBad.length}</b> <small>off of ${grid.length}</small></button>
     ${og ? `<button type="button" class="ver-vtab" data-vview="import" aria-pressed="${view === "import"}">On-ground import <b>${ogAdd}</b> <small>to add</small></button>` : ""}
+    <button type="button" class="ver-vtab" data-vview="loads" aria-pressed="${view === "loads"}">Faculty loads</button>
   </div>
 
   ${og ? `<div id="verImportView"${view === "import" ? "" : " hidden"}>${ogImportPanelHtml(og, sel)}</div>` : ""}
+  <div id="verLoadsView"${view === "loads" ? "" : " hidden"}></div>
 
   <div id="verOffView"${view === "offerings" ? "" : " hidden"}>
   <div class="ver-chips" id="verOffChips">
@@ -10194,6 +10573,9 @@ function verifyStyleBlock(){
   #verifyRoot .ver-pill-cxl{background:rgba(192,57,43,.13);color:var(--danger)}
   #verifyRoot .ver-pill-act{background:rgba(28,122,68,.10);color:var(--wwu-green-dark)}
   #verifyRoot .ver-pill-abs,#verifyRoot .ver-pill-neu{background:rgba(128,128,128,.14);color:var(--text-muted)}
+  #verifyRoot .ver-pill-at{background:rgba(217,119,6,.16);color:#b45309}
+  #verifyRoot .ver-pill-close{background:rgba(202,138,4,.14);color:#a16207}
+  html.dark #verifyRoot .ver-pill-at{color:#f59e0b} html.dark #verifyRoot .ver-pill-close{color:#facc15}
   #verifyRoot .ver-pill-rot-ok{background:rgba(28,122,68,.12);color:var(--wwu-green-dark)}
   #verifyRoot .ver-pill-rot-bad{background:rgba(192,57,43,.13);color:var(--danger)}
   html.dark #verifyRoot .ver-pill-rot-ok{color:#5ab57d}
@@ -10316,11 +10698,14 @@ async function renderVerification(){
     const b = e.target.closest(".ver-vtab"); if(!b) return;
     state.verifyView = b.getAttribute("data-vview");
     vtabs.querySelectorAll(".ver-vtab").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
-    const fv = document.getElementById("verFlagView"), ov = document.getElementById("verOffView"), iv = document.getElementById("verImportView");
+    const fv = document.getElementById("verFlagView"), ov = document.getElementById("verOffView"), iv = document.getElementById("verImportView"), lv = document.getElementById("verLoadsView");
     if(fv) fv.hidden = state.verifyView !== "flags";
     if(ov) ov.hidden = state.verifyView !== "offerings";
     if(iv) iv.hidden = state.verifyView !== "import";
+    if(lv) lv.hidden = state.verifyView !== "loads";
+    if(state.verifyView === "loads") renderFacultyLoadsView();
   });
+  if(state.verifyView === "loads") renderFacultyLoadsView();
   // On-ground import: filter chips, Excel preview, and the import itself.
   const ichips = document.getElementById("verImpChips");
   if(ichips) ichips.addEventListener("click", (e) => {
