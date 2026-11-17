@@ -9747,12 +9747,12 @@ async function downloadVerificationXlsx(btn){
       // one to share with the registrar.
       r.flags.forEach(f => flagRows.push({ _sev: f.sev, _t: terms.indexOf(t),
         "Severity": sevName[f.sev] || f.sev, "Who acts": _verWhoActs(f), "Term": t.label,
-        "Course": f.code, "Subterm": f.ground ? "Full semester" : L(f.sub), "Modality": f.ground ? "On-ground" : "Online",
+        "Course": f.code, "Title": _verTitle(f.code), "Subterm": f.ground ? "Full semester" : L(f.sub), "Modality": f.ground ? "On-ground" : "Online",
         "Scheduler": f.sched || "", "Owlnet": f.owl || "", "Owlnet section(s)": f.owlCodes || "",
         "Scheduler vs rotation": rotFor(f, "schedRot"), "Owlnet vs rotation": rotFor(f, "owlRot"),
         "Issue": f.issue || "", "Suggested action": f.action || "",
         "Rotation": f.rotation || _verRotation(f.code, t.semester).label }));
-      grid.forEach(g => offerRows.push({ "Term": g.term, "Course": g.code, "Subterm": g.subterm,
+      grid.forEach(g => offerRows.push({ "Term": g.term, "Course": g.code, "Title": _verTitle(g.code), "Subterm": g.subterm,
         "Scheduler vs rotation": rotTxt(g.schedRot), "Owlnet vs rotation": rotTxt(g.owlRot), "Status": g.status,
         "On rotation": g.rotation, "Rotation (all)": g.rotationAll, "Scheduler sections": g.schedCount, "Canceled in scheduler": g.canceledCount,
         "Owlnet sections": g.owlCount, "Scheduler detail": g.schedDetail, "Owlnet detail": g.owlDetail }));
@@ -9761,7 +9761,7 @@ async function downloadVerificationXlsx(btn){
         .forEach(o => {
           const e = owlnetEnrollment(o);
           const status = o.canceled ? "Canceled" : o.registrarCompleted ? (isOwlnetLive(o) ? "LIVE" : "DONE") : (o.submitted ? "SENT" : "Not submitted");
-          sectionRows.push({ "Term": t.label, "Course": _verCourseCode(o), "Modality": offeringModality(o), "Section": displaySectionFor(o) || "", "Subterm": L(o.subterm),
+          sectionRows.push({ "Term": t.label, "Course": _verCourseCode(o), "Title": _verTitle(_verCourseCode(o)), "Modality": offeringModality(o), "Section": displaySectionFor(o) || "", "Subterm": L(o.subterm),
             "Length": o.length || "", "Instructor": _verIsStaff(o.instructor) ? "" : String(o.instructor).trim(), "Status": status,
             "Owlnet instructor": o.owlnetInstructor ? (_verIsStaff(o.owlnetInstructor) ? "Staff" : o.owlnetInstructor) : "",
             "Enrolled": e ? e.enrolled : "", "Cap": e ? e.cap : "", "Seats open": e ? e.open : "" });
@@ -9779,10 +9779,10 @@ async function downloadVerificationXlsx(btn){
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
     // Flags first — it's the sheet that gets shared.
-    add("Flags", flagRows, [11,12,13,10,13,11,28,22,24,22,22,70,55,22]);
+    add("Flags", flagRows, [11,12,13,10,30,13,11,28,22,24,22,22,70,55,22]);
     add("Summary", summary, [14,15,22,10,8,9,10,11,18,22,20,18,22]);
-    add("Offerings", offerRows, [13,10,8,22,22,18,11,22,10,12,10,60,60]);
-    add("Sections", sectionRows, [13,10,11,8,8,10,24,13,24,9,6,10]);
+    add("Offerings", offerRows, [13,10,30,8,22,22,18,11,22,10,12,10,60,60]);
+    add("Sections", sectionRows, [13,10,30,11,8,8,10,24,13,24,9,6,10]);
     XLSX.writeFile(wb, `owlnet-verification-${new Date().toISOString().slice(0,10)}.xlsx`);
     toast("Verification report downloaded");
   }catch(e){
@@ -9959,7 +9959,7 @@ function ogImportPanelHtml(plan, sel){
                : (r && _owlIsLab(r) ? '<div class="ver-owlcode">Lab — its own row</div>' : "");
     const k = i.kind + (i.rot.ok === false ? " rot" : "");
     return `<tr data-k="${k}">
-      <td><div class="ver-code">${esc(sec)}</div>${note}</td>
+      <td><div class="ver-code">${esc(sec)}</div>${_verTitle(i.code) ? `<div class="ver-title">${esc(_verTitle(i.code))}</div>` : ""}${note}</td>
       <td>${will}</td>
       <td>${who}${owlWho}</td>
       <td style="white-space:nowrap">${esc(r.meeting ? formatOwlnetMeets(r.meeting) : (o.owlnetMeeting ? formatOwlnetMeets(o.owlnetMeeting) : "—"))}</td>
@@ -10005,6 +10005,7 @@ async function downloadOnGroundPreviewXlsx(btn, plan, sel){
       const r = i.r || {}, o = i.o || {};
       return {
         "Course": i.code,
+        "Title": _verTitle(i.code),
         "Owlnet section": r.raw_code || "",
         "Will": will(i),
         "Instructor in scheduler": i.kind === "add" ? (i.name || "") : (o.instructor || ""),
@@ -10019,7 +10020,7 @@ async function downloadOnGroundPreviewXlsx(btn, plan, sel){
     });
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{wch:10},{wch:18},{wch:24},{wch:26},{wch:30},{wch:26},{wch:60},{wch:14},{wch:6},{wch:34},{wch:11}];
+    ws["!cols"] = [{wch:10},{wch:30},{wch:18},{wch:24},{wch:26},{wch:30},{wch:26},{wch:60},{wch:14},{wch:6},{wch:34},{wch:11}];
     XLSX.utils.book_append_sheet(wb, ws, "On-ground import");
     XLSX.writeFile(wb, `onground-import-preview-${sel.semester}-${sel.year}.xlsx`);
   }catch(e){ toast("Couldn't build the Excel file: " + ((e && e.message) || e), "error"); }
@@ -10271,7 +10272,7 @@ function facultyLoadsHtml(res, terms, sel){
     const f = [r.sNow, r.sAll].filter(x => ["over","at","close"].includes(x));
     const filt = [...new Set([...f, r.type, f.length ? "flagged" : "fine"])].join(" ");
     const secRows = r.sections.slice().sort((a, b) => a.code.localeCompare(b.code)).map(s => `
-      <tr><td class="ver-code" style="font-size:12px">${esc(s.code)} ${esc(s.sec || "")}</td>
+      <tr><td><div class="ver-code" style="font-size:12px">${esc(s.code)} ${esc(s.sec || "")}</div>${(_verTitle(s.code) || s.title) ? `<div class="ver-title">${esc(_verTitle(s.code) || s.title)}</div>` : ""}</td>
         <td>${esc(s.prog === "online" ? "Online" : "On-ground")}${s.slot && !["16W","15W"].includes(s.slot) ? ` · ${esc(s.slot)}` : ""}</td>
         <td>${s.enrollment == null ? "—" : esc(String(s.enrollment))}</td>
         <td>${esc(_LD_STATUS_LABEL[s.status] || s.status)}</td>
@@ -10386,7 +10387,7 @@ async function downloadFacultyLoadsXlsx(btn, res, sel){
     }));
     const secs = [];
     res.rows.forEach(r => r.sections.forEach(s => secs.push({
-      "Instructor": r.name, "Course": s.code, "Section": s.sec || "", "Delivery": s.prog === "online" ? "Online" : "On-ground",
+      "Instructor": r.name, "Course": s.code, "Title": _verTitle(s.code) || s.title || "", "Section": s.sec || "", "Delivery": s.prog === "online" ? "Online" : "On-ground",
       "Enrolled": s.enrollment ?? "", "Status": _LD_STATUS_LABEL[s.status] || s.status, "Load hrs": r2(s.hours),
       "Counts now": s.status === "made" ? "Yes" : "", "Counts if it makes": _LD_COUNTS_IF_MADE.has(s.status) ? "Yes" : "",
       "Source": s.source,
@@ -10396,15 +10397,33 @@ async function downloadFacultyLoadsXlsx(btn, res, sel){
     ws1["!cols"] = [{wch:26},{wch:18},{wch:14},{wch:12},{wch:16},{wch:18},{wch:14},{wch:14},{wch:16},{wch:20},{wch:9}];
     XLSX.utils.book_append_sheet(wb, ws1, "Faculty loads");
     const ws2 = XLSX.utils.json_to_sheet(secs);
-    ws2["!cols"] = [{wch:26},{wch:10},{wch:8},{wch:10},{wch:9},{wch:18},{wch:9},{wch:10},{wch:16},{wch:30}];
+    ws2["!cols"] = [{wch:26},{wch:10},{wch:30},{wch:8},{wch:10},{wch:9},{wch:18},{wch:9},{wch:10},{wch:16},{wch:30}];
     XLSX.utils.book_append_sheet(wb, ws2, "Sections");
     XLSX.writeFile(wb, `faculty-loads-${sel.semester}-${sel.year}.xlsx`);
   }catch(e){ toast("Couldn't build the Excel file: " + ((e && e.message) || e), "error"); }
   finally{ if(btn){ btn.disabled = false; btn.textContent = label; } }
 }
 
+/* Course title for the Verification tables: the rotation sheet's (full) title,
+   else Owlnet's (abbreviated) one. Cached per code. */
+const _verTitleCache = new Map();
+function _verTitle(code){
+  const k = canonicalCourseCode(code || "");
+  if(!k) return "";
+  if(_verTitleCache.has(k)) return _verTitleCache.get(k);
+  const c = (state.courses || []).find(x => canonicalCourseCode(x.code) === k);
+  let t = (c && c.title) || "";
+  if(!t){
+    const r = (state.owlnetSections || []).find(w => canonicalCourseCode(`${w.prefix || ""} ${w.course_number || ""}`) === k && w.title);
+    t = (r && r.title) || "";
+  }
+  if(t) _verTitleCache.set(k, t);   // don't cache a miss — courses/Owlnet may load later
+  return t;
+}
+
 function verifyPanelHtml(terms, sel, r, grid, og){
   const esc = (typeof escapeHtml === "function") ? escapeHtml : (s => String(s==null?"":s));
+  const titleDiv = code => { const t = _verTitle(code); return t ? `<div class="ver-title">${esc(t)}</div>` : ""; };
   grid = grid || [];
   const gridBy = new Map(grid.map(g => [g.code + "|" + g.sub, g]));
   // Rotation verdicts for a flag (a merged subterm-mismatch flag spans subterms).
@@ -10423,7 +10442,7 @@ function verifyPanelHtml(terms, sel, r, grid, og){
   const offRowsHtml = grid.length ? grid.map(g => {
     const f = (g.schedRot.ok === false ? "s" : "") + (g.owlRot.ok === false ? "o" : "");
     return `<tr data-f="${f || "ok"}">
-      <td><div class="ver-code">${esc(g.code)}</div><div class="ver-sub">Subterm ${esc(g.subterm)}</div></td>
+      <td><div class="ver-code">${esc(g.code)}</div>${titleDiv(g.code)}<div class="ver-sub">Subterm ${esc(g.subterm)}</div></td>
       <td>${g.rotation === "Yes" ? '<span class="ver-pill ver-pill-live">On rotation</span>' : g.rotation === "No" ? '<span class="ver-pill ver-pill-abs">Not on rotation</span>' : '<span class="ver-pill ver-pill-neu">Not in sheet</span>'}<div class="ver-owlcode">${esc(g.rotationAll)}</div></td>
       <td>${g.schedCount ? `${g.schedCount} section${g.schedCount>1?"s":""}` : '<span style="color:var(--text-muted)">none</span>'}${g.canceledCount ? ` <span class="ver-pill ver-pill-cxl">${g.canceledCount} canceled</span>` : ""}${g.schedDetail ? `<div class="ver-owlcode">${esc(g.schedDetail)}</div>` : ""}</td>
       <td>${g.owlCount ? `${g.owlCount} section${g.owlCount>1?"s":""}` : '<span style="color:var(--text-muted)">none</span>'}${g.owlDetail ? `<div class="ver-owlcode">${esc(g.owlDetail)}</div>` : ""}</td>
@@ -10440,7 +10459,7 @@ function verifyPanelHtml(terms, sel, r, grid, og){
   const rowsHtml = r.flags.length ? r.flags.map(f => `
     <tr data-sev="${f.sev}" data-ground="${f.ground ? "1" : "0"}">
       <td class="ver-sevcell"></td>
-      <td><div class="ver-code">${esc(f.code)}${f.ground ? ' <span class="ver-pill ver-pill-neu">On-ground</span>' : ""}</div><div class="ver-sub">${f.ground ? "Full semester" : "Subterm " + esc(f.sub)}</div></td>
+      <td><div class="ver-code">${esc(f.code)}${f.ground ? ' <span class="ver-pill ver-pill-neu">On-ground</span>' : ""}</div>${titleDiv(f.code)}<div class="ver-sub">${f.ground ? "Full semester" : "Subterm " + esc(f.sub)}</div></td>
       <td>${verPill(f.sched)}</td>
       <td>${verPill(f.owl)}${f.owlCodes?`<div class="ver-owlcode">${esc(f.owlCodes)}</div>`:""}</td>
       <td>${rotCell(f, "schedRot")}</td>
@@ -10566,6 +10585,7 @@ function verifyStyleBlock(){
   #verifyRoot tr[data-sev="info"] .ver-sevcell::before{background:#2563c9}
   #verifyRoot .ver-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600;white-space:nowrap}
   #verifyRoot .ver-sub{color:var(--text-muted);font-size:12px;margin-top:2px}
+  #verifyRoot .ver-title{font-size:12.5px;color:var(--text);margin-top:2px;max-width:260px;line-height:1.3}
   #verifyRoot .ver-owlcode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--text-muted);margin-top:3px}
   #verifyRoot .ver-issue{line-height:1.4} #verifyRoot .ver-action{color:var(--text-muted);margin-top:3px}
   #verifyRoot .ver-pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
