@@ -5570,9 +5570,20 @@ function bindEvents() {
     if (e.target.id === "modal") closeModal();
   });
 
-  // Warn on unsaved unload
+  // Warn on leave ONLY while an edit is still on its way to Supabase (the
+  // ~600 ms debounce, a flush in flight, or a queued delete). state.dirty is a
+  // leftover from the file-based version — it never clears after a Supabase
+  // save, so keying on it warned on every leave after any edit.
   window.addEventListener("beforeunload", (e) => {
-    if (state.dirty) { e.preventDefault(); e.returnValue = ""; }
+    const pending = !!_supabaseFlushTimer || _flushInFlight ||
+      _pendingOfferingDeletes.size > 0 || _pendingRequestDeletes.size > 0;
+    if (!pending) return;
+    // Send it now rather than waiting out the debounce, so it can land while the prompt is up.
+    if (_supabaseFlushTimer) {
+      clearTimeout(_supabaseFlushTimer); _supabaseFlushTimer = null;
+      flushToSupabase().catch(err => _err("flushToSupabase failed", err));
+    }
+    e.preventDefault(); e.returnValue = "";
   });
 }
 
