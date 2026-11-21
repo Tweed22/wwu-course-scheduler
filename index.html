@@ -8140,6 +8140,9 @@ function markRegistrarItemComplete(regId) {
           const propagated = applyAssignInstructorToOffering(r, name);
           if (propagated) {
             logRequestEvent(r, `Instructor "${propagated.name}" written to ${propagated.code} ${propagated.term} ${propagated.subterm || ""}${propagated.section ? " §"+propagated.section : ""} ${propagated.year}`);
+          } else if (name) {
+            // Used to fail silently — say so, so the section can be fixed by hand.
+            logRequestEvent(r, `Instructor "${name}" NOT written to Term Assignments — no single matching section; update the section there`);
           }
         }
       } else if (ch.type === "Cancel Course") {
@@ -8267,6 +8270,24 @@ function undoRegistrarItem(regId) {
    that's empty we fall back to parsing the legacy explanation
    ("assign to <name>"). Returns { name, code, term, subterm, year } if a
    write happened, else null. */
+/* On-ground change requests filed from the Change Requests form pick a COURSE
+   (the on-ground picker lists the rotation's in-seat courses), so they carry no
+   section link (offeringId / sectionNumber). Since the Owlnet import put the
+   on-ground sections into Term Assignments, resolve such a request to the
+   course's on-ground section for that term — but only when there is exactly
+   one (a lone lecture wins over its lab rows); otherwise null, never a guess. */
+const _REQ_TARGETS_SECTION = new Set(["Assign Instructor", "Change Instructor", "Cancel Course",
+  "Re-instate Course", "Modify Time/Day", "Modify Location", "Change Course Cap"]);
+function soleOnGroundOfferingForRequest(r, wantCanceled){
+  const code = canonicalCourseCode(`${r.prefix || ""} ${r.number || ""}`);
+  if (!code) return null;
+  let m = (state.offerings || []).filter(o => !o.deleted &&
+    _verCourseCode(o) === code && o.semester === r.term && Number(o.year) === Number(r.year) &&
+    offeringModality(o) === "On-Ground" && !!o.canceled === !!wantCanceled);
+  if (m.length > 1) m = m.filter(o => !o.owlnetLab);
+  return m.length === 1 ? m[0] : null;
+}
+
 function applyAssignInstructorToOffering(r, explicitName) {
   if (!r) return null;
   const code = `${r.prefix||""} ${r.number||""}`.trim();
@@ -8315,6 +8336,18 @@ function applyAssignInstructorToOffering(r, explicitName) {
         markLocallyTouched(o.id);
         return { name, code, term: r.term, subterm: o.subterm, year: r.year, section: r.sectionNumber };
       }
+    }
+  }
+
+  // On-ground request with no section link (filed from the form's course
+  // picker): write to the course's single on-ground section, if there is one.
+  if ((r.modality || "").trim() === "On-Ground") {
+    const o = soleOnGroundOfferingForRequest(r, false);
+    if (o) {
+      o.instructor   = name;
+      o.lastModified = new Date().toISOString();
+      markLocallyTouched(o.id);
+      return { name, code, term: r.term, subterm: "", year: r.year, section: displaySectionFor(o) };
     }
   }
 
@@ -9002,6 +9035,39 @@ function rotationStaleness(o){
   return { label: R.label };
 }
 
+/* Verification "Use Owlnet's instructor" on a DONE section whose instructor
+   disagrees with Owlnet, when Owlnet is right: the registrar already has the
+   correct name, so set it here directly — no change request. The section stays
+   DONE; the edit is logged to the Changelog, and the next Verification pass
+   marks it verified (LIVE). Owlnet's "Last, First" becomes "First Last",
+   reusing a spelling already in the scheduler when it's the same person. */
+function useOwlnetInstructor(oid, owlRaw){
+  if(!isAdmin()){ toast("Admins only."); return false; }
+  const o = (state.offerings || []).find(x => x.id === oid);
+  if(!o || o.deleted || o.canceled) return false;
+  const code = _verCourseCode(o);
+  const courseNames = [...new Set((state.offerings || [])
+    .filter(x => x.id !== o.id && _verCourseCode(x) === code)
+    .map(x => String(x.instructor || "").trim())
+    .filter(n => n && !n.includes(",") && !_verIsStaff(n)))];
+  const name = owlnetNameToSched(owlRaw, knownInstructorNames(), courseNames);
+  if(!name){ toast("Owlnet doesn't list an instructor for this section."); return false; }
+  const prev = String(o.instructor || "").trim();
+  const sec = o.officialSection ? ` ${o.officialSection}` : "";
+  const open = openChangeRequestForOffering(o);
+  const msg = `Set ${code}${sec} (${o.semester} ${o.year}) instructor to ${name}, as Owlnet lists it?\n\n` +
+    `Currently: ${prev || "no instructor"}. The section stays DONE and nothing is sent to the registrar.` +
+    (open ? `\n\nNote: this section also has an open change request (${open.status}). It stays open; close it in Change Requests if it's no longer needed.` : "");
+  if(!confirm(msg)) return false;
+  o.instructor = name;
+  logOfferingFieldChange(o, "Instructor (matched to Owlnet)", prev, name);
+  markLocallyTouched(o.id); setDirty(true);
+  if(typeof flushToSupabase === "function") flushToSupabase();
+  if(typeof renderTerms === "function") renderTerms();
+  toast(`${code}${sec}: instructor set to ${name}`);
+  return true;
+}
+
 /* Verification "Add section" for a section Owlnet lists but the scheduler
    doesn't: the registrar already built it, so add a plain default (white,
    unassigned, unsubmitted) row to Term Assignments — no change request. Slot
@@ -9373,7 +9439,10 @@ function reconcileOwlnet(semester, year){
   const doneInstrFlag = (o, candidates, code, sub, owlCodes) => {
     const schedI = String(o.instructor || "").trim();
     const staffOnly = candidates.length > 0 && candidates.every(r => _verIsStaff(r.instructor));
+    // One named Owlnet candidate → offer to take its instructor (Owlnet is right).
+    const one = candidates.length === 1 && !_verIsStaff(candidates[0].instructor) ? candidates[0] : null;
     return { sev:"info", code, sub,
+      fix: one ? { act:"owlinstr", oid:o.id, owl:String(one.instructor || ""), label:"Use Owlnet's instructor" } : undefined,
       sched: (_verIsStaff(schedI) ? "No instructor" : schedI) + " · DONE",
       owl: candidates.map(r => _owlName(r.instructor)).join(", ") || "—", owlCodes,
       issue: staffOnly ? "Completed by the registrar, but Owlnet still shows Staff."
@@ -9873,6 +9942,7 @@ function reconcileOnGround(semester, year){
     });
     secMismatch.forEach(([o, r]) => res.flags.push({ ...base, sev:"info",
       sched: nm(o.instructor) + " · DONE", owl: owlNm(r.instructor), owlCodes: r.raw_code,
+      fix: _verIsStaff(r.instructor) ? undefined : { act:"owlinstr", oid:o.id, owl:String(r.instructor || ""), label:"Use Owlnet's instructor" },
       issue: _verIsStaff(r.instructor) ? "On-ground section completed by the registrar, but Owlnet still shows Staff."
                                        : "On-ground section completed by the registrar, but Owlnet lists a different instructor.",
       action: _verIsStaff(r.instructor) ? "Registrar: enter the instructor in Owlnet." : "Confirm which instructor is correct." }));
@@ -9893,6 +9963,8 @@ function reconcileOnGround(semester, year){
       unpaired.filter(o => o.registrarCompleted).forEach(o => {
         const staffOnly = pool.length > 0 && pool.every(r => _verIsStaff(r.instructor));
         res.flags.push({ ...base, sev:"info", sched: nm(o.instructor) + " · DONE", owl: pool.map(r => owlNm(r.instructor)).join(", ") || "—", owlCodes,
+          fix: pool.length === 1 && !_verIsStaff(pool[0].instructor)
+            ? { act:"owlinstr", oid:o.id, owl:String(pool[0].instructor || ""), label:"Use Owlnet's instructor" } : undefined,
           issue: staffOnly ? "On-ground section completed by the registrar, but Owlnet still shows Staff."
                            : "On-ground section completed by the registrar, but Owlnet lists a different instructor.",
           action: staffOnly ? "Registrar: enter the instructor in Owlnet." : "Confirm which instructor is correct." });
@@ -10475,7 +10547,7 @@ function verifyPanelHtml(terms, sel, r, grid, og){
       <td>${verPill(f.owl)}${f.owlCodes?`<div class="ver-owlcode">${esc(f.owlCodes)}</div>`:""}</td>
       <td>${rotCell(f, "schedRot")}</td>
       <td>${rotCell(f, "owlRot")}</td>
-      <td><div class="ver-issue">${esc(f.issue)}</div><div class="ver-action">→ ${esc(f.action)}</div>${f.fix ? `<button type="button" class="ver-fix-btn" data-verfix="${esc(f.fix.act)}" data-oid="${esc(f.fix.oid||"")}" data-code="${esc(f.fix.code||"")}" data-sub="${esc(f.fix.sub||"")}">${esc(f.fix.label||"Make change")}</button>` : ""}</td>
+      <td><div class="ver-issue">${esc(f.issue)}</div><div class="ver-action">→ ${esc(f.action)}</div>${f.fix ? `<button type="button" class="ver-fix-btn" data-verfix="${esc(f.fix.act)}" data-oid="${esc(f.fix.oid||"")}" data-code="${esc(f.fix.code||"")}" data-sub="${esc(f.fix.sub||"")}" data-owl="${esc(f.fix.owl||"")}">${esc(f.fix.label||"Make change")}</button>` : ""}</td>
     </tr>`).join("") :
     `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:26px;">No discrepancies — every Owlnet section matches the scheduler for this term.</td></tr>`;
 
@@ -10802,6 +10874,8 @@ async function renderVerification(){
         toast(`Restored ${_verCourseCode(o)} to Term Assignments`);
         renderVerification();
       }
+    } else if(act === "owlinstr" && oid){
+      if(useOwlnetInstructor(oid, b.getAttribute("data-owl") || "")) renderVerification();
     } else if(act === "add"){
       // Owlnet already has it → add a plain unassigned row (no change request).
       const code = b.getAttribute("data-code") || "", sub = b.getAttribute("data-sub") || "";
@@ -13266,6 +13340,15 @@ function saveRequestFromModal() {
   if (!existing) draft.status = "Pending Approval";
   if (!draft.modality) { toast("Please select a modality before saving"); document.getElementById("rfld_modality_select").focus(); return; }
   if (!draft.submitter) { toast("Submitter is required"); return; }
+  // Link an on-ground request to its section (the form's on-ground picker
+  // chooses a course, not a section) so Finalize writes the change onto that
+  // row and the row shows "Change pending". Only for changes to an existing
+  // section, and only when the course has exactly one on-ground section.
+  if (!draft.offeringId && draft.modality === "On-Ground" &&
+      draft.changes.length && draft.changes.every(c => _REQ_TARGETS_SECTION.has(c.type))) {
+    const _og = soleOnGroundOfferingForRequest(draft, draft.changes.some(c => c.type === "Re-instate Course"));
+    if (_og) draft.offeringId = _og.id;
+  }
 
   // Guard: "Add Course" is only valid when the course doesn't already have an
   // active offering in that semester + year.  If one already exists, prompt the
