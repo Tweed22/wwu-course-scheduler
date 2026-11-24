@@ -592,6 +592,7 @@
   /* Typed confirmation (e.g. Clear term): the action stays disabled until the word is typed. */
   #typedConfirmDialog button:disabled { opacity: 0.45; cursor: not-allowed; }
   #typedConfirmDialog { z-index: 300; align-items: center; }   /* above the sticky app bar, centered */
+  #loadWarnDialog     { z-index: 300; align-items: center; }   /* over-the-load-limit warning: same */
   .stats .term-mod-tile .mod-seg {
     font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; margin: 0;
     border: none; border-radius: 0; background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
@@ -742,6 +743,9 @@
   .term-table td:has(input[data-field="instructor"]),
   .term-table td.instr-cell                          { padding-left: 18px; white-space: nowrap; overflow: hidden; }
   .term-table th.no-sort:nth-child(7)                { width: 250px; padding-left: 18px; }
+  /* Over the faculty load limit (counting every assigned section as if it makes). */
+  .term-table td.instr-cell .load-warn               { margin-top: 3px; font-size: 11.5px; line-height: 1.3;
+                                                       color: var(--danger); white-space: normal; }
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
   /* ── FIXED secondary columns ── */
@@ -2805,6 +2809,434 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ═══ Shared load engine ═════════════════════════════════════════════════════
+   Everything between LOAD-ENGINE:START and LOAD-ENGINE:END is plain JS with no
+   DOM or app state. tools/build-load-engine.mjs copies it into the load-alerts
+   edge function (supabase/functions/load-alerts/engine.js), so the hourly
+   server check computes faculty loads exactly as the browser does. After
+   changing anything here: node tools/build-load-engine.mjs, then redeploy
+   load-alerts. The name/code helpers live here because the engine needs them;
+   the rest of the app uses them as ordinary globals. */
+/* LOAD-ENGINE:START */
+function canonicalCourseCode(raw) {
+  const parts = (raw || "").trim().toUpperCase().split(/\s+/);
+  return parts.slice(0, 2).join(" ");
+}
+
+// Courses handled entirely outside the scheduler (e.g. ALE 799 dissertation
+// continuation — arranged per-student by voucher, many instructor-specific
+// sections). Hidden from Term Assignments AND skipped by Owlnet verification.
+const HIDDEN_COURSES = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
+function isHiddenCourse(code){ return HIDDEN_COURSES.has(canonicalCourseCode(code || "")); }
+
+function _verNormSec(s){ return String(s == null ? "" : s).replace(/\D/g,"").replace(/^0+/,"") || "0"; }
+
+/* Instructor comparison for Owlnet verification. Owlnet writes "Last, First M"
+   (and "Staff, S" when the registrar hasn't entered anyone); the scheduler
+   stores free text, usually "First Last". */
+function _verIsStaff(name){
+  const n = String(name || "").trim().toLowerCase();
+  return !n || /^staff\b/.test(n) || n === "tba" || n === "faculty";
+}
+function _verNameParts(name){
+  const s = String(name || "").replace(/\./g, "").trim();
+  if(!s) return null;
+  if(s.includes(",")){
+    // Owlnet form "Last, First Middle" — keep every given name, since people
+    // often go by their middle name.
+    const i = s.indexOf(",");
+    const given = s.slice(i + 1).trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return { last: s.slice(0, i).trim().toLowerCase().split(/[\s-]+/).filter(Boolean),
+             first: given[0] || "", given };
+  }
+  const t = s.toLowerCase().split(/\s+/).filter(Boolean);
+  if(t.length === 1) return { last: [t[0]], first: "", given: [] };
+  return { last: t.slice(1).flatMap(x => x.split("-")).filter(Boolean), first: t[0], given: [t[0]] };
+}
+// Common nicknames whose spelling shares no prefix/suffix with the full name.
+const _VER_NICK = {
+  bob:"robert", rob:"robert", robbie:"robert", bobby:"robert", bert:"robert",
+  bill:"william", billy:"william", will:"william", liam:"william",
+  jim:"james", jimmy:"james", jamie:"james", dick:"richard", rick:"richard", rich:"richard",
+  ted:"edward", ed:"edward", eddie:"edward", ned:"edward", jack:"john", johnny:"john",
+  dave:"david", joe:"joseph", joey:"joseph", andy:"andrew", drew:"andrew",
+  steve:"steven", chuck:"charles", charlie:"charles", hank:"henry", harry:"henry",
+  peggy:"margaret", maggie:"margaret", meg:"margaret", liz:"elizabeth", betty:"elizabeth",
+  kate:"katherine", katie:"katherine", kathy:"katherine", becky:"rebecca", patty:"patricia",
+  jennie:"jennifer", jenny:"jennifer", sandy:"sandra", sue:"susan", trish:"patricia",
+  tony:"anthony", toni:"antoinette", lisa:"elizabeth", bess:"elizabeth", polly:"mary",
+  nancy:"ann", sasha:"alexander", xander:"alexander", gus:"augustus",
+  sheb:"gulsebnem",
+};
+function _verFirstCompatible(x, y){
+  if(!x || !y) return true;
+  if(x === y || x[0] === y[0]) return true;
+  if(x.startsWith(y) || y.startsWith(x)) return true;                 // Lee / Leola
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  if(s.length >= 3 && l.endsWith(s)) return true;                     // Beth / Elizabeth, Drew / Andrew
+  const fx = _VER_NICK[x] || x, fy = _VER_NICK[y] || y;
+  return fx === fy || fx.startsWith(fy) || fy.startsWith(fx);          // Bob / Robert, Tony / Anthony
+}
+// Same person? Blank in the scheduler matches "Staff" on Owlnet; otherwise the
+// last name must agree and the scheduler's first name must be compatible with
+// one of Owlnet's given names (initial, prefix, suffix or a known nickname).
+function _verSameInstructor(schedName, owlName){
+  const schedBlank = _verIsStaff(schedName), owlStaff = _verIsStaff(owlName);
+  if(schedBlank || owlStaff) return schedBlank && owlStaff;
+  const a = _verNameParts(schedName), b = _verNameParts(owlName);
+  if(!a || !b) return false;
+  const firstOk = !a.first || !b.given.length || b.given.some(g => _verFirstCompatible(a.first, g));
+  if(a.last.some(x => b.last.includes(x))) return firstOk;
+  // A one-letter last-name typo ("Simmons" / "Simons") still counts when the
+  // first name agrees exactly — same course, same person.
+  const exactFirst = a.first && b.given.some(g => g === a.first);
+  return !!exactFirst && a.last.some(x => b.last.some(y => x.length >= 4 && y.length >= 4 && _verEdit1(x, y)));
+}
+// True when two strings differ by at most one insertion, deletion or substitution.
+function _verEdit1(x, y){
+  if(x === y) return true;
+  if(Math.abs(x.length - y.length) > 1) return false;
+  let i = 0, j = 0, diffs = 0;
+  while(i < x.length && j < y.length){
+    if(x[i] === y[j]){ i++; j++; continue; }
+    if(++diffs > 1) return false;
+    if(x.length > y.length) i++; else if(y.length > x.length) j++; else { i++; j++; }
+  }
+  return diffs + (x.length - i) + (y.length - j) <= 1;
+}
+
+/* Which program an Owlnet section belongs to. OU/OG divisions are the online
+   program. SU (Semester Undergraduate) is the on-ground semester program — except
+   online-program sections the registrar filed under SU by mistake, which keep the
+   online suffix (e.g. "ACC 240 01 OLC"). Full-semester "FUL" sections taught
+   online/synchronously are still semester-program. */
+const OWLNET_ONLINE_SUFFIXES = new Set(["OLC", "GPS"]);
+function _owlProgram(r){
+  const div = String(r.division || "").toUpperCase();
+  if(div !== "SU") return "online";
+  return OWLNET_ONLINE_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) ? "online" : "semester";
+}
+
+const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
+
+/* ─── Faculty load engine ─────────────────────────────────────────────────────
+   Per semester, every instructor's teaching across online AND on-ground, checked
+   against the load limits:
+     • Adjuncts (and staff): at most 9 load hours of MADE sections a semester —
+       tutorials (fewer than 8 students) don't count. Summer too.
+     • Full-time: at most 6 MADE load hours beyond their contracted load (a
+       contracted load of 0 means the standard 12).
+     • Full-time in SUMMER: every summer section is overload, so at most 2 made
+       sections (a section carrying no faculty hours doesn't count).
+   Load hours and section status follow the contracting apps (ogc_* / onc_*): a
+   section's faculty hours × that instructor's share (team-taught split), with the
+   apps' overrides; internships, independent studies, voucher and Connections
+   courses don't count. Where the contracting apps have the section their record
+   is used; otherwise the scheduler's assignment + Owlnet enrollment, split evenly
+   across a team.
+   Faculty hours: a term's own contracting-app values once that term has been set
+   up there (some section's faculty hours differ from its credit hours, or are
+   overridden). Until then — and for sections the apps don't have — the course's
+   faculty hours from the most recent set-up term, then credit hours.
+   Two numbers: made now, and "if every section makes" — where a section that has
+   already STARTED counts only if it made (its enrollment is settled, so a
+   tutorial in a running term won't grow into a made section). Close = within 3. */
+const LOAD_ADJUNCT_LIMIT = 9, LOAD_FT_OVERLOAD_LIMIT = 6, LOAD_FT_SUMMER_SECTIONS = 2, LOAD_CLOSE_WITHIN = 3;
+const _LD_DEFAULTS = {
+  full_enrollment_threshold: 8, full_time_load_credits: 12, always_made_prefixes: ["EQR"],
+  voucher_prefixes: ["DIS"], voucher_courses: ["EDU 799", "EDU 790"], internship_courses: [],
+  internship_title_match: "Internship", connections_courses: [], connections_title_match: "Connections",
+  fixed_faculty_hours: {}, credit_hour_subjects: [], ignored_delivery_codes: ["CIC"], online_codes: ["OLC", "GPS"],
+};
+const _ldUp = v => (Array.isArray(v) ? v : (v ? [v] : [])).map(x => String(x).replace(/\s+/g, " ").trim().toUpperCase()).filter(Boolean);
+const _ldNum = v => (v == null || v === "" || isNaN(Number(v))) ? null : Number(v);
+function _ldTermCode(semester, year){
+  return ({ Fall:"FA", Spring:"SP", Summer:"SU" }[semester] || "") + String(year).slice(-2);
+}
+// "SP27" → 271 — sortable: Spring < Summer < Fall within a calendar year.
+function _ldTermOrd(code){
+  const m = /^(FA|SP|SU)(\d{2})$/i.exec(String(code || "").trim());
+  return m ? Number(m[2]) * 10 + ({ SP:1, SU:2, FA:3 })[m[1].toUpperCase()] : null;
+}
+// Section status the way the contracting apps classify it, reduced to what the
+// limits care about. Only "made" counts now; "tutorial"/"none"/"unknown" would
+// count if they make; everything else never counts.
+function _ldClassify(s, S){
+  const ov = String(s.statusOverride || "");
+  if(ov === "Made" || ov === "Applied to Contract") return "made";
+  if(ov === "Tutorial") return "tutorial";
+  if(ov === "Internship") return "internship";
+  if(ov === "Connections") return "connections";
+  if(ov === "Voucher") return "voucher";
+  if(ov === "Not contracted") return "notcontracted";
+  if(ov === "Combined") return "combined";
+  if(ov === "No Enrollment") return "none";
+  const code = String(s.code || "").toUpperCase(), subj = code.split(" ")[0], title = String(s.title || "").toLowerCase();
+  if(_ldUp(S.ignored_delivery_codes).includes(String(s.delivery || "").toUpperCase())) return "notcontracted";
+  const enr = s.enrollment;
+  if(_ldUp(S.internship_courses).includes(code) || (S.internship_title_match && title.includes(String(S.internship_title_match).toLowerCase()))) return "internship";
+  if(_ldUp(S.connections_courses).includes(code) || (S.connections_title_match && title.includes(String(S.connections_title_match).toLowerCase()))) return "connections";
+  if(_ldUp(S.voucher_prefixes).includes(subj) || _ldUp(S.voucher_courses).includes(code)) return "voucher";
+  if(s.courseType === "independent_study" || /independent stud/.test(title)) return "indstudy";
+  if(_ldUp(S.always_made_prefixes).includes(subj) && enr > 0) return "made";
+  if(enr == null) return "unknown";
+  const thr = Number(S.full_enrollment_threshold) || 8;
+  if(enr >= thr) return "made";
+  return enr > 0 ? "tutorial" : "none";
+}
+const _LD_COUNTS_IF_MADE = new Set(["made", "tutorial", "none", "unknown"]);
+const _LD_STATUS_LABEL = { made:"Made", tutorial:"Tutorial", none:"No enrollment", unknown:"Enrollment unknown",
+  internship:"Internship", connections:"Connections", voucher:"Voucher", indstudy:"Independent study",
+  notcontracted:"Not contracted", combined:"Combined" };
+function _ldFixedHours(code, S){
+  const map = S.fixed_faculty_hours;
+  if(!map || typeof map !== "object") return null;
+  const hit = Object.entries(map).find(([k]) => String(k).replace(/\s+/g, " ").trim().toUpperCase() === code);
+  return hit && !isNaN(Number(hit[1])) ? Number(hit[1]) : null;
+}
+// Faculty-hours history from the on-ground contracting app's records (all terms):
+// which terms have been set up, each course's faculty hours per term, and each
+// course's most recent credit hours.
+function _ldFhIndex(ogc){
+  const setTerms = new Set(), byTerm = new Map(), credits = new Map();
+  (ogc || []).forEach(c => {
+    const ord = _ldTermOrd(c.term_code);
+    if(ord == null) return;
+    const code = canonicalCourseCode(c.course_code || "");
+    const fho = _ldNum(c.faculty_hours_override), fh = fho ?? _ldNum(c.faculty_hours), cr = _ldNum(c.credit_hours);
+    if(fho != null || _ldNum(c.load_hours_override) != null || (fh != null && cr != null && fh !== cr)) setTerms.add(ord);
+    if(!code) return;
+    if(cr != null && (!credits.has(code) || credits.get(code).ord < ord)) credits.set(code, { ord, cr });
+    if(fh == null) return;
+    if(!byTerm.has(ord)) byTerm.set(ord, new Map());
+    const m = byTerm.get(ord);
+    if(!m.has(code)) m.set(code, []);
+    m.get(code).push(fh);
+  });
+  return { setTerms, byTerm, credits, ords: [...byTerm.keys()].sort((a, b) => b - a) };
+}
+// A course's faculty hours in the most recent set-up term at or before `upTo`:
+// the most common value across its sections (a tie takes the larger).
+function _ldKnownFh(ix, code, upTo){
+  if(!ix || upTo == null) return null;
+  for(const ord of ix.ords){
+    if(ord > upTo || !ix.setTerms.has(ord)) continue;
+    const vals = ix.byTerm.get(ord).get(code);
+    if(!vals || !vals.length) continue;
+    const cnt = new Map();
+    vals.forEach(v => cnt.set(v, (cnt.get(v) || 0) + 1));
+    let best = null, bc = -1;
+    cnt.forEach((n, v) => { if(n > bc || (n === bc && v > best)){ best = v; bc = n; } });
+    return best;
+  }
+  return null;
+}
+// The on-ground contracting app's loadHoursOf(): faculty hours × share, overrides
+// first. In a term not yet set up there, the course's known faculty hours stand in
+// for the imported default (which is just the credit hours).
+function _ldOgcLoadHours(c, S, status, ix, ord, termSet){
+  if(c.load_hours_override != null && c.load_hours_override !== "" && !isNaN(Number(c.load_hours_override))) return Number(c.load_hours_override);
+  let fh;
+  if(c.faculty_hours_override != null && c.faculty_hours_override !== "" && !isNaN(Number(c.faculty_hours_override))) fh = Number(c.faculty_hours_override);
+  else {
+    const code = canonicalCourseCode(c.course_code || ""), fixed = _ldFixedHours(code, S);
+    if(fixed != null) fh = fixed;
+    else if(status === "internship") fh = 3;
+    else if(_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) fh = Number(c.credit_hours) || 0;
+    else {
+      const known = termSet ? null : _ldKnownFh(ix, code, ord);
+      fh = known != null ? known
+         : ((c.faculty_hours == null || isNaN(Number(c.faculty_hours))) ? (Number(c.credit_hours) || 0) : Number(c.faculty_hours));
+    }
+  }
+  const pct = (c.pct_toward_load == null || isNaN(Number(c.pct_toward_load))) ? 1 : Number(c.pct_toward_load);
+  return fh * pct;
+}
+const _ldName = f => `${f.first_name || ""} ${f.last_name || ""}`.replace(/\s+/g, " ").trim();
+// Match one scheduler name to a contracting-app faculty record. Candidates on the
+// same section in the contracting apps are tried first (disambiguates "Smith").
+function _ldMatchFaculty(name, faculty, prefer){
+  const n = String(name || "").trim();
+  if(!n || _verIsStaff(n)) return null;
+  const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
+  const pools = [prefer || [], faculty];
+  for(const pool of pools){
+    if(!pool.length) continue;
+    const exact = pool.filter(f => norm(_ldName(f)) === norm(n));
+    if(exact.length === 1) return exact[0];
+    const loose = pool.filter(f => _verSameInstructor(n, `${f.last_name}, ${f.first_name}`));
+    if(loose.length === 1) return loose[0];
+    // A bare last name ("Bielawski") — unique within the pool.
+    if(!/\s/.test(n)){
+      const byLast = pool.filter(f => norm(f.last_name || "") === norm(n));
+      if(byLast.length === 1) return byLast[0];
+    }
+  }
+  return null;
+}
+// "Alanna Bielawski, Melissa Smith" / "Bielawski, Smith, Haben" → people. A single
+// "Last, First" (one comma, matches one person whole) stays one person.
+function _ldSplitInstructors(text, faculty, prefer){
+  const t = String(text || "").trim();
+  if(!t || _verIsStaff(t)) return [];
+  if(!/[,;\/&]|\band\b/i.test(t)) return [t];
+  if((t.match(/,/g) || []).length === 1 && _ldMatchFaculty(t, faculty, prefer)) return [t];
+  return t.split(/\s*(?:[,;\/&]|\band\b)\s*/i).map(x => x.trim()).filter(x => x && !_verIsStaff(x));
+}
+
+/* Loads for one semester.
+   inp = { semester, year, today ("YYYY-MM-DD", optional),
+     sections: the scheduler's sections in that semester (not deleted/canceled):
+       { id, code, sec, prog: "online"|"semester", lab, title, sub, slot,
+         instructor, enrolled (number|null), catalogCredits (number|null),
+         started (true/false; omitted → the contracting app's start_date vs today) },
+     owlnet:   Owlnet rows { semester, acad_year, prefix, course_number, section,
+               division, suffix, credits },
+     contract: { faculty, settings, ogc, onc, fhIndex? } }
+   → { rows, term, hasContractTerm, termSet }. One row per instructor: now / all /
+     tut in load hours; unit ("hours" or "sections"); usedNow / usedAll and
+     limitTotal in that unit; sNow / sAll status; limitKind ("adjunct",
+     "full_time", "full_time_summer" or null when not in the faculty list). */
+function _ldCompute(inp){
+  const C = inp.contract || { faculty: [], settings: { ..._LD_DEFAULTS }, ogc: [], onc: [] };
+  const S = C.settings || { ..._LD_DEFAULTS }, faculty = C.faculty || [];
+  const semester = inp.semester, year = Number(inp.year), term = _ldTermCode(semester, year);
+  const ord = _ldTermOrd(term);
+  const ix = C.fhIndex || _ldFhIndex(C.ogc);
+  const termSet = ix.setTerms.has(ord);
+  const onlineCodes = _ldUp(S.online_codes);
+  const progOfDelivery = d => onlineCodes.includes(String(d || "").toUpperCase()) ? "online" : "semester";
+  const facById = new Map(faculty.map(f => [f.id, f]));
+  // Contracting-app records for this term, keyed by course + section + program.
+  const cRows = [
+    ...(C.ogc || []).filter(c => c.term_code === term).map(c => ({ src:"ogc", c, prog: progOfDelivery(c.delivery) })),
+    ...(C.onc || []).filter(c => c.term_code === term && !c.excluded).map(c => ({ src:"onc", c, prog: progOfDelivery(c.delivery) })),
+  ];
+  const cKey = (code, sec, prog) => `${canonicalCourseCode(code)}|${_verNormSec(sec)}|${prog}`;
+  const cByKey = new Map();
+  cRows.forEach(x => { const k = cKey(x.c.course_code, x.c.section, x.prog); if(!cByKey.has(k)) cByKey.set(k, []); cByKey.get(k).push(x); });
+  // Owlnet credits by course + section + program + lab (the first listing wins).
+  const owlCredits = new Map();
+  (inp.owlnet || []).forEach(w => {
+    if(w.semester !== semester || Number(w.acad_year) !== year) return;
+    const k = `${canonicalCourseCode(`${w.prefix} ${w.course_number}`)}|${_verNormSec(w.section)}|${_owlProgram(w) === "online" ? "online" : "semester"}|${_owlIsLab(w) ? 1 : 0}`;
+    if(!owlCredits.has(k)) owlCredits.set(k, w.credits != null ? Number(w.credits) : null);
+  });
+  // Has a section started? (Then a not-yet-made section won't make.)
+  const today = inp.today ? String(inp.today).slice(0, 10) : null;
+  const startedOf = (flag, startDate) => flag != null ? !!flag : !!(today && startDate && String(startDate).slice(0, 10) <= today);
+  const used = new Set();                // contract rows already accounted for
+  const sections = [];                   // one entry per (section, instructor)
+  // 1) Scheduler sections (online + on-ground).
+  (inp.sections || []).forEach(o => {
+    const code = canonicalCourseCode(o.code || "");
+    if(!code || isHiddenCourse(code)) return;
+    const prog = o.prog === "semester" ? "semester" : "online";
+    const sec = String(o.sec || "").trim();
+    const rowsHere = sec ? (cByKey.get(cKey(code, sec, prog)) || []) : [];
+    const prefer = rowsHere.map(x => facById.get(x.c.faculty_id)).filter(Boolean);
+    const names = _ldSplitInstructors(o.instructor, faculty, prefer);
+    if(!names.length) return;
+    const enrOwl = o.enrolled == null ? null : Number(o.enrolled);
+    const credits = owlCredits.get(`${code}|${_verNormSec(sec)}|${prog}|${o.lab ? 1 : 0}`)
+      ?? (Number(o.catalogCredits) || (ix.credits.get(code) || {}).cr || 3);
+    names.forEach(nm => {
+      const f = _ldMatchFaculty(nm, faculty, prefer);
+      const hit = f ? rowsHere.find(x => x.c.faculty_id === f.id && !used.has(x)) : null;
+      const base = { code, sec, prog, title: o.title || "", sub: o.sub, slot: o.slot,
+                     name: f ? _ldName(f) : nm, fac: f, oid: o.id };
+      if(hit){
+        used.add(hit);
+        const c = hit.c;
+        const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
+                                 statusOverride: c.status_override, courseType: c.course_type }, S);
+        const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet)
+                  : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
+        sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
+                        source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
+      } else {
+        const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
+        const fixed = _ldFixedHours(code, S);
+        const known = (fixed == null && st !== "internship" && !_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) ? _ldKnownFh(ix, code, ord) : null;
+        const hrs = (st === "internship" ? 3 : (fixed ?? known ?? credits)) / names.length;
+        const src = names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler";
+        sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, started: startedOf(o.started, null),
+                        source: known != null && known !== credits ? `${src} · the course's faculty hours` : src });
+      }
+    });
+  });
+  // 2) Contracting-app records the scheduler doesn't have (e.g. Fall 2026 on-ground).
+  cRows.forEach(x => {
+    if(used.has(x)) return;
+    const c = x.c, f = facById.get(c.faculty_id);
+    if(!f) return;
+    // The online app and the on-ground app can both list the same online section.
+    if(x.src === "onc" && cRows.some(y => y.src === "ogc" && y.c.faculty_id === c.faculty_id &&
+         cKey(y.c.course_code, y.c.section, y.prog) === cKey(c.course_code, c.section, x.prog))) return;
+    const code = canonicalCourseCode(c.course_code || "");
+    if(isHiddenCourse(code)) return;
+    const st = _ldClassify({ code, title: c.title, enrollment: c.enrollment, delivery: c.delivery,
+                             statusOverride: c.status_override, courseType: c.course_type }, S);
+    const hrs = x.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet) : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || 0));
+    sections.push({ code, sec: c.section, prog: x.prog, title: c.title || "", sub: c.subterm || "", slot: "",
+                    name: _ldName(f), fac: f, enrollment: c.enrollment, status: st, hours: hrs, started: startedOf(null, c.start_date),
+                    source: (x.src === "ogc" ? "On-ground contracting app" : "Online contracting app") + " only" });
+  });
+  // 3) Roll up per instructor.
+  const people = new Map();
+  sections.forEach(s => {
+    const key = s.fac ? "f:" + s.fac.id : "n:" + s.name.toLowerCase();
+    if(!people.has(key)) people.set(key, { key, name: s.name, fac: s.fac, sections: [] });
+    people.get(key).sections.push(s);
+  });
+  const ftDefault = Number(S.full_time_load_credits) || 12;
+  const summer = semester === "Summer";
+  const rnd = n => Math.round(n * 100) / 100;
+  const statusOf = (usedAmt, limit, within) => usedAmt > limit + 1e-9 ? "over" : (Math.abs(usedAmt - limit) < 1e-9 ? "at" : (usedAmt >= limit - within - 1e-9 ? "close" : "ok"));
+  // Counts "if every section makes": made, or not made yet and not started yet.
+  const couldCount = s => s.status === "made" || (_LD_COUNTS_IF_MADE.has(s.status) && !s.started);
+  const rows = [...people.values()].map(p => {
+    const now = rnd(p.sections.filter(s => s.status === "made").reduce((a, s) => a + s.hours, 0));
+    const all = rnd(p.sections.filter(couldCount).reduce((a, s) => a + s.hours, 0));
+    const tut = rnd(p.sections.filter(s => s.status === "tutorial").reduce((a, s) => a + s.hours, 0));
+    const type = !p.fac ? "unknown" : (p.fac.faculty_type === "full_time" ? "full_time" : "adjunct");
+    let contract = null, limitTotal = null, limitKind = null, unit = "hours", usedNow = now, usedAll = all, sNow = "unknown", sAll = "unknown";
+    if(type === "adjunct"){
+      limitKind = "adjunct"; limitTotal = LOAD_ADJUNCT_LIMIT;
+      sNow = statusOf(now, limitTotal, LOAD_CLOSE_WITHIN); sAll = statusOf(all, limitTotal, LOAD_CLOSE_WITHIN);
+    } else if(type === "full_time" && summer){
+      limitKind = "full_time_summer"; unit = "sections"; contract = 0; limitTotal = LOAD_FT_SUMMER_SECTIONS;
+      const count = ok => p.sections.filter(s => ok(s) && s.hours > 1e-9).length;
+      usedNow = count(s => s.status === "made"); usedAll = count(couldCount);
+      sNow = statusOf(usedNow, limitTotal, 0); sAll = statusOf(usedAll, limitTotal, 0);
+    } else if(type === "full_time"){
+      limitKind = "full_time";
+      contract = Number(p.fac.contracted_load) > 0 ? Number(p.fac.contracted_load) : ftDefault;
+      limitTotal = contract + LOAD_FT_OVERLOAD_LIMIT;
+      sNow = statusOf(now, limitTotal, LOAD_CLOSE_WITHIN); sAll = statusOf(all, limitTotal, LOAD_CLOSE_WITHIN);
+    }
+    return { ...p, type, contract, contractDefault: type === "full_time" && !summer && !(Number(p.fac.contracted_load) > 0),
+             now, all, tut, unit, usedNow, usedAll, limitTotal, limitKind, sNow, sAll,
+             staff: !!(p.fac && p.fac.faculty_type === "staff") };
+  });
+  const rank = { over:0, at:1, close:2, ok:3, unknown:4 };
+  rows.sort((a, b) => (Math.min(rank[a.sNow], rank[a.sAll]) - Math.min(rank[b.sNow], rank[b.sAll])) || (b.all - a.all) || a.name.localeCompare(b.name));
+  return { rows, term, hasContractTerm: cRows.length > 0, termSet };
+}
+// How far one person is over their limit: on made sections ("now"), or counting
+// every assigned section as if it makes ("all"). null when not over or unknown.
+function _ldOverBy(row, which){
+  if(!row || row.limitTotal == null) return null;
+  const over = Math.round(((which === "now" ? row.usedNow : row.usedAll) - row.limitTotal) * 100) / 100;
+  return over > 0 ? over : null;
+}
+// "ART 110 01" labels of a person's made sections (sorted; repeats kept).
+function _ldMadeLabels(row){
+  return ((row && row.sections) || []).filter(s => s.status === "made")
+    .map(s => `${s.code}${s.sec ? " " + s.sec : ""}`).sort();
+}
+/* LOAD-ENGINE:END */
+
 /* ============================================================
    Supabase Auth (Phase 2)
    ────────────────────────────────────────────────────────────
@@ -3570,10 +4002,7 @@ function missingDeanPrefixes() {
 /* Canonical course code: exactly "PREFIX NUMBER" (first two whitespace-
    separated tokens), upper-cased, single space.  Strips section suffixes
    like "ACC 240 01" → "ACC 240". */
-function canonicalCourseCode(raw) {
-  const parts = (raw || "").trim().toUpperCase().split(/\s+/);
-  return parts.slice(0, 2).join(" ");
-}
+// canonicalCourseCode(): in the shared LOAD-ENGINE block at the top of this script.
 
 /* Look up a PM by course code, trying the exact code first then the
    canonical (PREFIX NUMBER) form.  This lets pmByCourse work regardless
@@ -6022,11 +6451,7 @@ function isOverdue(o) {
   return !isNaN(dl) && dl < new Date();
 }
 
-// Courses handled entirely outside the scheduler (e.g. ALE 799 dissertation
-// continuation — arranged per-student by voucher, many instructor-specific
-// sections). Hidden from Term Assignments AND skipped by Owlnet verification.
-const HIDDEN_COURSES = new Set(["ALE 799", "DIS 781", "DIS 790", "DIS 791"]);
-function isHiddenCourse(code){ return HIDDEN_COURSES.has(canonicalCourseCode(code || "")); }
+// HIDDEN_COURSES / isHiddenCourse(): in the shared LOAD-ENGINE block at the top of this script.
 
 function applyTermFilters(list) {
   const s = (state.termFilter.search || "").trim().toLowerCase();
@@ -6539,6 +6964,7 @@ function renderTermTable(list) {
       }
     }
   }
+  refreshLoadWarnings();
 }
 
 /* Compute per-section index ("01", "02", "03", …) for an offering within its
@@ -6818,7 +7244,22 @@ function cancelCourseOffering(offeringId) {
    Creates the Add Section ± Assign Instructor change request, marks the
    offering as submitted (SENT badge), and re-renders.  Returns true if
    the submission happened so callers can decide whether to advance focus. */
-function submitNewSectionChange(o) {
+// `after` runs once the section is actually submitted (e.g. the contract PDF) —
+// not if the over-the-load-limit warning sends them back.
+function submitNewSectionChange(o, after) {
+  if (!o || !o.isNewSection || o.submitted || o.canceled) return false;
+  loadGate({ semester: o.semester, year: o.year, offeringId: o.id, instructor: o.instructor,
+             okLabel: "Submit anyway", verb: "submit it" },
+    overs => {
+      if (_submitNewSectionChangeNow(o) === false) return;
+      const c = state.courses.find(x => x.id === o.courseId);
+      recordLoadAlerts(overs, { semester: o.semester, year: o.year, code: c ? c.code : _verCourseCode(o),
+                                section: displaySectionFor(o), offeringId: o.id, action: "add_section" });
+      if (after) after();
+    });
+  return true;
+}
+function _submitNewSectionChangeNow(o) {
   if (!o || !o.isNewSection || o.submitted || o.canceled) return false;
   const c    = state.courses.find(x => x.id === o.courseId);
   const instr = (o.instructor || "").trim();
@@ -7504,11 +7945,24 @@ function _updateReqSaveBtn() {
 function submitSectionToRegistrar(offeringId) {
   const o = state.offerings.find(x => x.id === offeringId);
   if (!o) return;
-  const c = state.courses.find(x => x.id === o.courseId);
   if (!o.instructor || !o.instructor.trim()) {
     toast("Assign an instructor before submitting to the Registrar");
     return;
   }
+  // Over the load limit? Warn first ("Go back" / "Submit anyway") — never blocks.
+  loadGate({ semester: o.semester, year: o.year, offeringId: o.id, instructor: o.instructor,
+             okLabel: "Submit anyway", verb: "submit it" },
+    overs => {
+      _submitSectionToRegistrarNow(offeringId);
+      const c = state.courses.find(x => x.id === o.courseId);
+      recordLoadAlerts(overs, { semester: o.semester, year: o.year, code: c ? c.code : _verCourseCode(o),
+                                section: displaySectionFor(o), offeringId: o.id, action: "submit" });
+    });
+}
+function _submitSectionToRegistrarNow(offeringId) {
+  const o = state.offerings.find(x => x.id === offeringId);
+  if (!o || !o.instructor || !o.instructor.trim()) return;
+  const c = state.courses.find(x => x.id === o.courseId);
   o.submitted    = true;
   o.submittedAt  = new Date().toISOString();
   o.submittedBy  = state.userName || "(unknown)";
@@ -8899,81 +9353,9 @@ function _verCourseCode(o){
   const c = state.courses.find(x => x.id === o.courseId);
   return canonicalCourseCode((c && c.code) || o.courseCode || "");
 }
-function _verNormSec(s){ return String(s == null ? "" : s).replace(/\D/g,"").replace(/^0+/,"") || "0"; }
+// _verNormSec(): in the shared LOAD-ENGINE block at the top of this script.
 
-/* Instructor comparison for Owlnet verification. Owlnet writes "Last, First M"
-   (and "Staff, S" when the registrar hasn't entered anyone); the scheduler
-   stores free text, usually "First Last". */
-function _verIsStaff(name){
-  const n = String(name || "").trim().toLowerCase();
-  return !n || /^staff\b/.test(n) || n === "tba" || n === "faculty";
-}
-function _verNameParts(name){
-  const s = String(name || "").replace(/\./g, "").trim();
-  if(!s) return null;
-  if(s.includes(",")){
-    // Owlnet form "Last, First Middle" — keep every given name, since people
-    // often go by their middle name.
-    const i = s.indexOf(",");
-    const given = s.slice(i + 1).trim().toLowerCase().split(/\s+/).filter(Boolean);
-    return { last: s.slice(0, i).trim().toLowerCase().split(/[\s-]+/).filter(Boolean),
-             first: given[0] || "", given };
-  }
-  const t = s.toLowerCase().split(/\s+/).filter(Boolean);
-  if(t.length === 1) return { last: [t[0]], first: "", given: [] };
-  return { last: t.slice(1).flatMap(x => x.split("-")).filter(Boolean), first: t[0], given: [t[0]] };
-}
-// Common nicknames whose spelling shares no prefix/suffix with the full name.
-const _VER_NICK = {
-  bob:"robert", rob:"robert", robbie:"robert", bobby:"robert", bert:"robert",
-  bill:"william", billy:"william", will:"william", liam:"william",
-  jim:"james", jimmy:"james", jamie:"james", dick:"richard", rick:"richard", rich:"richard",
-  ted:"edward", ed:"edward", eddie:"edward", ned:"edward", jack:"john", johnny:"john",
-  dave:"david", joe:"joseph", joey:"joseph", andy:"andrew", drew:"andrew",
-  steve:"steven", chuck:"charles", charlie:"charles", hank:"henry", harry:"henry",
-  peggy:"margaret", maggie:"margaret", meg:"margaret", liz:"elizabeth", betty:"elizabeth",
-  kate:"katherine", katie:"katherine", kathy:"katherine", becky:"rebecca", patty:"patricia",
-  jennie:"jennifer", jenny:"jennifer", sandy:"sandra", sue:"susan", trish:"patricia",
-  tony:"anthony", toni:"antoinette", lisa:"elizabeth", bess:"elizabeth", polly:"mary",
-  nancy:"ann", sasha:"alexander", xander:"alexander", gus:"augustus",
-  sheb:"gulsebnem",
-};
-function _verFirstCompatible(x, y){
-  if(!x || !y) return true;
-  if(x === y || x[0] === y[0]) return true;
-  if(x.startsWith(y) || y.startsWith(x)) return true;                 // Lee / Leola
-  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
-  if(s.length >= 3 && l.endsWith(s)) return true;                     // Beth / Elizabeth, Drew / Andrew
-  const fx = _VER_NICK[x] || x, fy = _VER_NICK[y] || y;
-  return fx === fy || fx.startsWith(fy) || fy.startsWith(fx);          // Bob / Robert, Tony / Anthony
-}
-// Same person? Blank in the scheduler matches "Staff" on Owlnet; otherwise the
-// last name must agree and the scheduler's first name must be compatible with
-// one of Owlnet's given names (initial, prefix, suffix or a known nickname).
-function _verSameInstructor(schedName, owlName){
-  const schedBlank = _verIsStaff(schedName), owlStaff = _verIsStaff(owlName);
-  if(schedBlank || owlStaff) return schedBlank && owlStaff;
-  const a = _verNameParts(schedName), b = _verNameParts(owlName);
-  if(!a || !b) return false;
-  const firstOk = !a.first || !b.given.length || b.given.some(g => _verFirstCompatible(a.first, g));
-  if(a.last.some(x => b.last.includes(x))) return firstOk;
-  // A one-letter last-name typo ("Simmons" / "Simons") still counts when the
-  // first name agrees exactly — same course, same person.
-  const exactFirst = a.first && b.given.some(g => g === a.first);
-  return !!exactFirst && a.last.some(x => b.last.some(y => x.length >= 4 && y.length >= 4 && _verEdit1(x, y)));
-}
-// True when two strings differ by at most one insertion, deletion or substitution.
-function _verEdit1(x, y){
-  if(x === y) return true;
-  if(Math.abs(x.length - y.length) > 1) return false;
-  let i = 0, j = 0, diffs = 0;
-  while(i < x.length && j < y.length){
-    if(x[i] === y[j]){ i++; j++; continue; }
-    if(++diffs > 1) return false;
-    if(x.length > y.length) i++; else if(y.length > x.length) j++; else { i++; j++; }
-  }
-  return diffs + (x.length - i) + (y.length - j) <= 1;
-}
+// _verIsStaff() / _verSameInstructor() and their name helpers: in the shared LOAD-ENGINE block at the top of this script.
 // LIVE = verified on Owlnet AND the instructor hasn't changed since — so editing
 // the instructor drops the row back to DONE until the next verification.
 // Enrollment from Owlnet. Its "Seats Open" column is REMAINING / CAP, so
@@ -9103,24 +9485,14 @@ function addOfferingFromOwlnet(code, sub, semester, year){
   toast(`Added ${c.code}${o.officialSection ? " " + o.officialSection : ""} to Term Assignments (${semester} ${({ "1A":"A", "2B":"B", "3C":"C" }[sub] || sub)}) — unassigned.`);
   return true;
 }
-/* Which program an Owlnet section belongs to. OU/OG divisions are the online
-   program. SU (Semester Undergraduate) is the on-ground semester program — except
-   online-program sections the registrar filed under SU by mistake, which keep the
-   online suffix (e.g. "ACC 240 01 OLC"). Full-semester "FUL" sections taught
-   online/synchronously are still semester-program. */
-const OWLNET_ONLINE_SUFFIXES = new Set(["OLC", "GPS"]);
-function _owlProgram(r){
-  const div = String(r.division || "").toUpperCase();
-  if(div !== "SU") return "online";
-  return OWLNET_ONLINE_SUFFIXES.has(String(r.suffix || "").trim().toUpperCase()) ? "online" : "semester";
-}
+// OWLNET_ONLINE_SUFFIXES / _owlProgram(): in the shared LOAD-ENGINE block at the top of this script.
 
 /* ─── On-ground (semester program) sections from Owlnet ───────────────────────
    The on-ground schedule is imported from Owlnet's Semester Undergraduate list
    (FUL / 1FUL sections, plus "FUL L" labs as their own rows) — see the
    Verification panel's "On-ground import" tab. */
 function isOnGroundRow(o){ return !!o && offeringModality(o) === "On-Ground"; }
-const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
+// _owlIsLab(): in the shared LOAD-ENGINE block at the top of this script.
 function _owlIsOgImport(r){
   if(_owlProgram(r) !== "semester") return false;
   const suf = String(r.suffix || "").trim().toUpperCase();
@@ -10110,231 +10482,289 @@ async function downloadOnGroundPreviewXlsx(btn, plan, sel){
   finally{ if(btn){ btn.disabled = false; btn.textContent = label; } }
 }
 
-/* ─── Faculty loads (Verification → "Faculty loads") ───────────────────────────
-   Per semester, every instructor's teaching across online AND on-ground, checked
-   against the load limits:
-     • Adjuncts (and staff): at most 9 load hours of MADE sections a semester —
-       tutorials (fewer than 8 students) don't count.
-     • Full-time: at most 6 MADE load hours beyond their contracted load (a
-       contracted load of 0 means the standard 12).
-   Load hours and section status follow the contracting apps (ogc_* / onc_*): a
-   section's faculty hours × that instructor's share (team-taught split), with the
-   apps' overrides; internships, independent studies, voucher and Connections
-   courses don't count. Where the contracting apps have the section (today: only
-   Fall 2026) their record is used; otherwise the scheduler's assignment + Owlnet
-   enrollment + credit hours, split evenly across a team. Two numbers: made now,
-   and "if every section makes". Close = within 3 hours of the limit. */
-const LOAD_ADJUNCT_LIMIT = 9, LOAD_FT_OVERLOAD_LIMIT = 6, LOAD_CLOSE_WITHIN = 3;
-const _LD_DEFAULTS = {
-  full_enrollment_threshold: 8, full_time_load_credits: 12, always_made_prefixes: ["EQR"],
-  voucher_prefixes: ["DIS"], voucher_courses: ["EDU 799", "EDU 790"], internship_courses: [],
-  internship_title_match: "Internship", connections_courses: [], connections_title_match: "Connections",
-  fixed_faculty_hours: {}, credit_hour_subjects: [], ignored_delivery_codes: ["CIC"], online_codes: ["OLC", "GPS"],
-};
-const _ldUp = v => (Array.isArray(v) ? v : (v ? [v] : [])).map(x => String(x).replace(/\s+/g, " ").trim().toUpperCase()).filter(Boolean);
-function _ldTermCode(semester, year){
-  return ({ Fall:"FA", Spring:"SP", Summer:"SU" }[semester] || "") + String(year).slice(-2);
-}
-// Load the contracting apps' faculty list, settings and section records (cached).
+/* ─── Faculty loads (Verification → "Faculty loads") and over-limit warnings ───
+   The calculation itself is the shared LOAD-ENGINE block at the top of this
+   script (_ldCompute) — the hourly load-alerts edge function runs the same code. */
+// The contracting apps' faculty list, load settings and section records, plus
+// Owlnet credits, from sched_load_inputs(): every scheduler role may call it, and
+// it carries nothing about pay. Cached; one request in flight at a time.
+let _contractLoading = null;
 async function loadContractData(force){
   if(state.contract && !force) return state.contract;
-  const [fac, set, ogc, onc] = await Promise.all([
-    selectAll("ogc_faculty"), selectAll("ogc_settings"), selectAll("ogc_courses"), selectAll("onc_sections"),
-  ]);
-  const err = [fac, set, ogc, onc].find(r => r && r.error);
-  if(err) throw new Error((err.error && err.error.message) || "contract data read failed");
-  const settings = { ..._LD_DEFAULTS };
-  (set.data || []).forEach(s => { settings[s.key] = s.value; });
-  state.contract = { faculty: (fac.data || []).filter(f => f.is_active !== false), settings,
-                     ogc: ogc.data || [], onc: onc.data || [], loadedAt: Date.now() };
-  return state.contract;
+  if(_contractLoading) return _contractLoading;
+  _contractLoading = (async () => {
+    const { data, error } = await sb.rpc("sched_load_inputs");
+    if(error) throw new Error(error.message || "load inputs read failed");
+    const d = data || {};
+    const C = { faculty: d.faculty || [], settings: { ..._LD_DEFAULTS, ...(d.settings || {}) },
+                ogc: d.ogc || [], onc: d.onc || [], owlnet: d.owlnet || [], loadedAt: Date.now() };
+    C.fhIndex = _ldFhIndex(C.ogc);
+    state.contract = C;
+    return C;
+  })();
+  try { return await _contractLoading; } finally { _contractLoading = null; }
 }
-// Section status the way the contracting apps classify it, reduced to what the
-// limits care about. Only "made" counts now; "tutorial"/"none"/"unknown" would
-// count if they make; everything else never counts.
-function _ldClassify(s, S){
-  const ov = String(s.statusOverride || "");
-  if(ov === "Made" || ov === "Applied to Contract") return "made";
-  if(ov === "Tutorial") return "tutorial";
-  if(ov === "Internship") return "internship";
-  if(ov === "Connections") return "connections";
-  if(ov === "Voucher") return "voucher";
-  if(ov === "Not contracted") return "notcontracted";
-  if(ov === "Combined") return "combined";
-  if(ov === "No Enrollment") return "none";
-  const code = String(s.code || "").toUpperCase(), subj = code.split(" ")[0], title = String(s.title || "").toLowerCase();
-  if(_ldUp(S.ignored_delivery_codes).includes(String(s.delivery || "").toUpperCase())) return "notcontracted";
-  const enr = s.enrollment;
-  if(_ldUp(S.internship_courses).includes(code) || (S.internship_title_match && title.includes(String(S.internship_title_match).toLowerCase()))) return "internship";
-  if(_ldUp(S.connections_courses).includes(code) || (S.connections_title_match && title.includes(String(S.connections_title_match).toLowerCase()))) return "connections";
-  if(_ldUp(S.voucher_prefixes).includes(subj) || _ldUp(S.voucher_courses).includes(code)) return "voucher";
-  if(s.courseType === "independent_study" || /independent stud/.test(title)) return "indstudy";
-  if(_ldUp(S.always_made_prefixes).includes(subj) && enr > 0) return "made";
-  if(enr == null) return "unknown";
-  const thr = Number(S.full_enrollment_threshold) || 8;
-  if(enr >= thr) return "made";
-  return enr > 0 ? "tutorial" : "none";
-}
-const _LD_COUNTS_IF_MADE = new Set(["made", "tutorial", "none", "unknown"]);
-const _LD_STATUS_LABEL = { made:"Made", tutorial:"Tutorial", none:"No enrollment", unknown:"Enrollment unknown",
-  internship:"Internship", connections:"Connections", voucher:"Voucher", indstudy:"Independent study",
-  notcontracted:"Not contracted", combined:"Combined" };
-function _ldFixedHours(code, S){
-  const map = S.fixed_faculty_hours;
-  if(!map || typeof map !== "object") return null;
-  const hit = Object.entries(map).find(([k]) => String(k).replace(/\s+/g, " ").trim().toUpperCase() === code);
-  return hit && !isNaN(Number(hit[1])) ? Number(hit[1]) : null;
-}
-// The on-ground contracting app's loadHoursOf(): faculty hours × share, overrides first.
-function _ldOgcLoadHours(c, S, status){
-  if(c.load_hours_override != null && c.load_hours_override !== "" && !isNaN(Number(c.load_hours_override))) return Number(c.load_hours_override);
-  let fh;
-  if(c.faculty_hours_override != null && c.faculty_hours_override !== "" && !isNaN(Number(c.faculty_hours_override))) fh = Number(c.faculty_hours_override);
-  else {
-    const code = canonicalCourseCode(c.course_code || ""), fixed = _ldFixedHours(code, S);
-    if(fixed != null) fh = fixed;
-    else if(status === "internship") fh = 3;
-    else if(_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) fh = Number(c.credit_hours) || 0;
-    else fh = (c.faculty_hours == null || isNaN(Number(c.faculty_hours))) ? (Number(c.credit_hours) || 0) : Number(c.faculty_hours);
-  }
-  const pct = (c.pct_toward_load == null || isNaN(Number(c.pct_toward_load))) ? 1 : Number(c.pct_toward_load);
-  return fh * pct;
-}
-const _ldName = f => `${f.first_name || ""} ${f.last_name || ""}`.replace(/\s+/g, " ").trim();
-// Match one scheduler name to a contracting-app faculty record. Candidates on the
-// same section in the contracting apps are tried first (disambiguates "Smith").
-function _ldMatchFaculty(name, faculty, prefer){
-  const n = String(name || "").trim();
-  if(!n || _verIsStaff(n)) return null;
-  const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
-  const pools = [prefer || [], faculty];
-  for(const pool of pools){
-    if(!pool.length) continue;
-    const exact = pool.filter(f => norm(_ldName(f)) === norm(n));
-    if(exact.length === 1) return exact[0];
-    const loose = pool.filter(f => _verSameInstructor(n, `${f.last_name}, ${f.first_name}`));
-    if(loose.length === 1) return loose[0];
-    // A bare last name ("Bielawski") — unique within the pool.
-    if(!/\s/.test(n)){
-      const byLast = pool.filter(f => norm(f.last_name || "") === norm(n));
-      if(byLast.length === 1) return byLast[0];
-    }
-  }
-  return null;
-}
-// "Alanna Bielawski, Melissa Smith" / "Bielawski, Smith, Haben" → people. A single
-// "Last, First" (one comma, matches one person whole) stays one person.
-function _ldSplitInstructors(text, faculty, prefer){
-  const t = String(text || "").trim();
-  if(!t || _verIsStaff(t)) return [];
-  if(!/[,;\/&]|\band\b/i.test(t)) return [t];
-  if((t.match(/,/g) || []).length === 1 && _ldMatchFaculty(t, faculty, prefer)) return [t];
-  return t.split(/\s*(?:[,;\/&]|\band\b)\s*/i).map(x => x.trim()).filter(x => x && !_verIsStaff(x));
-}
-
-function computeFacultyLoads(semester, year){
-  const C = state.contract || { faculty: [], settings: { ..._LD_DEFAULTS }, ogc: [], onc: [] };
-  const S = C.settings, faculty = C.faculty, term = _ldTermCode(semester, year);
-  const onlineCodes = _ldUp(S.online_codes);
-  const progOfDelivery = d => onlineCodes.includes(String(d || "").toUpperCase()) ? "online" : "semester";
-  const facById = new Map(faculty.map(f => [f.id, f]));
-  // Contracting-app records for this term, keyed by course + section + program.
-  const cRows = [
-    ...C.ogc.filter(c => c.term_code === term).map(c => ({ src:"ogc", c, prog: progOfDelivery(c.delivery) })),
-    ...C.onc.filter(c => c.term_code === term && !c.excluded).map(c => ({ src:"onc", c, prog: progOfDelivery(c.delivery) })),
-  ];
-  const cKey = (code, sec, prog) => `${canonicalCourseCode(code)}|${_verNormSec(sec)}|${prog}`;
-  const cByKey = new Map();
-  cRows.forEach(x => { const k = cKey(x.c.course_code, x.c.section, x.prog); if(!cByKey.has(k)) cByKey.set(k, []); cByKey.get(k).push(x); });
-  const used = new Set();                // contract rows already accounted for
-  const sections = [];                   // one entry per (section, instructor)
-  const owlCredits = (code, sec, prog, lab) => {
-    const r = (state.owlnetSections || []).find(w => w.semester === semester && Number(w.acad_year) === Number(year) &&
-      canonicalCourseCode(`${w.prefix} ${w.course_number}`) === code && _verNormSec(w.section) === _verNormSec(sec) &&
-      (_owlProgram(w) === "online" ? "online" : "semester") === prog && _owlIsLab(w) === !!lab);
-    return r && r.credits != null ? Number(r.credits) : null;
-  };
-  // 1) Scheduler sections (online + on-ground).
+// The scheduler's sections for one semester in the engine's shape.
+// opts.override = { offeringId, instructor } tries a different instructor on one
+// section; opts.extra adds a section that doesn't exist yet (Add Section, a request).
+function _ldSchedulerSections(semester, year, opts){
+  const op = opts || {};
+  const courseById = new Map((state.courses || []).map(c => [c.id, c]));
+  const today = _ldToday(), out = [];
   (state.offerings || []).forEach(o => {
     if(o.deleted || o.canceled || o.semester !== semester || Number(o.year) !== Number(year)) return;
-    const code = _verCourseCode(o);
-    if(!code || isHiddenCourse(code)) return;
-    const prog = isOnGroundRow(o) ? "semester" : "online";
-    const sec = String(o.officialSection || "").trim();
-    const crs = (state.courses || []).find(x => x.id === o.courseId) || {};
-    const rowsHere = sec ? (cByKey.get(cKey(code, sec, prog)) || []) : [];
-    const prefer = rowsHere.map(x => facById.get(x.c.faculty_id)).filter(Boolean);
-    const names = _ldSplitInstructors(o.instructor, faculty, prefer);
-    if(!names.length) return;
-    const enrOwl = (o.owlnetSeatsCap != null && o.owlnetSeatsOpen != null) ? Math.max(0, Number(o.owlnetSeatsCap) - Number(o.owlnetSeatsOpen)) : null;
-    const credits = owlCredits(code, sec, prog, o.owlnetLab) ?? (Number(crs.credits) || 3);
-    names.forEach(nm => {
-      const f = _ldMatchFaculty(nm, faculty, prefer);
-      const hit = f ? rowsHere.find(x => x.c.faculty_id === f.id && !used.has(x)) : null;
-      const base = { code, sec, prog, title: crs.title || o.owlnetTitle || "", sub: o.subterm, slot: o.rotationSlot,
-                     name: f ? _ldName(f) : nm, fac: f, oid: o.id };
-      if(hit){
-        used.add(hit);
-        const c = hit.c;
-        const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
-                                 statusOverride: c.status_override, courseType: c.course_type }, S);
-        const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st)
-                  : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
-        sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
-      } else {
-        const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
-        const hrs = (st === "internship" ? 3 : (_ldFixedHours(code, S) ?? credits)) / names.length;
-        sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, source: names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler" });
-      }
+    const crs = courseById.get(o.courseId) || {};
+    const start = termStartDate(o.semester, o.subterm, o.year);
+    out.push({
+      id: o.id, code: _verCourseCode(o), sec: String(o.officialSection || "").trim(),
+      prog: isOnGroundRow(o) ? "semester" : "online", lab: !!o.owlnetLab,
+      title: crs.title || o.owlnetTitle || "", sub: o.subterm, slot: o.rotationSlot,
+      instructor: (op.override && op.override.offeringId === o.id) ? op.override.instructor : o.instructor,
+      enrolled: (o.owlnetSeatsCap != null && o.owlnetSeatsOpen != null) ? Math.max(0, Number(o.owlnetSeatsCap) - Number(o.owlnetSeatsOpen)) : null,
+      catalogCredits: Number(crs.credits) || null,
+      started: start ? start <= today : null,
     });
   });
-  // 2) Contracting-app records the scheduler doesn't have (e.g. Fall 2026 on-ground).
-  cRows.forEach(x => {
-    if(used.has(x)) return;
-    const c = x.c, f = facById.get(c.faculty_id);
-    if(!f) return;
-    // The online app and the on-ground app can both list the same online section.
-    if(x.src === "onc" && cRows.some(y => y.src === "ogc" && y.c.faculty_id === c.faculty_id &&
-         cKey(y.c.course_code, y.c.section, y.prog) === cKey(c.course_code, c.section, x.prog))) return;
-    const code = canonicalCourseCode(c.course_code || "");
-    if(isHiddenCourse(code)) return;
-    const st = _ldClassify({ code, title: c.title, enrollment: c.enrollment, delivery: c.delivery,
-                             statusOverride: c.status_override, courseType: c.course_type }, S);
-    const hrs = x.src === "ogc" ? _ldOgcLoadHours(c, S, st) : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || 0));
-    sections.push({ code, sec: c.section, prog: x.prog, title: c.title || "", sub: c.subterm || "", slot: "",
-                    name: _ldName(f), fac: f, enrollment: c.enrollment, status: st, hours: hrs,
-                    source: (x.src === "ogc" ? "On-ground contracting app" : "Online contracting app") + " only" });
-  });
-  // 3) Roll up per instructor.
-  const people = new Map();
-  sections.forEach(s => {
-    const key = s.fac ? "f:" + s.fac.id : "n:" + s.name.toLowerCase();
-    if(!people.has(key)) people.set(key, { key, name: s.name, fac: s.fac, sections: [] });
-    people.get(key).sections.push(s);
-  });
-  const ftDefault = Number(S.full_time_load_credits) || 12;
-  const rnd = n => Math.round(n * 100) / 100;
-  const statusOf = (excess, limit) => excess > limit + 1e-9 ? "over" : (Math.abs(excess - limit) < 1e-9 ? "at" : (excess >= limit - LOAD_CLOSE_WITHIN - 1e-9 ? "close" : "ok"));
-  const rows = [...people.values()].map(p => {
-    const now = rnd(p.sections.filter(s => s.status === "made").reduce((a, s) => a + s.hours, 0));
-    const all = rnd(p.sections.filter(s => _LD_COUNTS_IF_MADE.has(s.status)).reduce((a, s) => a + s.hours, 0));
-    const tut = rnd(p.sections.filter(s => s.status === "tutorial").reduce((a, s) => a + s.hours, 0));
-    const type = !p.fac ? "unknown" : (p.fac.faculty_type === "full_time" ? "full_time" : "adjunct");
-    let contract = null, limitTotal = null, sNow = "unknown", sAll = "unknown";
-    if(type === "adjunct"){
-      limitTotal = LOAD_ADJUNCT_LIMIT;
-      sNow = statusOf(now, LOAD_ADJUNCT_LIMIT); sAll = statusOf(all, LOAD_ADJUNCT_LIMIT);
-    } else if(type === "full_time"){
-      contract = Number(p.fac.contracted_load) > 0 ? Number(p.fac.contracted_load) : ftDefault;
-      limitTotal = contract + LOAD_FT_OVERLOAD_LIMIT;
-      sNow = statusOf(now - contract, LOAD_FT_OVERLOAD_LIMIT); sAll = statusOf(all - contract, LOAD_FT_OVERLOAD_LIMIT);
+  if(op.extra) out.push({ started: false, ...op.extra });
+  return out;
+}
+// Today as "YYYY-MM-DD" in local time (term dates are local calendar dates).
+function _ldToday(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function computeFacultyLoads(semester, year, opts){
+  const C = state.contract || { faculty: [], settings: { ..._LD_DEFAULTS }, ogc: [], onc: [], owlnet: [] };
+  // An admin's Verification panel may hold a fresher Owlnet read than the cached inputs.
+  const owlnet = (state.owlnetSections && state.owlnetSections.length) ? state.owlnetSections : (C.owlnet || []);
+  return _ldCompute({ semester, year: Number(year), today: _ldToday(),
+                      sections: _ldSchedulerSections(semester, Number(year), opts), owlnet, contract: C });
+}
+
+/* ─── Over-the-limit warnings ──────────────────────────────────────────────────
+   Counting every section a person is assigned that semester as if it makes:
+   • Term Assignments shows a line under the instructor while they're over;
+   • Submit to Registrar, Add Section, and filing or approving a request that
+     names an instructor ask first — "Go back" / "Submit anyway". Never blocks.
+   • "Submit anyway" is recorded in load_alerts for admins (Verification →
+     Faculty loads). The hourly load-alerts edge function marks the record when
+     enough sections MAKE that the overload is real, which shows in the hub.
+   PMs and deans see only how far over — not contracted loads or other sections. */
+function _ldWarnText(over, kind, unit){
+  const n = Math.round(over * 100) / 100;
+  if(unit === "sections") return `${n} section${n === 1 ? "" : "s"} over the full-time summer limit (2 sections)`;
+  return `${n} hour${n === 1 ? "" : "s"} over the ${kind === "full_time" ? "full-time overload" : "adjunct"} limit`;
+}
+// The people on one section who'd be over, counting every section as if it makes.
+function _ldOversOn(res, oid){
+  return res.rows.filter(r => r.sections.some(s => s.oid === oid))
+    .map(r => ({ row: r, over: _ldOverBy(r, "all") })).filter(x => x.over != null);
+}
+// Term Assignments: a line under the instructor on each row whose instructor is
+// over. Touches only that line, so typing and focus are never disturbed.
+function refreshLoadWarnings(){
+  const tb = document.getElementById("ttbody");
+  if(!tb) return;
+  const ready = !!state.contract, perTerm = new Map();
+  tb.querySelectorAll("tr[data-oid]").forEach(tr => {
+    const cell = tr.querySelector("td.instr-cell");
+    if(!cell) return;
+    let html = "";
+    const o = ready ? state.offerings.find(x => x.id === tr.dataset.oid) : null;
+    if(o && !o.canceled && !o.deleted && String(o.instructor || "").trim()){
+      const k = `${o.semester}|${o.year}`;
+      if(!perTerm.has(k)){
+        let res = null;
+        try { res = computeFacultyLoads(o.semester, Number(o.year)); } catch(e){ _err("load warning check failed", e); }
+        perTerm.set(k, res);
+      }
+      const res = perTerm.get(k);
+      const overs = res ? _ldOversOn(res, o.id) : [];
+      html = overs.map(x => `<div title="${escapeHtml(`Assuming all of ${x.row.name}'s ${o.semester} ${o.year} sections that haven't started yet make`)}">⚠ ${overs.length > 1 ? escapeHtml(x.row.name) + ": " : ""}${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</div>`).join("");
     }
-    return { ...p, type, contract, contractDefault: type === "full_time" && !(Number(p.fac.contracted_load) > 0),
-             now, all, tut, limitTotal, sNow, sAll, staff: !!(p.fac && p.fac.faculty_type === "staff") };
+    let box = cell.querySelector(".load-warn");
+    if(!html){ if(box) box.remove(); return; }
+    if(!box){ box = document.createElement("div"); box.className = "load-warn"; cell.appendChild(box); }
+    if(box.innerHTML !== html) box.innerHTML = html;
   });
-  const rank = { over:0, at:1, close:2, ok:3, unknown:4 };
-  rows.sort((a, b) => (Math.min(rank[a.sNow], rank[a.sAll]) - Math.min(rank[b.sNow], rank[b.sAll])) || (b.all - a.all) || a.name.localeCompare(b.name));
-  return { rows, term, hasContractTerm: cRows.length > 0 };
+}
+// Before a submit: if the instructor would be over, ask. `proceed(overs)` runs
+// (synchronously when the load inputs are already loaded) unless they go back.
+// Any failure to check lets the submit through — the warning never blocks work.
+// ctx = { semester, year, instructor, offeringId | extra, okLabel, verb }
+let _ldGateOpen = false;
+function loadGate(ctx, proceed){
+  if(_ldGateOpen) return;                       // a warning is already on screen
+  const instr = String(ctx.instructor || "").trim();
+  if(!instr) return proceed([]);
+  const evaluate = () => {
+    let overs = [];
+    try {
+      const opts = ctx.offeringId ? { override: { offeringId: ctx.offeringId, instructor: instr } }
+                                  : { extra: { ...ctx.extra, instructor: instr } };
+      overs = _ldOversOn(computeFacultyLoads(ctx.semester, Number(ctx.year), opts), ctx.offeringId || ctx.extra.id);
+    } catch(e){ _err("load check failed", e); overs = []; }
+    if(!overs.length) return proceed([]);
+    _ldGateOpen = true;
+    loadWarnDialog(ctx, overs).then(ok => { _ldGateOpen = false; if(ok) proceed(overs); });
+  };
+  if(state.contract) return evaluate();
+  loadContractData().then(evaluate, e => { console.warn("Load check skipped — couldn't read load inputs", e); proceed([]); });
+}
+function loadWarnDialog(ctx, overs){
+  return new Promise(resolve => {
+    let bd = document.getElementById("loadWarnDialog");
+    if(!bd){
+      bd = document.createElement("div");
+      bd.id = "loadWarnDialog";
+      bd.className = "modal-backdrop";
+      document.body.appendChild(bd);
+    }
+    const lines = overs.map(x => `<p style="margin:0 0 8px;"><strong>${escapeHtml(x.row.name)}</strong> would be <strong>${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</strong> for ${escapeHtml(`${ctx.semester} ${ctx.year}`)}.</p>`).join("");
+    bd.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lwdTitle" style="max-width:480px;width:100%;">
+        <header>
+          <h2 id="lwdTitle" style="font-size:16px;">Over the load limit</h2>
+          <button type="button" class="close" data-lwd="back" aria-label="Close">×</button>
+        </header>
+        <div class="body" style="padding:16px 18px;">
+          <div style="font-size:13.5px;line-height:1.55;">${lines}
+            <p style="margin:0;color:var(--text-muted);">That assumes all of their sections this semester that haven't started yet make. You can still ${escapeHtml(ctx.verb || "submit it")}.</p>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+            <button type="button" data-lwd="back" id="lwdBack" style="padding:7px 14px;">Go back</button>
+            <button type="button" data-lwd="ok" style="padding:7px 14px;background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:6px;font-weight:600;">${escapeHtml(ctx.okLabel || "Submit anyway")}</button>
+          </div>
+        </div>
+      </div>`;
+    bd.classList.add("open");
+    let settled = false;
+    const onKey = e => { if(e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); done(false); } };
+    const done = v => {
+      if(settled) return;
+      settled = true;
+      bd.classList.remove("open");
+      bd.onclick = null;
+      document.removeEventListener("keydown", onKey, true);
+      resolve(v);
+    };
+    document.addEventListener("keydown", onKey, true);
+    bd.querySelectorAll('[data-lwd="back"]').forEach(b => b.addEventListener("click", () => done(false)));
+    bd.querySelector('[data-lwd="ok"]').addEventListener("click", () => done(true));
+    bd.onclick = e => { if(e.target === bd) done(false); };
+    setTimeout(() => { const b = document.getElementById("lwdBack"); if(b) b.focus(); }, 30);
+  });
+}
+const _ldIsUuid = v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ""));
+// "Submit anyway" → one load_alerts row per person who's over (admins review them).
+function recordLoadAlerts(overs, info){
+  if(!overs || !overs.length) return;
+  const rows = overs.map(x => ({
+    semester: info.semester, year: Number(info.year),
+    instructor: x.row.name, faculty_id: x.row.fac ? x.row.fac.id : null,
+    limit_kind: x.row.limitKind, unit: x.row.unit, over_by: x.over,
+    course_code: info.code || null, section: info.section || null,
+    offering_id: _ldIsUuid(info.offeringId) ? info.offeringId : null,
+    request_id: _ldIsUuid(info.requestId) ? info.requestId : null,
+    action: info.action, submitted_by: state.userName || null, submitted_by_uid: myUid(),
+    made_sections: _ldMadeLabels(x.row),
+  }));
+  sb.from("load_alerts").insert(rows).then(({ error }) => { if(error) _err("load_alerts insert failed", error); });
+}
+// What a change request does to someone's load: the instructor it names and the
+// section it lands on (an existing one, or a section it would add).
+function _ldRequestContext(r, existing){
+  const isInstr = c => c && c.fields && String(c.fields.instructor || "").trim() &&
+    (c.type === "Assign Instructor" || c.type === "Change Instructor" || /^Add /.test(c.type || ""));
+  const ch = (r.changes || requestChanges(r) || []).find(isInstr);
+  if(!ch) return null;
+  const instructor = String(ch.fields.instructor).trim();
+  if(existing){
+    const prev = requestChanges(existing).find(isInstr);
+    if(prev && String(prev.fields.instructor).trim() === instructor) return null;   // unchanged
+  }
+  const isAdd = /^Add /.test(ch.type);
+  let target = null;
+  if(isAdd) target = (state.offerings || []).find(o => o.addRequestId === r.id && !o.deleted) || null;
+  else {
+    if(r.offeringId) target = (state.offerings || []).find(o => o.id === r.offeringId) || null;
+    if(!target && (r.modality || "") === "On-Ground") target = soleOnGroundOfferingForRequest(r, false);
+  }
+  const code = canonicalCourseCode(`${r.prefix || ""} ${r.number || ""}`);
+  const base = { instructor, code };
+  if(target && !target.canceled && !target.deleted)
+    return { ...base, semester: target.semester, year: target.year, offeringId: target.id, section: displaySectionFor(target) };
+  if(!code || !r.term || !r.year) return null;
+  const crs = (state.courses || []).find(c => canonicalCourseCode(c.code || "") === code) || {};
+  return { ...base, semester: r.term, year: r.year, section: r.sectionNumber || "",
+           extra: { id: "__request__", code, sec: "", prog: r.modality === "On-Ground" ? "semester" : "online", lab: false,
+                    title: crs.title || "", sub: "", slot: "", enrolled: null, catalogCredits: Number(crs.credits) || null } };
+}
+
+/* ─── "Submitted over the limit" (Verification → Faculty loads, admins) ────── */
+const _LD_ACTION_LABEL = { submit:"submitted", add_section:"added", request:"requested", approve:"approved" };
+async function _ldFetchOpenAlerts(){
+  const { data, error } = await sb.from("load_alerts").select("*").is("checked_at", null).order("created_at", { ascending: true });
+  if(error) throw error;
+  return data || [];
+}
+// One group per person and semester.
+function _ldAlertGroups(alerts){
+  const groups = new Map();
+  (alerts || []).forEach(a => {
+    const k = `${a.faculty_id || String(a.instructor || "").toLowerCase()}|${a.semester}|${a.year}`;
+    if(!groups.has(k)) groups.set(k, { semester: a.semester, year: Number(a.year), instructor: a.instructor,
+                                       facultyId: a.faculty_id, kind: a.limit_kind, unit: a.unit, items: [] });
+    groups.get(k).items.push(a);
+  });
+  return [...groups.values()];
+}
+// "Faculty loads <b>2</b> to check" on the Verification tab while records wait.
+function _ldUpdateLoadsTabBadge(){
+  if(!isAdmin()) return;
+  _ldFetchOpenAlerts().then(a => {
+    const b = document.querySelector('#verViewTabs .ver-vtab[data-vview="loads"]');
+    if(!b) return;
+    const n = _ldAlertGroups(a).length;
+    b.innerHTML = n ? `Faculty loads <b>${n}</b> <small>to check</small>` : "Faculty loads";
+  }).catch(() => {});
+}
+function loadAlertsHtml(groups){
+  if(!groups.length) return "";
+  const esc = escapeHtml, perTerm = new Map();
+  const day = iso => iso ? new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" }) : "";
+  const amt = (n, unit) => { const v = Math.round(Number(n) * 100) / 100; return unit === "sections" ? `${v} section${v === 1 ? "" : "s"}` : `${v} hr${v === 1 ? "" : "s"}`; };
+  const body = groups.map(g => {
+    const k = `${g.semester}|${g.year}`;
+    if(!perTerm.has(k)) perTerm.set(k, computeFacultyLoads(g.semester, g.year));
+    const res = perTerm.get(k);
+    const row = res.rows.find(r => g.facultyId ? (r.fac && r.fac.id === g.facultyId) : r.name.toLowerCase() === String(g.instructor).toLowerCase());
+    const madeOver = _ldOverBy(row, "now"), allOver = _ldOverBy(row, "all");
+    const everMade = g.items.some(a => a.status === "made_over" || a.status === "back_under");
+    const crossedAt = g.items.filter(a => a.made_over_at).sort((a, b) => String(b.made_over_at).localeCompare(String(a.made_over_at)))[0];
+    const pill = madeOver != null ? '<span class="ver-pill ver-pill-cxl">Over — sections made</span>'
+               : everMade ? '<span class="ver-pill ver-pill-neu">Back under</span>'
+               : '<span class="ver-pill ver-pill-close">Projected only</span>';
+    const nowLine = !row ? "No longer assigned this semester"
+      : `Made sections: ${madeOver != null ? amt(madeOver, g.unit) + " over" : "within the limit"} · if all make: ${allOver != null ? amt(allOver, g.unit) + " over" : "within the limit"}`;
+    const crossed = crossedAt && Array.isArray(crossedAt.crossed_sections) && crossedAt.crossed_sections.length
+      ? `<div class="ver-sub">${esc(crossedAt.crossed_sections.join(", "))} made · ${esc(day(crossedAt.made_over_at))}</div>` : "";
+    const items = g.items.map(a => `<div>${esc([a.course_code, a.section].filter(Boolean).join(" ") || "—")} <span class="ver-sub" style="display:inline">· ${esc(_LD_ACTION_LABEL[a.action] || "submitted")} by ${esc(a.submitted_by || "—")}, ${esc(day(a.created_at))} · ${esc(amt(a.over_by, a.unit))} over (projected)</span></div>`).join("");
+    const typeLbl = { adjunct:"Adjunct", full_time:"Full-time", full_time_summer:"Full-time (summer)" }[g.kind] || "";
+    return `<tr>
+      <td><div style="font-weight:600">${esc(g.instructor)}</div><div class="ver-sub">${esc(typeLbl)}</div></td>
+      <td>${esc(`${g.semester} ${g.year}`)}</td>
+      <td>${items}</td>
+      <td>${pill}<div class="ver-sub">${esc(nowLine)}</div>${crossed}</td>
+      <td><button type="button" class="ver-btn" data-ldcheck="${esc(g.items.map(a => a.id).join(","))}">Checked</button></td>
+    </tr>`;
+  }).join("");
+  return `
+  <div class="ver-card" style="margin-bottom:14px">
+    <div style="padding:10px 12px 2px;font-weight:600">Submitted over the limit <span class="ver-sub" style="display:inline;font-weight:400">· ${groups.length} to check</span></div>
+    <p class="ver-sub" style="margin:0;padding:0 12px 8px">Someone chose "Submit anyway". "Over — sections made" means enough sections have 8+ students that the overload is real (also sent to the hub). Mark each one Checked once you've looked at it.</p>
+    <div class="ver-scroll"><table class="ver-table">
+      <thead><tr><th>Instructor</th><th>Semester</th><th>Submitted anyway</th><th>Now</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+  </div>`;
 }
 
 function _ldPill(s){
@@ -10350,8 +10780,12 @@ function facultyLoadsHtml(res, terms, sel){
   const termOpts = terms.map(t => `<option value="${esc(t)}"${t === `${sel.semester} ${sel.year}` ? " selected" : ""}>${esc(t)}</option>`).join("");
   const body = res.rows.map((r, i) => {
     const typeLbl = r.type === "full_time" ? "Full-time" : (r.type === "adjunct" ? (r.staff ? "Staff (as adjunct)" : "Adjunct") : "—");
-    const contract = r.type === "full_time" ? `${fmt(r.contract)}${r.contractDefault ? ' <span class="ver-sub" style="display:inline">(default)</span>' : ""}` : "—";
-    const limit = r.type === "full_time" ? `${fmt(r.limitTotal)} <span class="ver-sub" style="display:inline">(${fmt(r.contract)} + 6)</span>` : (r.type === "adjunct" ? "9" : "—");
+    const ftSummer = r.limitKind === "full_time_summer";
+    const contract = r.type === "full_time" && !ftSummer ? `${fmt(r.contract)}${r.contractDefault ? ' <span class="ver-sub" style="display:inline">(default)</span>' : ""}` : "—";
+    const limit = ftSummer ? `2 sections <span class="ver-sub" style="display:inline">(summer)</span>`
+      : r.type === "full_time" ? `${fmt(r.limitTotal)} <span class="ver-sub" style="display:inline">(${fmt(r.contract)} + 6)</span>` : (r.type === "adjunct" ? "9" : "—");
+    // Summer full-time counts sections; show the hours alongside.
+    const used = (u, hrs) => ftSummer ? `${u} sec <span class="ver-sub" style="display:inline">(${fmt(hrs)} hrs)</span>` : fmt(hrs);
     const f = [r.sNow, r.sAll].filter(x => ["over","at","close"].includes(x));
     const filt = [...new Set([...f, r.type, f.length ? "flagged" : "fine"])].join(" ");
     const secRows = r.sections.slice().sort((a, b) => a.code.localeCompare(b.code)).map(s => `
@@ -10359,14 +10793,14 @@ function facultyLoadsHtml(res, terms, sel){
         <td>${esc(s.prog === "online" ? "Online" : "On-ground")}${s.slot && !["16W","15W"].includes(s.slot) ? ` · ${esc(s.slot)}` : ""}</td>
         <td>${s.enrollment == null ? "—" : esc(String(s.enrollment))}</td>
         <td>${esc(_LD_STATUS_LABEL[s.status] || s.status)}</td>
-        <td>${fmt(s.hours)}${s.status === "made" ? "" : (_LD_COUNTS_IF_MADE.has(s.status) ? ' <span class="ver-sub" style="display:inline">(if it makes)</span>' : ' <span class="ver-sub" style="display:inline">(never counts)</span>')}</td>
+        <td>${fmt(s.hours)}${s.status === "made" ? "" : (!_LD_COUNTS_IF_MADE.has(s.status) ? ' <span class="ver-sub" style="display:inline">(never counts)</span>' : (s.started ? ' <span class="ver-sub" style="display:inline">(started — won\'t count)</span>' : ' <span class="ver-sub" style="display:inline">(if it makes)</span>'))}</td>
         <td class="ver-sub">${esc(s.source)}</td></tr>`).join("");
     return `
     <tr class="ld-row" data-ld="${i}" data-f="${esc(filt)}" style="cursor:pointer">
       <td><div style="font-weight:600">${esc(r.name)}</div><div class="ver-sub">${r.sections.length} section${r.sections.length === 1 ? "" : "s"} · click for detail</div></td>
       <td>${esc(typeLbl)}</td><td>${contract}</td>
-      <td style="font-variant-numeric:tabular-nums"><b>${fmt(r.now)}</b></td>
-      <td style="font-variant-numeric:tabular-nums">${fmt(r.all)}</td>
+      <td style="font-variant-numeric:tabular-nums"><b>${used(r.usedNow, r.now)}</b></td>
+      <td style="font-variant-numeric:tabular-nums">${used(r.usedAll, r.all)}</td>
       <td>${limit}</td>
       <td>${_ldPill(r.sNow)}</td><td>${_ldPill(r.sAll)}</td>
       <td style="font-variant-numeric:tabular-nums">${r.tut ? fmt(r.tut) : "—"}</td>
@@ -10405,7 +10839,7 @@ function facultyLoadsHtml(res, terms, sel){
       <tbody id="ldRows">${body || '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:26px;">No assignments for this semester.</td></tr>'}</tbody>
     </table>
   </div></div>
-  <p class="ver-foot">Load hours per semester (all 5-week, 10-week, full-semester and on-ground sections). Adjuncts and staff: at most 9 hours of made sections (8+ students; EQR always made). Full-time: at most 6 made hours beyond their contracted load (0 = the standard ${esc(String(Number((state.contract || {}).settings ? state.contract.settings.full_time_load_credits : 12) || 12))}). Tutorials (under 8), internships, independent studies, voucher and Connections courses don't count. Hours follow the contracting apps (faculty hours × each instructor's share, with their overrides); sections the apps don't have yet use credit hours, split evenly when team-taught. Close = within 3 hours of the limit.</p>`;
+  <p class="ver-foot">Load hours per semester (all 5-week, 10-week, full-semester and on-ground sections). Adjuncts and staff: at most 9 hours of made sections (8+ students; EQR always made). Full-time: at most 6 made hours beyond their contracted load (0 = the standard ${esc(String(Number((state.contract || {}).settings ? state.contract.settings.full_time_load_credits : 12) || 12))}). Summer: every full-time section is overload — at most 2 made sections. "If all make" counts every section not made yet, except ones that have already started (their enrollment is settled). Tutorials (under 8), internships, independent studies, voucher and Connections courses don't count. Hours follow the contracting apps (faculty hours × each instructor's share, with their overrides). Until a term's faculty hours have been set up in the contracting app — and for sections it doesn't have — each course uses its faculty hours from the most recent set-up term, then credit hours; split evenly when team-taught. Close = within 3 hours of the limit.</p>`;
 }
 async function renderFacultyLoadsView(){
   const box = document.getElementById("verLoadsView");
@@ -10424,7 +10858,24 @@ async function renderFacultyLoadsView(){
   const sel = state.loadTerm;
   const res = computeFacultyLoads(sel.semester, Number(sel.year));
   state._lastLoads = res;
-  box.innerHTML = facultyLoadsHtml(res, terms, sel);
+  // "Submit anyway" records still to be checked (admins only — RLS).
+  let alertHtml = "";
+  try { alertHtml = loadAlertsHtml(_ldAlertGroups(await _ldFetchOpenAlerts())); }
+  catch(e){ alertHtml = `<div class="ver-empty" style="margin-bottom:12px">Couldn't read the over-the-limit submissions (${escapeHtml(String((e && e.message) || e))}).</div>`; }
+  box.innerHTML = alertHtml + facultyLoadsHtml(res, terms, sel);
+  box.querySelectorAll("[data-ldcheck]").forEach(b => b.addEventListener("click", async () => {
+    b.disabled = true; b.textContent = "Saving…";
+    const ids = b.getAttribute("data-ldcheck").split(",").filter(Boolean);
+    const { data, error } = await sb.from("load_alerts")
+      .update({ checked_at: new Date().toISOString(), checked_by: state.userName || null }).in("id", ids).select("id");
+    if(error || !(data || []).length){
+      toast("Couldn't mark it checked" + (error ? `: ${error.message}` : " (admins only)"), "error");
+      b.disabled = false; b.textContent = "Checked";
+      return;
+    }
+    renderFacultyLoadsView();
+    _ldUpdateLoadsTabBadge();
+  }));
   const apply = f => document.querySelectorAll("#ldRows tr[data-f]").forEach(tr => {
     const k = tr.getAttribute("data-f").split(" ");
     const show = f === "all" || k.includes(f);
@@ -10464,7 +10915,7 @@ async function downloadFacultyLoadsXlsx(btn, res, sel){
       "Contracted load": r.type === "full_time" ? r.contract : "",
       "Contract is default 12": r.contractDefault ? "Yes" : "",
       "Made now (load hrs)": r2(r.now), "If all make (load hrs)": r2(r.all),
-      "Limit (total hrs)": r.limitTotal ?? "",
+      "Limit (total hrs)": r.limitKind === "full_time_summer" ? "2 sections" : (r.limitTotal ?? ""),
       "Status now": word[r.sNow], "Status if all make": word[r.sAll],
       "Tutorial hrs (not counted)": r2(r.tut), "Sections": r.sections.length,
     }));
@@ -10809,6 +11260,7 @@ async function renderVerification(){
     if(state.verifyView === "loads") renderFacultyLoadsView();
   });
   if(state.verifyView === "loads") renderFacultyLoadsView();
+  _ldUpdateLoadsTabBadge();
   // On-ground import: filter chips, Excel preview, and the import itself.
   const ichips = document.getElementById("verImpChips");
   if(ichips) ichips.addEventListener("click", (e) => {
@@ -11423,7 +11875,21 @@ function closeSectionModal() {
   document.getElementById("secModal").classList.remove("open");
 }
 
+// Add Section with an instructor already named: check their load first.
 function saveSectionFromModal() {
+  const c = findCourseByInput(document.getElementById("sfld_course").value);
+  const instr = document.getElementById("sfld_instructor").value.trim();
+  if (!c || !instr) return _saveSectionFromModalNow([]);
+  const year = Number(document.getElementById("sfld_year").value) || 2026;
+  const semTerm = document.getElementById("sfld_semterm").value || "Fall Semester";
+  const semester = semTerm.indexOf(" ") > 0 ? semTerm.slice(0, semTerm.indexOf(" ")) : "Fall";
+  const online = !!((c.onlineFall || []).length || (c.onlineSpring || []).length || (c.onlineSummer || []).length);
+  loadGate({ semester, year, instructor: instr, okLabel: "Add anyway", verb: "add the section",
+             extra: { id: "__new__", code: canonicalCourseCode(c.code || ""), sec: "", prog: online ? "online" : "semester",
+                      lab: false, title: c.title || "", sub: "", slot: "", enrolled: null, catalogCredits: Number(c.credits) || null } },
+    overs => _saveSectionFromModalNow(overs));
+}
+function _saveSectionFromModalNow(overs) {
   const courseInput = document.getElementById("sfld_course").value;
   const c = findCourseByInput(courseInput);
   const hint = document.getElementById("sfld_courseHint");
@@ -11479,6 +11945,7 @@ function saveSectionFromModal() {
   markLocallyTouched(o.id);
   createAddCourseRequestForNewSection(o, { addSectionType });
   setDirty(true);
+  recordLoadAlerts(overs, { semester, year, code: c.code, section: displaySectionFor(o), offeringId: o.id, action: "add_section" });
   // Jump the Term Assignments view to the subterm/year where the section was added
   state.termFilter.semester = o.semester;
   state.termFilter.subterm  = o.subterm;
@@ -11533,6 +12000,8 @@ function bindTermEvents() {
     if (!o) return;
     const fieldLabel = inp.dataset.field === "instructor" ? "Instructor" : "Notes";
     logOfferingFieldChange(o, fieldLabel, before, after);
+    // Over the load limit with this name? Show it under the instructor now.
+    if (fieldLabel === "Instructor") refreshLoadWarnings();
   });
 
   // Filters
@@ -11585,14 +12054,16 @@ function bindTermEvents() {
       const _actionBtn  = _actionCell && _actionCell.querySelector("button");
       const _shouldGenContract = !!(_actionBtn && _actionBtn.textContent.includes("Generate Contract")
         && o.instructor && o.instructor.trim());
-      // Submit change (creates request + SENT state), then advance.
-      submitNewSectionChange(o);  // calls renderTerms() internally
-      if (_shouldGenContract) {
-        generateOnlineContractPDF(currentOid).catch(err => {
-          console.error("Contract PDF generation failed:", err);
-          toast("Contract PDF could not be generated", "error");
-        });
-      }
+      // Submit change (creates request + SENT state), then advance. The contract
+      // waits for the submit itself (the load-limit warning can send them back).
+      submitNewSectionChange(o, () => {  // calls renderTerms() internally
+        if (_shouldGenContract) {
+          generateOnlineContractPDF(currentOid).catch(err => {
+            console.error("Contract PDF generation failed:", err);
+            toast("Contract PDF could not be generated", "error");
+          });
+        }
+      });
     } else if (o.instructor && o.instructor.trim()) {
       // Regular section with instructor: submit to Registrar, then advance.
       inp.blur();
@@ -11766,13 +12237,14 @@ function bindTermEvents() {
       // Read button label BEFORE submitNewSectionChange rebuilds the DOM.
       const _shouldGenContract = btn.textContent.includes("Generate Contract")
         && !!(o.instructor && o.instructor.trim());
-      submitNewSectionChange(o);
-      if (_shouldGenContract) {
-        generateOnlineContractPDF(oid).catch(err => {
-          console.error("Contract PDF generation failed:", err);
-          toast("Contract PDF could not be generated", "error");
-        });
-      }
+      submitNewSectionChange(o, () => {
+        if (_shouldGenContract) {
+          generateOnlineContractPDF(oid).catch(err => {
+            console.error("Contract PDF generation failed:", err);
+            toast("Contract PDF could not be generated", "error");
+          });
+        }
+      });
     } else if (act === "removesection") {
       const oid = btn.dataset.oid;
       if (!oid) return;
@@ -13262,7 +13734,10 @@ function createProvisionalOffering(draft) {
   markLocallyTouched(o.id);
 }
 
-function saveRequestFromModal() {
+// _ld = { __ld:true, overs, ctx } on the second pass, after the over-the-load-
+// limit warning (if any) has been answered.
+function saveRequestFromModal(_ld) {
+  if (!(_ld && _ld.__ld)) _ld = null;
   const existing = state.requests.find(x => x.id === state.editingRequestId);
   const draft = newRequest(existing || {});
   draft.id = state.editingRequestId || draft.id;
@@ -13348,6 +13823,16 @@ function saveRequestFromModal() {
       draft.changes.length && draft.changes.every(c => _REQ_TARGETS_SECTION.has(c.type))) {
     const _og = soleOnGroundOfferingForRequest(draft, draft.changes.some(c => c.type === "Re-instate Course"));
     if (_og) draft.offeringId = _og.id;
+  }
+  // A request naming an instructor (new, or a different one): warn first if it
+  // would put them over the load limit. Saving re-runs from the top afterwards.
+  if (!_ld) {
+    const _ldCtx = _ldRequestContext(draft, existing);
+    if (_ldCtx) {
+      loadGate({ ..._ldCtx, okLabel: "Save anyway", verb: "save the request" },
+               overs => saveRequestFromModal({ __ld: true, overs, ctx: _ldCtx }));
+      return;
+    }
   }
 
   // Guard: "Add Course" is only valid when the course doesn't already have an
@@ -13440,6 +13925,11 @@ function saveRequestFromModal() {
     toast("Request created");
   }
   setDirty(true);
+  if (_ld && _ld.overs.length) {
+    const _x = _ld.ctx, _prov = state.offerings.find(o => o.addRequestId === draft.id && !o.deleted);
+    recordLoadAlerts(_ld.overs, { semester: _x.semester, year: _x.year, code: _x.code, section: _x.section,
+      offeringId: _x.offeringId || (_prov && _prov.id), requestId: draft.id, action: "request" });
+  }
 
   // Capture contract data BEFORE closing the modal (form fields still accessible).
   const _reqContractData = (draft.modality === "Online" && !existing)
@@ -13460,7 +13950,7 @@ function saveRequestFromModal() {
   }
 }
 
-function transitionRequest(id, action) {
+function transitionRequest(id, action, _ld) {
   const r = state.requests.find(x => x.id === id);
   if (!r) return;
   const now = new Date().toISOString();
@@ -13470,6 +13960,21 @@ function transitionRequest(id, action) {
     if (!canApproveRequest(r)) {
       toast("You do not have permission to approve requests.", "error");
       return;
+    }
+    // Names an instructor who'd be over the load limit? Warn before approving.
+    if (!(_ld && _ld.__ld)) {
+      const _ldCtx = _ldRequestContext(r, null);
+      if (_ldCtx) {
+        loadGate({ ..._ldCtx, okLabel: "Approve anyway", verb: "approve it" },
+                 overs => transitionRequest(id, action, { __ld: true, overs, ctx: _ldCtx }));
+        return;
+      }
+      _ld = null;
+    }
+    if (_ld && _ld.overs.length) {
+      const _x = _ld.ctx;
+      recordLoadAlerts(_ld.overs, { semester: _x.semester, year: _x.year, code: _x.code, section: _x.section,
+        offeringId: _x.offeringId, requestId: r.id, action: "approve" });
     }
     // Approve & Send → goes to Registrar queue immediately.
     r.status = "Sent to Registrar";
@@ -14103,6 +14608,9 @@ async function init() {
   }
   // 6) Start listening for cross-user changes.
   startRealtime();
+  // Faculty-load inputs for the over-the-limit warnings (in the background).
+  loadContractData().then(() => refreshLoadWarnings())
+    .catch(e => console.warn("Faculty-load warnings unavailable:", (e && e.message) || e));
   seedExampleRequests();
   // Roll over assignments whose terms ended 10+ weeks ago.
   const rolled = rollOverCompletedAssignments();
@@ -14129,6 +14637,10 @@ async function init() {
   if (currentRole() === "registrar") switchView("registrar");
   // Deep-link: ?view=requests (or other view) passed via Hub notification click.
   const _viewParam = new URLSearchParams(window.location.search).get('view');
+  // ...and a Verification sub-tab, e.g. the hub's load-limit alerts link to
+  // ?view=verify&vtab=loads (Faculty loads).
+  const _vtabParam = new URLSearchParams(window.location.search).get('vtab');
+  if (["flags", "offerings", "import", "loads"].includes(_vtabParam)) state.verifyView = _vtabParam;
   if (_viewParam && _viewParam !== 'terms') {
     switchView(_viewParam);
     history.replaceState(null, '', window.location.pathname);
