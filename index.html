@@ -10699,9 +10699,9 @@ function refreshLoadWarnings(){
     // One badge per row (red if anyone on it is over on made sections); the
     // message — one line per person when team-taught — is its hover text.
     const level = overs.some(x => x.level === "red") ? "red" : "yellow";
-    const tip = overs.map(x => (overs.length > 1 ? `${x.row.name}: ` : "") + _ldLevelText(x)).join("\n") + "\n" +
-      (level === "red" ? "Over on sections that have already made (8+ students)."
-                       : "Not over yet. Tutorials are sections with 1–7 students; sections with no students don't count.");
+    const lines = overs.map(x => (overs.length > 1 ? `${x.row.name}: ` : "") + _ldLevelText(x));
+    const note = "";   // just the warning itself (Tony, 2026-11-24)
+    const tip = lines.join("\n") + (note ? "\n" + note : "");
     if(!badge){
       // Its message opens in the small pop-up below (hover, click or keyboard
       // focus). The row's "click to edit the instructor" handler skips it.
@@ -10715,8 +10715,7 @@ function refreshLoadWarnings(){
     }
     badge.className = `load-badge lb-${level}`;
     badge.setAttribute("aria-label", tip);
-    const note = tip.slice(tip.lastIndexOf("\n") + 1);
-    badge._ldTip = { level, lines: tip.slice(0, tip.lastIndexOf("\n")).split("\n"), note };
+    badge._ldTip = { level, lines, note };
     cell.classList.add("has-load-badge");
     toPlace.push([cell, badge]);
   });
@@ -10810,7 +10809,7 @@ function _ldPopOpen(badge){
   const el = _ldPopEl();
   el.className = `ld-pop open lv-${t.level}`;
   el.innerHTML = t.lines.map(l => `<div class="ld-pop-line">${escapeHtml(l)}</div>`).join("") +
-                 `<div class="ld-pop-note">${escapeHtml(t.note)}</div>`;
+                 (t.note ? `<div class="ld-pop-note">${escapeHtml(t.note)}</div>` : "");
   el.style.left = "0px"; el.style.top = "0px";
   const r = badge.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
   const left = Math.min(Math.max(8, r.left - 4), window.innerWidth - w - 8);
