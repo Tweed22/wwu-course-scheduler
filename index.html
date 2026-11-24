@@ -744,11 +744,20 @@
   .term-table td.instr-cell                          { padding-left: 18px; white-space: nowrap; overflow: hidden; }
   .term-table th.no-sort:nth-child(7)                { width: 250px; padding-left: 18px; }
   /* Over the faculty load limit (counting every assigned section as if it makes). */
-  .term-table td.instr-cell .load-warn               { margin-top: 3px; font-size: 11.5px; line-height: 1.3;
-                                                       color: var(--danger); white-space: normal; }
-  /* Red: over on made sections. Yellow: over only if tutorials make. */
-  .term-table td.instr-cell .load-warn .lw-red       { color: var(--danger); }
-  .term-table td.instr-cell .load-warn .lw-yellow    { color: var(--warn); }
+  /* Faculty-load badge just in front of the instructor's name (in the cell's
+     18px left gutter, so it never covers the name or the clear button); the
+     message is its hover text. Red: over on made sections. Yellow: over only
+     if tutorials make. */
+  .term-table td.instr-cell                          { position: relative; }
+  .term-table td.instr-cell .load-badge {
+    position: absolute; top: 50%; left: 2px; transform: translateY(-50%);
+    width: 15px; height: 15px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px; font-weight: 700; line-height: 1; color: #fff; cursor: help; z-index: 1;
+  }
+  .term-table td.instr-cell .load-badge.lb-red       { background: var(--danger); }
+  .term-table td.instr-cell .load-badge.lb-yellow    { background: var(--warn); }
+  html.dark .term-table td.instr-cell .load-badge.lb-yellow { color: #2a1d00; }
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
   /* ── FIXED secondary columns ── */
@@ -10613,7 +10622,7 @@ function refreshLoadWarnings(){
   tb.querySelectorAll("tr[data-oid]").forEach(tr => {
     const cell = tr.querySelector("td.instr-cell");
     if(!cell) return;
-    let html = "";
+    let overs = [];
     const o = ready ? byId.get(tr.dataset.oid) : null;
     if(o && !o.canceled && !o.deleted && String(o.instructor || "").trim()){
       const k = `${o.semester}|${o.year}`;
@@ -10623,18 +10632,25 @@ function refreshLoadWarnings(){
         perTerm.set(k, res);
       }
       const res = perTerm.get(k);
-      const overs = res ? _ldOversOn(res, o.id) : [];
-      html = overs.map(x => {
-        const tip = x.level === "red"
-          ? `${x.row.name} is over the limit on ${o.semester} ${o.year} sections that have already made (8+ students)`
-          : `${x.row.name} isn't over yet, but would be if their ${o.semester} ${o.year} tutorials (1–7 students) make. Sections with no students yet don't count.`;
-        return `<div class="lw-${x.level}" title="${escapeHtml(tip)}">⚠ ${overs.length > 1 ? escapeHtml(x.row.name) + ": " : ""}${escapeHtml(_ldLevelText(x))}</div>`;
-      }).join("");
+      overs = res ? _ldOversOn(res, o.id) : [];
     }
-    let box = cell.querySelector(".load-warn");
-    if(!html){ if(box) box.remove(); return; }
-    if(!box){ box = document.createElement("div"); box.className = "load-warn"; cell.appendChild(box); }
-    if(box.innerHTML !== html) box.innerHTML = html;
+    let badge = cell.querySelector(".load-badge");
+    if(!overs.length){ if(badge) badge.remove(); return; }
+    // One badge per row (red if anyone on it is over on made sections); the
+    // message — one line per person when team-taught — is its hover text.
+    const level = overs.some(x => x.level === "red") ? "red" : "yellow";
+    const tip = overs.map(x => (overs.length > 1 ? `${x.row.name}: ` : "") + _ldLevelText(x)).join("\n") + "\n" +
+      (level === "red" ? "Over on sections that have already made (8+ students)."
+                       : "Not over yet. Tutorials are sections with 1–7 students; sections with no students don't count.");
+    if(!badge){
+      badge = document.createElement("span");
+      badge.setAttribute("role", "img");
+      badge.textContent = "!";
+      cell.appendChild(badge);
+    }
+    badge.className = `load-badge lb-${level}`;
+    badge.title = tip;
+    badge.setAttribute("aria-label", tip);
   });
 }
 // Before a submit: if the instructor would be over, ask. `proceed(overs)` runs
