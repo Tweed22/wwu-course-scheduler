@@ -10700,7 +10700,8 @@ function refreshLoadWarnings(){
     // message — one line per person when team-taught — is its hover text.
     const level = overs.some(x => x.level === "red") ? "red" : "yellow";
     const lines = overs.map(x => (overs.length > 1 ? `${x.row.name}: ` : "") + _ldLevelText(x));
-    const note = "";   // just the warning itself (Tony, 2026-11-24)
+    // The "if tutorials make" figure is an estimate (Tony's wording, 2026-11-24).
+    const note = overs.some(x => x.level === "yellow") ? "Courses without any enrollment are not counted in this estimate." : "";
     const tip = lines.join("\n") + (note ? "\n" + note : "");
     if(!badge){
       // Its message opens in the small pop-up below (hover, click or keyboard
@@ -10898,7 +10899,7 @@ function loadWarnDialog(ctx, overs){
         </header>
         <div class="body" style="padding:16px 18px;">
           <div style="font-size:13.5px;line-height:1.55;">${lines}
-            <p style="margin:0;color:var(--text-muted);">Tutorials are sections with 1–7 students; sections with no students yet don't count. You can still ${escapeHtml(ctx.verb || "submit it")}.</p>
+            <p style="margin:0;color:var(--text-muted);">Courses without any enrollment are not counted in this estimate. You can still ${escapeHtml(ctx.verb || "submit it")}.</p>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
             <button type="button" data-lwd="back" id="lwdBack" style="padding:7px 14px;">Go back</button>
