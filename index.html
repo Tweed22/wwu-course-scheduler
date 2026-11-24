@@ -10651,7 +10651,16 @@ function _ldWarnText(over, kind, unit){
 //   level "yellow" — not over yet, but would be if their tutorials make.
 // Sections with no students yet don't count at all (engine: couldCount).
 function _ldOversOn(res, oid){
-  return res.rows.filter(r => r.sections.some(s => s.oid === oid)).map(r => {
+  if(!res._byOid){
+    res._byOid = new Map();
+    res.rows.forEach(r => r.sections.forEach(s => {
+      if(s.oid == null) return;
+      if(!res._byOid.has(s.oid)) res._byOid.set(s.oid, []);
+      const list = res._byOid.get(s.oid);
+      if(!list.includes(r)) list.push(r);
+    }));
+  }
+  return (res._byOid.get(oid) || []).map(r => {
     const now = _ldOverBy(r, "now"), all = _ldOverBy(r, "all");
     return now != null ? { row: r, level: "red", over: now }
          : all != null ? { row: r, level: "yellow", over: all } : null;
@@ -10667,7 +10676,7 @@ function _ldLevelText(x){
 function refreshLoadWarnings(){
   const tb = document.getElementById("ttbody");
   if(!tb) return;
-  const ready = !!state.contract, perTerm = new Map();
+  const ready = !!state.contract, perTerm = new Map(), toPlace = [];
   const byId = ready ? new Map((state.offerings || []).map(x => [x.id, x])) : null;
   tb.querySelectorAll("tr[data-oid]").forEach(tr => {
     const cell = tr.querySelector("td.instr-cell");
@@ -10709,8 +10718,9 @@ function refreshLoadWarnings(){
     const note = tip.slice(tip.lastIndexOf("\n") + 1);
     badge._ldTip = { level, lines: tip.slice(0, tip.lastIndexOf("\n")).split("\n"), note };
     cell.classList.add("has-load-badge");
-    _ldPlaceBadge(cell, badge);
+    toPlace.push([cell, badge]);
   });
+  _ldPlaceBadges(toPlace);
   _ldPopInit();
   if(_ldPopFor && !_ldPopFor.isConnected) _ldPopClose();   // its row was redrawn
 }
@@ -10749,22 +10759,32 @@ function _ldFillHoursCell(td, d, o){
   }
   if(td.innerHTML !== html) td.innerHTML = html;
 }
-// Put the ⚠ just after the name's text (measured in the field's own font), but
-// never over the clear-× button on editable rows. A hidden table (another view)
-// has no layout yet; the next refresh places it.
-function _ldPlaceBadge(cell, badge){
-  const inp = cell.querySelector('input[data-field="instructor"]');
-  const el = inp || cell.querySelector(".instr-plain");
-  if(!el) return;
-  const cr = cell.getBoundingClientRect(), er = el.getBoundingClientRect();
-  if(!cr.width) return;
-  const cs = getComputedStyle(el);
-  const ctx = _ldPlaceBadge.ctx || (_ldPlaceBadge.ctx = document.createElement("canvas").getContext("2d"));
-  ctx.font = cs.font || `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-  const textW = ctx.measureText(inp ? inp.value : el.textContent).width;
-  const start = er.left - cr.left + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0);
-  const maxLeft = cr.width - ((inp && !inp.readOnly) ? 46 : 24);
-  badge.style.left = `${Math.max(0, Math.min(start + textW + 5, maxLeft))}px`;
+// Put each ⚠ just after the name's text (measured in the field's own font), but
+// never over the clear-× button on editable rows. All positions are read in one
+// pass and written in a second: reading one badge's position right after moving
+// the previous one made the browser re-lay-out the whole table per badge (over a
+// second per search keystroke with ~200 badges). A hidden table (another view)
+// has no layout yet; the next refresh places them.
+function _ldPlaceBadges(list){
+  if(!list.length) return;
+  const ctx = _ldPlaceBadges.ctx || (_ldPlaceBadges.ctx = document.createElement("canvas").getContext("2d"));
+  const reads = list.map(([cell, badge]) => {
+    const inp = cell.querySelector('input[data-field="instructor"]');
+    const el = inp || cell.querySelector(".instr-plain");
+    if(!el) return null;
+    const cr = cell.getBoundingClientRect();
+    if(!cr.width) return null;
+    const er = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return { badge, width: cr.width, editable: !!(inp && !inp.readOnly),
+             start: er.left - cr.left + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0),
+             font: cs.font || `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`, text: inp ? inp.value : el.textContent };
+  });
+  reads.forEach(r => {
+    if(!r) return;
+    ctx.font = r.font;
+    const left = Math.min(r.start + ctx.measureText(r.text).width + 5, r.width - (r.editable ? 46 : 24));
+    r.badge.style.left = `${Math.max(0, left)}px`;
+  });
 }
 /* The badge's pop-up: opens on hover (after a moment), click or keyboard focus;
    closes when the pointer leaves both the badge and the pop-up (with a short
@@ -12259,7 +12279,13 @@ function bindTermEvents() {
   });
 
   // Filters
-  document.getElementById("tfSearch").addEventListener("input", (e) => { state.termFilter.search = e.target.value; renderTerms(); });
+  // Redraw once typing pauses (120 ms) rather than on every keystroke.
+  let _tfSearchTimer = null;
+  document.getElementById("tfSearch").addEventListener("input", (e) => {
+    state.termFilter.search = e.target.value;
+    clearTimeout(_tfSearchTimer);
+    _tfSearchTimer = setTimeout(renderTerms, 120);
+  });
   document.getElementById("tfLevel").addEventListener("change", (e) => { state.termFilter.level = e.target.value; renderTerms(); });
   document.getElementById("tfShowOnly").addEventListener("change", (e) => { state.termFilter.showOnly = e.target.value; renderTerms(); });
 
