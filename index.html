@@ -10535,12 +10535,36 @@ function _ldSchedulerSections(semester, year, opts){
 }
 // Today as "YYYY-MM-DD" in local time (term dates are local calendar dates).
 function _ldToday(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+// Loads are recalculated only when something they depend on changes. Term
+// Assignments re-renders on every keystroke in its search box, and a full
+// calculation takes a few hundred ms, so each semester's result is kept with a
+// cheap signature of its inputs (the semester's sections, contract data, Owlnet
+// rows, requests, the catalog and today's date) and reused while that matches.
+const _ldCache = new Map();
+function _ldInputsSig(semester, year){
+  const C = state.contract;
+  const parts = [C ? C.loadedAt : 0, (state.owlnetSections || []).length, (state.requests || []).length,
+                 (state.courses || []).length, _ldToday()];
+  for(const o of state.offerings || []){
+    if(o.semester !== semester || Number(o.year) !== Number(year)) continue;
+    parts.push(`${o.id}|${o.instructor || ""}|${o.deleted ? 1 : 0}${o.canceled ? 1 : 0}${o.owlnetLab ? 1 : 0}|${o.officialSection || ""}|` +
+               `${o.owlnetSeatsCap ?? ""}/${o.owlnetSeatsOpen ?? ""}|${o.modality || ""}|${o.subterm || ""}|${o.courseId || ""}`);
+  }
+  return parts.join("\n");
+}
 function computeFacultyLoads(semester, year, opts){
   const C = state.contract || { faculty: [], settings: { ..._LD_DEFAULTS }, ogc: [], onc: [], owlnet: [] };
   // An admin's Verification panel may hold a fresher Owlnet read than the cached inputs.
   const owlnet = (state.owlnetSections && state.owlnetSections.length) ? state.owlnetSections : (C.owlnet || []);
-  return _ldCompute({ semester, year: Number(year), today: _ldToday(),
-                      sections: _ldSchedulerSections(semester, Number(year), opts), owlnet, contract: C });
+  const run = () => _ldCompute({ semester, year: Number(year), today: _ldToday(),
+                                 sections: _ldSchedulerSections(semester, Number(year), opts), owlnet, contract: C });
+  if(opts) return run();                 // a what-if (warning before a submit): never cached
+  const key = `${semester}|${Number(year)}`, sig = _ldInputsSig(semester, year);
+  const hit = _ldCache.get(key);
+  if(hit && hit.sig === sig) return hit.res;
+  const res = run();
+  _ldCache.set(key, { sig, res });
+  return res;
 }
 
 /* ─── Over-the-limit warnings ──────────────────────────────────────────────────
@@ -10568,11 +10592,12 @@ function refreshLoadWarnings(){
   const tb = document.getElementById("ttbody");
   if(!tb) return;
   const ready = !!state.contract, perTerm = new Map();
+  const byId = ready ? new Map((state.offerings || []).map(x => [x.id, x])) : null;
   tb.querySelectorAll("tr[data-oid]").forEach(tr => {
     const cell = tr.querySelector("td.instr-cell");
     if(!cell) return;
     let html = "";
-    const o = ready ? state.offerings.find(x => x.id === tr.dataset.oid) : null;
+    const o = ready ? byId.get(tr.dataset.oid) : null;
     if(o && !o.canceled && !o.deleted && String(o.instructor || "").trim()){
       const k = `${o.semester}|${o.year}`;
       if(!perTerm.has(k)){
