@@ -746,6 +746,9 @@
   /* Over the faculty load limit (counting every assigned section as if it makes). */
   .term-table td.instr-cell .load-warn               { margin-top: 3px; font-size: 11.5px; line-height: 1.3;
                                                        color: var(--danger); white-space: normal; }
+  /* Red: over on made sections. Yellow: over only if tutorials make. */
+  .term-table td.instr-cell .load-warn .lw-red       { color: var(--danger); }
+  .term-table td.instr-cell .load-warn .lw-yellow    { color: var(--warn); }
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
   /* ── FIXED secondary columns ── */
@@ -2942,9 +2945,11 @@ const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
    registrar's export carries a course's studio/lab contact hours on its online
    sections too (online ART 105 = 4), which doesn't apply online. Only a value
    set by hand in the contracting app (an override) changes an online section.
-   Two numbers: made now, and "if every section makes" — where a section that has
-   already STARTED counts only if it made (its enrollment is settled, so a
-   tutorial in a running term won't grow into a made section). Close = within 3. */
+   Two numbers: made now, and "if tutorials make" — made sections plus tutorials
+   (1–7 students) that haven't STARTED yet (in a running term enrollment is
+   settled, so a tutorial won't grow into a made section). A section with no
+   students yet (0, or none reported) counts nothing until someone enrolls
+   (Tony, 2026-11-24). Close = within 3. */
 const LOAD_ADJUNCT_LIMIT = 9, LOAD_FT_OVERLOAD_LIMIT = 6, LOAD_FT_SUMMER_SECTIONS = 2, LOAD_CLOSE_WITHIN = 3;
 const _LD_DEFAULTS = {
   full_enrollment_threshold: 8, full_time_load_credits: 12, always_made_prefixes: ["EQR"],
@@ -3198,8 +3203,9 @@ function _ldCompute(inp){
   const summer = semester === "Summer";
   const rnd = n => Math.round(n * 100) / 100;
   const statusOf = (usedAmt, limit, within) => usedAmt > limit + 1e-9 ? "over" : (Math.abs(usedAmt - limit) < 1e-9 ? "at" : (usedAmt >= limit - within - 1e-9 ? "close" : "ok"));
-  // Counts "if every section makes": made, or not made yet and not started yet.
-  const couldCount = s => s.status === "made" || (_LD_COUNTS_IF_MADE.has(s.status) && !s.started);
+  // Counts "if tutorials make": made, or a tutorial (has students) not started yet.
+  // No students yet (0 or not reported) → nothing until someone enrolls.
+  const couldCount = s => s.status === "made" || (s.status === "tutorial" && !s.started);
   const rows = [...people.values()].map(p => {
     const now = rnd(p.sections.filter(s => s.status === "made").reduce((a, s) => a + s.hours, 0));
     const all = rnd(p.sections.filter(couldCount).reduce((a, s) => a + s.hours, 0));
@@ -10581,10 +10587,21 @@ function _ldWarnText(over, kind, unit){
   if(unit === "sections") return `${n} section${n === 1 ? "" : "s"} over the full-time summer limit (2 sections)`;
   return `${n} hour${n === 1 ? "" : "s"} over the ${kind === "full_time" ? "full-time overload" : "adjunct"} limit`;
 }
-// The people on one section who'd be over, counting every section as if it makes.
+// The people on one section who are (or could be) over:
+//   level "red"    — over on sections that have already made (8+ students);
+//   level "yellow" — not over yet, but would be if their tutorials make.
+// Sections with no students yet don't count at all (engine: couldCount).
 function _ldOversOn(res, oid){
-  return res.rows.filter(r => r.sections.some(s => s.oid === oid))
-    .map(r => ({ row: r, over: _ldOverBy(r, "all") })).filter(x => x.over != null);
+  return res.rows.filter(r => r.sections.some(s => s.oid === oid)).map(r => {
+    const now = _ldOverBy(r, "now"), all = _ldOverBy(r, "all");
+    return now != null ? { row: r, level: "red", over: now }
+         : all != null ? { row: r, level: "yellow", over: all } : null;
+  }).filter(Boolean);
+}
+// The line under the instructor / the sentence in the warning dialog.
+function _ldLevelText(x){
+  const t = _ldWarnText(x.over, x.row.limitKind, x.row.unit);
+  return x.level === "red" ? t : `If tutorials make: ${t}`;
 }
 // Term Assignments: a line under the instructor on each row whose instructor is
 // over. Touches only that line, so typing and focus are never disturbed.
@@ -10607,7 +10624,12 @@ function refreshLoadWarnings(){
       }
       const res = perTerm.get(k);
       const overs = res ? _ldOversOn(res, o.id) : [];
-      html = overs.map(x => `<div title="${escapeHtml(`Assuming all of ${x.row.name}'s ${o.semester} ${o.year} sections that haven't started yet make`)}">⚠ ${overs.length > 1 ? escapeHtml(x.row.name) + ": " : ""}${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</div>`).join("");
+      html = overs.map(x => {
+        const tip = x.level === "red"
+          ? `${x.row.name} is over the limit on ${o.semester} ${o.year} sections that have already made (8+ students)`
+          : `${x.row.name} isn't over yet, but would be if their ${o.semester} ${o.year} tutorials (1–7 students) make. Sections with no students yet don't count.`;
+        return `<div class="lw-${x.level}" title="${escapeHtml(tip)}">⚠ ${overs.length > 1 ? escapeHtml(x.row.name) + ": " : ""}${escapeHtml(_ldLevelText(x))}</div>`;
+      }).join("");
     }
     let box = cell.querySelector(".load-warn");
     if(!html){ if(box) box.remove(); return; }
@@ -10647,20 +10669,24 @@ function loadWarnDialog(ctx, overs){
       bd.className = "modal-backdrop";
       document.body.appendChild(bd);
     }
-    const lines = overs.map(x => `<p style="margin:0 0 8px;"><strong>${escapeHtml(x.row.name)}</strong> would be <strong>${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</strong> for ${escapeHtml(`${ctx.semester} ${ctx.year}`)}.</p>`).join("");
+    const term = `${ctx.semester} ${ctx.year}`;
+    const lines = overs.map(x => x.level === "red"
+      ? `<p style="margin:0 0 8px;color:var(--danger);">⚠ <strong>${escapeHtml(x.row.name)}</strong> would be <strong>${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</strong> for ${escapeHtml(term)}, on sections that have already made (8+ students).</p>`
+      : `<p style="margin:0 0 8px;color:var(--warn);">⚠ <strong>${escapeHtml(x.row.name)}</strong> isn't over yet, but <strong>if their tutorials make</strong> they'd be <strong>${escapeHtml(_ldWarnText(x.over, x.row.limitKind, x.row.unit))}</strong> for ${escapeHtml(term)}.</p>`).join("");
+    const red = overs.some(x => x.level === "red"), tone = red ? "var(--danger)" : "var(--warn)";
     bd.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="lwdTitle" style="max-width:480px;width:100%;">
         <header>
-          <h2 id="lwdTitle" style="font-size:16px;">Over the load limit</h2>
+          <h2 id="lwdTitle" style="font-size:16px;">${red ? "Over the load limit" : "Could go over the load limit"}</h2>
           <button type="button" class="close" data-lwd="back" aria-label="Close">×</button>
         </header>
         <div class="body" style="padding:16px 18px;">
           <div style="font-size:13.5px;line-height:1.55;">${lines}
-            <p style="margin:0;color:var(--text-muted);">That assumes all of their sections this semester that haven't started yet make. You can still ${escapeHtml(ctx.verb || "submit it")}.</p>
+            <p style="margin:0;color:var(--text-muted);">Tutorials are sections with 1–7 students; sections with no students yet don't count. You can still ${escapeHtml(ctx.verb || "submit it")}.</p>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
             <button type="button" data-lwd="back" id="lwdBack" style="padding:7px 14px;">Go back</button>
-            <button type="button" data-lwd="ok" style="padding:7px 14px;background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:6px;font-weight:600;">${escapeHtml(ctx.okLabel || "Submit anyway")}</button>
+            <button type="button" data-lwd="ok" style="padding:7px 14px;background:transparent;color:${tone};border:1px solid ${tone};border-radius:6px;font-weight:600;">${escapeHtml(ctx.okLabel || "Submit anyway")}</button>
           </div>
         </div>
       </div>`;
@@ -10770,10 +10796,11 @@ function loadAlertsHtml(groups){
     const everMade = g.items.some(a => a.status === "made_over" || a.status === "back_under");
     const crossedAt = g.items.filter(a => a.made_over_at).sort((a, b) => String(b.made_over_at).localeCompare(String(a.made_over_at)))[0];
     const pill = madeOver != null ? '<span class="ver-pill ver-pill-cxl">Over — sections made</span>'
+               : allOver != null ? '<span class="ver-pill ver-pill-close">Over if tutorials make</span>'
                : everMade ? '<span class="ver-pill ver-pill-neu">Back under</span>'
-               : '<span class="ver-pill ver-pill-close">Projected only</span>';
+               : '<span class="ver-pill ver-pill-neu">Within the limit now</span>';
     const nowLine = !row ? "No longer assigned this semester"
-      : `Made sections: ${madeOver != null ? amt(madeOver, g.unit) + " over" : "within the limit"} · if all make: ${allOver != null ? amt(allOver, g.unit) + " over" : "within the limit"}`;
+      : `Made sections: ${madeOver != null ? amt(madeOver, g.unit) + " over" : "within the limit"} · if tutorials make: ${allOver != null ? amt(allOver, g.unit) + " over" : "within the limit"}`;
     const crossed = crossedAt && Array.isArray(crossedAt.crossed_sections) && crossedAt.crossed_sections.length
       ? `<div class="ver-sub">${esc(crossedAt.crossed_sections.join(", "))} made · ${esc(day(crossedAt.made_over_at))}</div>` : "";
     const items = g.items.map(a => `<div>${esc([a.course_code, a.section].filter(Boolean).join(" ") || "—")} <span class="ver-sub" style="display:inline">· ${esc(_LD_ACTION_LABEL[a.action] || "submitted")} by ${esc(a.submitted_by || "—")}, ${esc(day(a.created_at))} · ${esc(amt(a.over_by, a.unit))} over (projected)</span></div>`).join("");
@@ -10823,7 +10850,7 @@ function facultyLoadsHtml(res, terms, sel){
         <td>${esc(s.prog === "online" ? "Online" : "On-ground")}${s.slot && !["16W","15W"].includes(s.slot) ? ` · ${esc(s.slot)}` : ""}</td>
         <td>${s.enrollment == null ? "—" : esc(String(s.enrollment))}</td>
         <td>${esc(_LD_STATUS_LABEL[s.status] || s.status)}</td>
-        <td>${fmt(s.hours)}${s.status === "made" ? "" : (!_LD_COUNTS_IF_MADE.has(s.status) ? ' <span class="ver-sub" style="display:inline">(never counts)</span>' : (s.started ? ' <span class="ver-sub" style="display:inline">(started — won\'t count)</span>' : ' <span class="ver-sub" style="display:inline">(if it makes)</span>'))}</td>
+        <td>${fmt(s.hours)}${s.status === "made" ? "" : s.status === "tutorial" ? (s.started ? ' <span class="ver-sub" style="display:inline">(started — won\'t count)</span>' : ' <span class="ver-sub" style="display:inline">(if it makes)</span>') : (_LD_COUNTS_IF_MADE.has(s.status) ? ' <span class="ver-sub" style="display:inline">(counts once students enroll)</span>' : ' <span class="ver-sub" style="display:inline">(never counts)</span>')}</td>
         <td class="ver-sub">${esc(s.source)}</td></tr>`).join("");
     return `
     <tr class="ld-row" data-ld="${i}" data-f="${esc(filt)}" style="cursor:pointer">
@@ -10865,11 +10892,11 @@ function facultyLoadsHtml(res, terms, sel){
   </div>
   <div class="ver-card"><div class="ver-scroll">
     <table class="ver-table">
-      <thead><tr><th>Instructor</th><th>Type</th><th>Contract</th><th>Made now</th><th>If all make</th><th>Limit</th><th>Status now</th><th>If all make</th><th>Tutorials</th></tr></thead>
+      <thead><tr><th>Instructor</th><th>Type</th><th>Contract</th><th>Made now</th><th>If tutorials make</th><th>Limit</th><th>Status now</th><th>If tutorials make</th><th>Tutorials</th></tr></thead>
       <tbody id="ldRows">${body || '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:26px;">No assignments for this semester.</td></tr>'}</tbody>
     </table>
   </div></div>
-  <p class="ver-foot">Load hours per semester (all 5-week, 10-week, full-semester and on-ground sections). Adjuncts and staff: at most 9 hours of made sections (8+ students; EQR always made). Full-time: at most 6 made hours beyond their contracted load (0 = the standard ${esc(String(Number((state.contract || {}).settings ? state.contract.settings.full_time_load_credits : 12) || 12))}). Summer: every full-time section is overload — at most 2 made sections. "If all make" counts every section not made yet, except ones that have already started (their enrollment is settled). Tutorials (under 8), internships, independent studies, voucher and Connections courses don't count. Hours follow the contracting apps (faculty hours × each instructor's share, with their overrides). Until a term's faculty hours have been set up in the contracting app — and for sections it doesn't have — each course uses its faculty hours from the most recent set-up term, then credit hours; split evenly when team-taught. Online sections always count their credit hours (unless an override was set by hand in the contracting app). Close = within 3 hours of the limit.</p>`;
+  <p class="ver-foot">Load hours per semester (all 5-week, 10-week, full-semester and on-ground sections). Adjuncts and staff: at most 9 hours of made sections (8+ students; EQR always made). Full-time: at most 6 made hours beyond their contracted load (0 = the standard ${esc(String(Number((state.contract || {}).settings ? state.contract.settings.full_time_load_credits : 12) || 12))}). Summer: every full-time section is overload — at most 2 made sections. "If tutorials make" adds tutorials (1–7 students) that haven't started yet; sections with no students count nothing until someone enrolls, and once a section starts its enrollment is settled. Tutorials (under 8), internships, independent studies, voucher and Connections courses don't count. Hours follow the contracting apps (faculty hours × each instructor's share, with their overrides). Until a term's faculty hours have been set up in the contracting app — and for sections it doesn't have — each course uses its faculty hours from the most recent set-up term, then credit hours; split evenly when team-taught. Online sections always count their credit hours (unless an override was set by hand in the contracting app). Close = within 3 hours of the limit.</p>`;
 }
 async function renderFacultyLoadsView(){
   const box = document.getElementById("verLoadsView");
@@ -10944,16 +10971,16 @@ async function downloadFacultyLoadsXlsx(btn, res, sel){
       "Type": r.type === "full_time" ? "Full-time" : (r.type === "adjunct" ? (r.staff ? "Staff (as adjunct)" : "Adjunct") : "Not in faculty list"),
       "Contracted load": r.type === "full_time" ? r.contract : "",
       "Contract is default 12": r.contractDefault ? "Yes" : "",
-      "Made now (load hrs)": r2(r.now), "If all make (load hrs)": r2(r.all),
+      "Made now (load hrs)": r2(r.now), "If tutorials make (load hrs)": r2(r.all),
       "Limit (total hrs)": r.limitKind === "full_time_summer" ? "2 sections" : (r.limitTotal ?? ""),
-      "Status now": word[r.sNow], "Status if all make": word[r.sAll],
+      "Status now": word[r.sNow], "Status if tutorials make": word[r.sAll],
       "Tutorial hrs (not counted)": r2(r.tut), "Sections": r.sections.length,
     }));
     const secs = [];
     res.rows.forEach(r => r.sections.forEach(s => secs.push({
       "Instructor": r.name, "Course": s.code, "Title": _verTitle(s.code) || s.title || "", "Section": s.sec || "", "Delivery": s.prog === "online" ? "Online" : "On-ground",
       "Enrolled": s.enrollment ?? "", "Status": _LD_STATUS_LABEL[s.status] || s.status, "Load hrs": r2(s.hours),
-      "Counts now": s.status === "made" ? "Yes" : "", "Counts if it makes": _LD_COUNTS_IF_MADE.has(s.status) ? "Yes" : "",
+      "Counts now": s.status === "made" ? "Yes" : "", "Counts if it makes": (s.status === "tutorial" && !s.started) ? "Yes" : "",
       "Source": s.source,
     })));
     const wb = XLSX.utils.book_new();

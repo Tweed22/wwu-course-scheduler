@@ -124,9 +124,11 @@ const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
    registrar's export carries a course's studio/lab contact hours on its online
    sections too (online ART 105 = 4), which doesn't apply online. Only a value
    set by hand in the contracting app (an override) changes an online section.
-   Two numbers: made now, and "if every section makes" — where a section that has
-   already STARTED counts only if it made (its enrollment is settled, so a
-   tutorial in a running term won't grow into a made section). Close = within 3. */
+   Two numbers: made now, and "if tutorials make" — made sections plus tutorials
+   (1–7 students) that haven't STARTED yet (in a running term enrollment is
+   settled, so a tutorial won't grow into a made section). A section with no
+   students yet (0, or none reported) counts nothing until someone enrolls
+   (Tony, 2026-11-24). Close = within 3. */
 const LOAD_ADJUNCT_LIMIT = 9, LOAD_FT_OVERLOAD_LIMIT = 6, LOAD_FT_SUMMER_SECTIONS = 2, LOAD_CLOSE_WITHIN = 3;
 const _LD_DEFAULTS = {
   full_enrollment_threshold: 8, full_time_load_credits: 12, always_made_prefixes: ["EQR"],
@@ -380,8 +382,9 @@ function _ldCompute(inp){
   const summer = semester === "Summer";
   const rnd = n => Math.round(n * 100) / 100;
   const statusOf = (usedAmt, limit, within) => usedAmt > limit + 1e-9 ? "over" : (Math.abs(usedAmt - limit) < 1e-9 ? "at" : (usedAmt >= limit - within - 1e-9 ? "close" : "ok"));
-  // Counts "if every section makes": made, or not made yet and not started yet.
-  const couldCount = s => s.status === "made" || (_LD_COUNTS_IF_MADE.has(s.status) && !s.started);
+  // Counts "if tutorials make": made, or a tutorial (has students) not started yet.
+  // No students yet (0 or not reported) → nothing until someone enrolls.
+  const couldCount = s => s.status === "made" || (s.status === "tutorial" && !s.started);
   const rows = [...people.values()].map(p => {
     const now = rnd(p.sections.filter(s => s.status === "made").reduce((a, s) => a + s.hours, 0));
     const all = rnd(p.sections.filter(couldCount).reduce((a, s) => a + s.hours, 0));
