@@ -758,6 +758,18 @@
   .term-table td.instr-cell .load-badge.lb-red       { background: var(--danger); }
   .term-table td.instr-cell .load-badge.lb-yellow    { background: var(--warn); }
   html.dark .term-table td.instr-cell .load-badge.lb-yellow { color: #2a1d00; }
+  .term-table td.instr-cell .load-badge              { border: none; padding: 0; font-family: inherit; }
+  .term-table td.instr-cell .load-badge:focus-visible { outline: 2px solid var(--wwu-green); outline-offset: 1px; }
+  /* The badge's pop-up (one shared element on <body>). */
+  .ld-pop { position: fixed; z-index: 250; display: none; max-width: 300px; padding: 8px 10px;
+            background: var(--surface); color: var(--text); font-size: 12.5px; line-height: 1.45;
+            border: 1px solid var(--border-strong); border-left: 3px solid var(--danger); border-radius: 8px;
+            box-shadow: 0 6px 18px rgba(0,0,0,.16); }
+  .ld-pop.open { display: block; }
+  .ld-pop.lv-yellow { border-left-color: var(--warn); }
+  .ld-pop .ld-pop-line { font-weight: 600; color: var(--danger); }
+  .ld-pop.lv-yellow .ld-pop-line { color: var(--warn); }
+  .ld-pop .ld-pop-note { margin-top: 3px; color: var(--text-muted); }
   .term-table td.actions                             { padding-left: 18px; white-space: nowrap; overflow: hidden; }
 
   /* ── FIXED secondary columns ── */
@@ -10643,15 +10655,91 @@ function refreshLoadWarnings(){
       (level === "red" ? "Over on sections that have already made (8+ students)."
                        : "Not over yet. Tutorials are sections with 1–7 students; sections with no students don't count.");
     if(!badge){
-      badge = document.createElement("span");
-      badge.setAttribute("role", "img");
+      // A button, so the row's "click to edit the instructor" handler leaves it
+      // alone and it works from the keyboard. Its message opens in the small
+      // pop-up below (hover, click or focus), not the browser's own tooltip.
+      badge = document.createElement("button");
+      badge.type = "button";
       badge.textContent = "!";
+      badge.setAttribute("aria-haspopup", "true");
+      badge.setAttribute("aria-expanded", "false");
       cell.appendChild(badge);
     }
     badge.className = `load-badge lb-${level}`;
-    badge.title = tip;
     badge.setAttribute("aria-label", tip);
+    const note = tip.slice(tip.lastIndexOf("\n") + 1);
+    badge._ldTip = { level, lines: tip.slice(0, tip.lastIndexOf("\n")).split("\n"), note };
   });
+  _ldPopInit();
+  if(_ldPopFor && !_ldPopFor.isConnected) _ldPopClose();   // its row was redrawn
+}
+/* The badge's pop-up: opens on hover (after a moment), click or keyboard focus;
+   closes when the pointer leaves both the badge and the pop-up (with a short
+   grace period to move between them), on a click anywhere else, Esc, scroll or
+   resize. One shared element, positioned under the badge (above it near the
+   bottom of the window). */
+let _ldPop = null, _ldPopFor = null, _ldPopTimer = null;
+function _ldPopEl(){
+  if(_ldPop) return _ldPop;
+  _ldPop = document.createElement("div");
+  _ldPop.className = "ld-pop";
+  _ldPop.setAttribute("role", "tooltip");
+  _ldPop.addEventListener("mouseenter", () => clearTimeout(_ldPopTimer));
+  _ldPop.addEventListener("mouseleave", () => _ldPopCloseSoon());
+  document.body.appendChild(_ldPop);
+  return _ldPop;
+}
+function _ldPopOpen(badge){
+  clearTimeout(_ldPopTimer);
+  const t = badge && badge._ldTip;
+  if(!t || !badge.isConnected) return;
+  if(_ldPopFor && _ldPopFor !== badge) _ldPopFor.setAttribute("aria-expanded", "false");
+  const el = _ldPopEl();
+  el.className = `ld-pop open lv-${t.level}`;
+  el.innerHTML = t.lines.map(l => `<div class="ld-pop-line">${escapeHtml(l)}</div>`).join("") +
+                 `<div class="ld-pop-note">${escapeHtml(t.note)}</div>`;
+  el.style.left = "0px"; el.style.top = "0px";
+  const r = badge.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const left = Math.min(Math.max(8, r.left - 4), window.innerWidth - w - 8);
+  let top = r.bottom + 6;
+  if(top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  el.style.left = `${left}px`; el.style.top = `${top}px`;
+  _ldPopFor = badge;
+  badge.setAttribute("aria-expanded", "true");
+}
+function _ldPopClose(){
+  clearTimeout(_ldPopTimer);
+  if(_ldPop) _ldPop.classList.remove("open");
+  if(_ldPopFor) _ldPopFor.setAttribute("aria-expanded", "false");
+  _ldPopFor = null;
+}
+function _ldPopCloseSoon(){ clearTimeout(_ldPopTimer); _ldPopTimer = setTimeout(_ldPopClose, 200); }
+function _ldPopInit(){
+  if(_ldPopInit.done) return;
+  _ldPopInit.done = true;
+  const badgeOf = t => (t && t.closest) ? t.closest(".load-badge") : null;
+  document.addEventListener("mouseover", e => {
+    const b = badgeOf(e.target); if(!b) return;
+    clearTimeout(_ldPopTimer);
+    if(_ldPopFor !== b) _ldPopTimer = setTimeout(() => _ldPopOpen(b), 120);
+  });
+  document.addEventListener("mouseout", e => {
+    const b = badgeOf(e.target); if(!b) return;
+    const to = e.relatedTarget;
+    if(to && (b.contains(to) || (_ldPop && _ldPop.contains(to)))) return;
+    _ldPopCloseSoon();
+  });
+  document.addEventListener("click", e => {
+    const b = badgeOf(e.target);
+    if(b){ _ldPopOpen(b); return; }
+    if(_ldPop && _ldPop.contains(e.target)) return;
+    if(_ldPopFor) _ldPopClose();
+  }, true);
+  document.addEventListener("keydown", e => { if(e.key === "Escape" && _ldPopFor) _ldPopClose(); });
+  document.addEventListener("focusin", e => { const b = badgeOf(e.target); if(b) _ldPopOpen(b); });
+  document.addEventListener("focusout", e => { if(badgeOf(e.target)) _ldPopCloseSoon(); });
+  window.addEventListener("scroll", () => { if(_ldPopFor) _ldPopClose(); }, true);
+  window.addEventListener("resize", () => { if(_ldPopFor) _ldPopClose(); });
 }
 // Before a submit: if the instructor would be over, ask. `proceed(overs)` runs
 // (synchronously when the load inputs are already loaded) unless they go back.
