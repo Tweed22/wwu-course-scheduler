@@ -120,6 +120,10 @@ const _owlIsLab = r => /(^|\s)L$/i.test(String(r && r.suffix || "").trim());
    up there (some section's faculty hours differ from its credit hours, or are
    overridden). Until then — and for sections the apps don't have — the course's
    faculty hours from the most recent set-up term, then credit hours.
+   ONLINE sections always load at their credit hours (Tony, 2026-11-24): the
+   registrar's export carries a course's studio/lab contact hours on its online
+   sections too (online ART 105 = 4), which doesn't apply online. Only a value
+   set by hand in the contracting app (an override) changes an online section.
    Two numbers: made now, and "if every section makes" — where a section that has
    already STARTED counts only if it made (its enrollment is settled, so a
    tutorial in a running term won't grow into a made section). Close = within 3. */
@@ -216,7 +220,7 @@ function _ldKnownFh(ix, code, upTo){
 // The on-ground contracting app's loadHoursOf(): faculty hours × share, overrides
 // first. In a term not yet set up there, the course's known faculty hours stand in
 // for the imported default (which is just the credit hours).
-function _ldOgcLoadHours(c, S, status, ix, ord, termSet){
+function _ldOgcLoadHours(c, S, status, ix, ord, termSet, online){
   if(c.load_hours_override != null && c.load_hours_override !== "" && !isNaN(Number(c.load_hours_override))) return Number(c.load_hours_override);
   let fh;
   if(c.faculty_hours_override != null && c.faculty_hours_override !== "" && !isNaN(Number(c.faculty_hours_override))) fh = Number(c.faculty_hours_override);
@@ -224,7 +228,7 @@ function _ldOgcLoadHours(c, S, status, ix, ord, termSet){
     const code = canonicalCourseCode(c.course_code || ""), fixed = _ldFixedHours(code, S);
     if(fixed != null) fh = fixed;
     else if(status === "internship") fh = 3;
-    else if(_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) fh = Number(c.credit_hours) || 0;
+    else if(online || _ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) fh = Number(c.credit_hours) || 0;
     else {
       const known = termSet ? null : _ldKnownFh(ix, code, ord);
       fh = known != null ? known
@@ -332,14 +336,15 @@ function _ldCompute(inp){
         const c = hit.c;
         const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
                                  statusOverride: c.status_override, courseType: c.course_type }, S);
-        const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet)
+        const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet, prog === "online")
                   : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
         sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
                         source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
       } else {
         const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
         const fixed = _ldFixedHours(code, S);
-        const known = (fixed == null && st !== "internship" && !_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) ? _ldKnownFh(ix, code, ord) : null;
+        // Online sections load at credit hours — no faculty-hours history.
+        const known = (prog === "semester" && fixed == null && st !== "internship" && !_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) ? _ldKnownFh(ix, code, ord) : null;
         const hrs = (st === "internship" ? 3 : (fixed ?? known ?? credits)) / names.length;
         const src = names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler";
         sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, started: startedOf(o.started, null),
@@ -359,7 +364,7 @@ function _ldCompute(inp){
     if(isHiddenCourse(code)) return;
     const st = _ldClassify({ code, title: c.title, enrollment: c.enrollment, delivery: c.delivery,
                              statusOverride: c.status_override, courseType: c.course_type }, S);
-    const hrs = x.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet) : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || 0));
+    const hrs = x.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet, x.prog === "online") : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || 0));
     sections.push({ code, sec: c.section, prog: x.prog, title: c.title || "", sub: c.subterm || "", slot: "",
                     name: _ldName(f), fac: f, enrollment: c.enrollment, status: st, hours: hrs, started: startedOf(null, c.start_date),
                     source: (x.src === "ogc" ? "On-ground contracting app" : "Online contracting app") + " only" });
