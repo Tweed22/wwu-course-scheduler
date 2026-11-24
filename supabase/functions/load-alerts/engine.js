@@ -315,6 +315,7 @@ function _ldCompute(inp){
   const startedOf = (flag, startDate) => flag != null ? !!flag : !!(today && startDate && String(startDate).slice(0, 10) <= today);
   const used = new Set();                // contract rows already accounted for
   const sections = [];                   // one entry per (section, instructor)
+  const display = new Map();             // oid → { hours, status, people } for every scheduler section
   // 1) Scheduler sections (online + on-ground).
   (inp.sections || []).forEach(o => {
     const code = canonicalCourseCode(o.code || "");
@@ -324,10 +325,27 @@ function _ldCompute(inp){
     const rowsHere = sec ? (cByKey.get(cKey(code, sec, prog)) || []) : [];
     const prefer = rowsHere.map(x => facById.get(x.c.faculty_id)).filter(Boolean);
     const names = _ldSplitInstructors(o.instructor, faculty, prefer);
-    if(!names.length) return;
+    // Owlnet's enrollment (refreshed hourly) is preferred over the contracting
+    // app's, which is a snapshot from its last import — a tutorial that grows
+    // to 8 students must show as made before the next import.
     const enrOwl = o.enrolled == null ? null : Number(o.enrolled);
     const credits = owlCredits.get(`${code}|${_verNormSec(sec)}|${prog}|${o.lab ? 1 : 0}`)
       ?? (Number(o.catalogCredits) || (ix.credits.get(code) || {}).cr || 3);
+    if(!names.length){
+      // No instructor yet: still work out the section's faculty hours and status
+      // (Term Assignments' Faculty Hours column).
+      const c0 = rowsHere.find(x => x.src === "ogc") || rowsHere[0] || null;
+      const st = _ldClassify({ code, title: (c0 && c0.c.title) || o.title || "", enrollment: enrOwl ?? (c0 ? c0.c.enrollment : null),
+                               delivery: c0 ? c0.c.delivery : (prog === "online" ? "OLC" : "FUL"),
+                               statusOverride: c0 ? c0.c.status_override : null, courseType: c0 ? c0.c.course_type : null }, S);
+      const fixed = _ldFixedHours(code, S);
+      const known = (prog === "semester" && fixed == null && st !== "internship" && !_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) ? _ldKnownFh(ix, code, ord) : null;
+      const hrs = (c0 && c0.src === "ogc") ? _ldOgcLoadHours({ ...c0.c, pct_toward_load: 1 }, S, st, ix, ord, termSet, prog === "online")
+                : (st === "internship" ? 3 : (fixed ?? known ?? (c0 ? (Number(c0.c.credit_hours) || credits) : credits)));
+      display.set(o.id, { hours: hrs, status: st, people: 0 });
+      return;
+    }
+    const here = [];
     names.forEach(nm => {
       const f = _ldMatchFaculty(nm, faculty, prefer);
       const hit = f ? rowsHere.find(x => x.c.faculty_id === f.id && !used.has(x)) : null;
@@ -336,12 +354,13 @@ function _ldCompute(inp){
       if(hit){
         used.add(hit);
         const c = hit.c;
-        const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
+        const st = _ldClassify({ code, title: c.title || base.title, enrollment: enrOwl ?? c.enrollment, delivery: c.delivery,
                                  statusOverride: c.status_override, courseType: c.course_type }, S);
         const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet, prog === "online")
                   : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
-        sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
+        sections.push({ ...base, enrollment: enrOwl ?? c.enrollment, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
                         source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
+        here.push(sections[sections.length - 1]);
       } else {
         const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
         const fixed = _ldFixedHours(code, S);
@@ -351,8 +370,12 @@ function _ldCompute(inp){
         const src = names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler";
         sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, started: startedOf(o.started, null),
                         source: known != null && known !== credits ? `${src} · the course's faculty hours` : src });
+        here.push(sections[sections.length - 1]);
       }
     });
+    // The section's faculty hours = the instructors' shares added back up.
+    display.set(o.id, { hours: Math.round(here.reduce((a, s) => a + s.hours, 0) * 100) / 100,
+                        status: here[0].status, people: here.length });
   });
   // 2) Contracting-app records the scheduler doesn't have (e.g. Fall 2026 on-ground).
   cRows.forEach(x => {
@@ -411,7 +434,7 @@ function _ldCompute(inp){
   });
   const rank = { over:0, at:1, close:2, ok:3, unknown:4 };
   rows.sort((a, b) => (Math.min(rank[a.sNow], rank[a.sAll]) - Math.min(rank[b.sNow], rank[b.sAll])) || (b.all - a.all) || a.name.localeCompare(b.name));
-  return { rows, term, hasContractTerm: cRows.length > 0, termSet };
+  return { rows, term, hasContractTerm: cRows.length > 0, termSet, display };
 }
 // How far one person is over their limit: on made sections ("now"), or counting
 // every assigned section as if it makes ("all"). null when not over or unknown.

@@ -744,22 +744,22 @@
   .term-table td.instr-cell                          { padding-left: 18px; white-space: nowrap; overflow: hidden; }
   .term-table th.no-sort:nth-child(7)                { width: 250px; padding-left: 18px; }
   /* Over the faculty load limit (counting every assigned section as if it makes). */
-  /* Faculty-load badge just in front of the instructor's name (in the cell's
-     18px left gutter, so it never covers the name or the clear button); the
-     message is its hover text. Red: over on made sections. Yellow: over only
-     if tutorials make. */
+  /* Faculty-load warning: a colored ⚠ placed just after the instructor's name
+     (positioned by _ldPlaceBadge, kept clear of the clear-× button); its
+     message opens in .ld-pop. Red: over on made sections. Yellow: over only if
+     tutorials make. A span, not a button — the dark theme greys every button. */
   .term-table td.instr-cell                          { position: relative; }
   .term-table td.instr-cell .load-badge {
-    position: absolute; top: 50%; left: 2px; transform: translateY(-50%);
-    width: 15px; height: 15px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 10.5px; font-weight: 700; line-height: 1; color: #fff; cursor: help; z-index: 1;
+    position: absolute; top: 50%; left: 0; transform: translateY(-50%);
+    font-size: 14px; line-height: 1; cursor: help; z-index: 1; user-select: none;
   }
-  .term-table td.instr-cell .load-badge.lb-red       { background: var(--danger); }
-  .term-table td.instr-cell .load-badge.lb-yellow    { background: var(--warn); }
-  html.dark .term-table td.instr-cell .load-badge.lb-yellow { color: #2a1d00; }
-  .term-table td.instr-cell .load-badge              { border: none; padding: 0; font-family: inherit; }
-  .term-table td.instr-cell .load-badge:focus-visible { outline: 2px solid var(--wwu-green); outline-offset: 1px; }
+  .term-table td.instr-cell .load-badge.lb-red       { color: var(--danger); }
+  .term-table td.instr-cell .load-badge.lb-yellow    { color: var(--warn); }
+  .term-table td.instr-cell .load-badge:focus-visible { outline: 2px solid var(--wwu-green); outline-offset: 1px; border-radius: 3px; }
+  /* Room for the ⚠ when a long name reaches the right edge. */
+  .term-table td.instr-cell.has-load-badge input[data-field="instructor"],
+  .term-table td.instr-cell.has-load-badge .instr-plain { padding-right: 24px !important; }
+  .term-table td.instr-cell.has-load-badge .iclear-wrap input[data-field="instructor"] { padding-right: 44px !important; }
   /* The badge's pop-up (one shared element on <body>). */
   .ld-pop { position: fixed; z-index: 250; display: none; max-width: 300px; padding: 8px 10px;
             background: var(--surface); color: var(--text); font-size: 12.5px; line-height: 1.45;
@@ -1223,8 +1223,19 @@
   html.dark .term-table tbody tr.enroll-low { --enroll-bar: rgba(240, 200, 70, 0.85); --enroll-text: #f0c846; }
   /* On-ground view: no Program Manager column (PM/dean live on the Admin page);
      Length becomes "Meets" (day / time / room from Owlnet) and needs more room. */
-  .term-table.ta-table.og-view th[data-tsort="pm"],
-  .term-table.ta-table.og-view td.pm-cell { display: none; }
+  /* Program Manager column: hidden in every view (Tony, 2026-11-24) — PMs and
+     deans live on the Admin page. */
+  .term-table.ta-table th[data-tsort="pm"],
+  .term-table.ta-table td.pm-cell { display: none; }
+  /* Faculty Hours (after Assigned Instructor): green = made, yellow = tutorial. */
+  .term-table.ta-table thead th.fh-th { width: 92px; min-width: 0; padding-left: 12px; white-space: nowrap; }
+  .term-table.ta-table td.fh-cell     { padding-left: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .term-table td.fh-cell .fh-made     { color: #1c7a44; }
+  .term-table td.fh-cell .fh-tut      { color: #a87b00; }
+  .term-table td.fh-cell .fh-none     { color: var(--text-muted); font-weight: 400; }
+  html.dark .term-table td.fh-cell .fh-made { color: #5ab57d; }
+  html.dark .term-table td.fh-cell .fh-tut  { color: #f0c846; }
+  .term-table td.fh-cell span[title]  { cursor: help; }
   .term-table.ta-table.meets-wide th[data-tsort="length"] { width: 168px !important; }
   .term-table.ta-table.meets-wide th[data-tsort="code"] { width: 186px !important; }
   .term-table td.length-cell.meets { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
@@ -2214,6 +2225,7 @@
           <th data-tsort="pm" style="padding-left:18px;">Program Manager</th>
           <th data-tsort="enroll" style="white-space:nowrap;" title="Enrolled / seats, from Owlnet — click to sort (your view only)">Enrollment</th>
           <th data-tsort="instructor">Assigned Instructor</th>
+          <th class="no-sort fh-th" title="The section's faculty (load) hours. Green: the section has made (8+ students, or any enrollment for always-made courses such as EQR). Yellow: a tutorial (fewer students). Gray: no students yet, or a course that never counts toward load.">Faculty Hours</th>
           <th class="no-sort actions-th" style="white-space:nowrap;">Actions</th>
         </tr>
       </thead>
@@ -3157,6 +3169,7 @@ function _ldCompute(inp){
   const startedOf = (flag, startDate) => flag != null ? !!flag : !!(today && startDate && String(startDate).slice(0, 10) <= today);
   const used = new Set();                // contract rows already accounted for
   const sections = [];                   // one entry per (section, instructor)
+  const display = new Map();             // oid → { hours, status, people } for every scheduler section
   // 1) Scheduler sections (online + on-ground).
   (inp.sections || []).forEach(o => {
     const code = canonicalCourseCode(o.code || "");
@@ -3166,10 +3179,27 @@ function _ldCompute(inp){
     const rowsHere = sec ? (cByKey.get(cKey(code, sec, prog)) || []) : [];
     const prefer = rowsHere.map(x => facById.get(x.c.faculty_id)).filter(Boolean);
     const names = _ldSplitInstructors(o.instructor, faculty, prefer);
-    if(!names.length) return;
+    // Owlnet's enrollment (refreshed hourly) is preferred over the contracting
+    // app's, which is a snapshot from its last import — a tutorial that grows
+    // to 8 students must show as made before the next import.
     const enrOwl = o.enrolled == null ? null : Number(o.enrolled);
     const credits = owlCredits.get(`${code}|${_verNormSec(sec)}|${prog}|${o.lab ? 1 : 0}`)
       ?? (Number(o.catalogCredits) || (ix.credits.get(code) || {}).cr || 3);
+    if(!names.length){
+      // No instructor yet: still work out the section's faculty hours and status
+      // (Term Assignments' Faculty Hours column).
+      const c0 = rowsHere.find(x => x.src === "ogc") || rowsHere[0] || null;
+      const st = _ldClassify({ code, title: (c0 && c0.c.title) || o.title || "", enrollment: enrOwl ?? (c0 ? c0.c.enrollment : null),
+                               delivery: c0 ? c0.c.delivery : (prog === "online" ? "OLC" : "FUL"),
+                               statusOverride: c0 ? c0.c.status_override : null, courseType: c0 ? c0.c.course_type : null }, S);
+      const fixed = _ldFixedHours(code, S);
+      const known = (prog === "semester" && fixed == null && st !== "internship" && !_ldUp(S.credit_hour_subjects).includes(code.split(" ")[0])) ? _ldKnownFh(ix, code, ord) : null;
+      const hrs = (c0 && c0.src === "ogc") ? _ldOgcLoadHours({ ...c0.c, pct_toward_load: 1 }, S, st, ix, ord, termSet, prog === "online")
+                : (st === "internship" ? 3 : (fixed ?? known ?? (c0 ? (Number(c0.c.credit_hours) || credits) : credits)));
+      display.set(o.id, { hours: hrs, status: st, people: 0 });
+      return;
+    }
+    const here = [];
     names.forEach(nm => {
       const f = _ldMatchFaculty(nm, faculty, prefer);
       const hit = f ? rowsHere.find(x => x.c.faculty_id === f.id && !used.has(x)) : null;
@@ -3178,12 +3208,13 @@ function _ldCompute(inp){
       if(hit){
         used.add(hit);
         const c = hit.c;
-        const st = _ldClassify({ code, title: c.title || base.title, enrollment: c.enrollment ?? enrOwl, delivery: c.delivery,
+        const st = _ldClassify({ code, title: c.title || base.title, enrollment: enrOwl ?? c.enrollment, delivery: c.delivery,
                                  statusOverride: c.status_override, courseType: c.course_type }, S);
         const hrs = hit.src === "ogc" ? _ldOgcLoadHours(c, S, st, ix, ord, termSet, prog === "online")
                   : (_ldFixedHours(code, S) ?? (Number(c.credit_hours) || credits)) / Math.max(1, (rowsHere.filter(x => x.src === "onc").length || 1));
-        sections.push({ ...base, enrollment: c.enrollment ?? enrOwl, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
+        sections.push({ ...base, enrollment: enrOwl ?? c.enrollment, status: st, hours: hrs, started: startedOf(o.started, c.start_date),
                         source: hit.src === "ogc" ? "On-ground contracting app" : "Online contracting app" });
+        here.push(sections[sections.length - 1]);
       } else {
         const st = _ldClassify({ code, title: base.title, enrollment: enrOwl, delivery: prog === "online" ? "OLC" : "FUL" }, S);
         const fixed = _ldFixedHours(code, S);
@@ -3193,8 +3224,12 @@ function _ldCompute(inp){
         const src = names.length > 1 ? `Scheduler (split ${names.length} ways)` : "Scheduler";
         sections.push({ ...base, enrollment: enrOwl, status: st, hours: hrs, started: startedOf(o.started, null),
                         source: known != null && known !== credits ? `${src} · the course's faculty hours` : src });
+        here.push(sections[sections.length - 1]);
       }
     });
+    // The section's faculty hours = the instructors' shares added back up.
+    display.set(o.id, { hours: Math.round(here.reduce((a, s) => a + s.hours, 0) * 100) / 100,
+                        status: here[0].status, people: here.length });
   });
   // 2) Contracting-app records the scheduler doesn't have (e.g. Fall 2026 on-ground).
   cRows.forEach(x => {
@@ -3253,7 +3288,7 @@ function _ldCompute(inp){
   });
   const rank = { over:0, at:1, close:2, ok:3, unknown:4 };
   rows.sort((a, b) => (Math.min(rank[a.sNow], rank[a.sAll]) - Math.min(rank[b.sNow], rank[b.sAll])) || (b.all - a.all) || a.name.localeCompare(b.name));
-  return { rows, term, hasContractTerm: cRows.length > 0, termSet };
+  return { rows, term, hasContractTerm: cRows.length > 0, termSet, display };
 }
 // How far one person is over their limit: on made sections ("now"), or counting
 // every assigned section as if it makes ("all"). null when not over or unknown.
@@ -6773,7 +6808,7 @@ function renderTermTable(list) {
     if (lh) lh.textContent = _modView === "On-Ground" ? "Meets" : (_modView === "" && _anyMeets ? "Length / Meets" : "Length");
   }
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">No offerings in this subterm match the current filters. Try <code>Re-sync now</code> in the rotation banner if you recently edited rotation data.</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:30px;">No offerings in this subterm match the current filters. Try <code>Re-sync now</code> in the rotation banner if you recently edited rotation data.</td></tr>`;
     return;
   }
   tb.innerHTML = list.map(o => {
@@ -6796,7 +6831,9 @@ function renderTermTable(list) {
     // Enrollment column: count + a small progress bar scaled to % of seats taken.
     const _enr = owlnetEnrollment(o);
     if (_enr) classes.push("has-enroll");
-    if (_enr && _enr.enrolled < ENROLL_LOW_THRESHOLD) classes.push("enroll-low");
+    // Yellow until the section has made — 8+ students, or any enrollment for an
+    // always-made course such as EQR (the contracting apps' rule).
+    if (_enr && !_ldMadeByCount(c.code || o.courseCode || "", _enr.enrolled)) classes.push("enroll-low");
     const clsAttr = classes.length ? ` class="${classes.join(" ")}"` : "";
     const sectionNum = sectionNumberFor(o);
     // Locked when submitted OR when canceled (canceled offerings can't be edited
@@ -6977,6 +7014,7 @@ function renderTermTable(list) {
           ? `<span class="enroll-wrap" title="${_enr.enrolled} enrolled of ${_enr.cap} seats (${_enr.open} open) — from Owlnet"><span class="enroll-num">${_enr.enrolled}<span class="enroll-cap"> / ${_enr.cap}</span></span><span class="enroll-bar"><span class="enroll-bar-fill" style="width:${_enr.pct}%"></span></span></span>`
           : `<span class="enroll-none" title="No Owlnet enrollment yet — scrape Owlnet from the Verification tab">—</span>`}</td>
         ${instructorCell}
+        <td class="fh-cell"><span class="fh-none">—</span></td>
         <td class="actions">${actionBtn}</td>
       </tr>
     `;
@@ -10634,20 +10672,21 @@ function refreshLoadWarnings(){
   tb.querySelectorAll("tr[data-oid]").forEach(tr => {
     const cell = tr.querySelector("td.instr-cell");
     if(!cell) return;
-    let overs = [];
+    let overs = [], res = null;
     const o = ready ? byId.get(tr.dataset.oid) : null;
-    if(o && !o.canceled && !o.deleted && String(o.instructor || "").trim()){
+    if(o && !o.canceled && !o.deleted){
       const k = `${o.semester}|${o.year}`;
       if(!perTerm.has(k)){
-        let res = null;
-        try { res = computeFacultyLoads(o.semester, Number(o.year)); } catch(e){ _err("load warning check failed", e); }
-        perTerm.set(k, res);
+        let r = null;
+        try { r = computeFacultyLoads(o.semester, Number(o.year)); } catch(e){ _err("load warning check failed", e); }
+        perTerm.set(k, r);
       }
-      const res = perTerm.get(k);
-      overs = res ? _ldOversOn(res, o.id) : [];
+      res = perTerm.get(k);
+      if(res && String(o.instructor || "").trim()) overs = _ldOversOn(res, o.id);
     }
+    _ldFillHoursCell(tr.querySelector("td.fh-cell"), res && o ? res.display.get(o.id) : null, o);
     let badge = cell.querySelector(".load-badge");
-    if(!overs.length){ if(badge) badge.remove(); return; }
+    if(!overs.length){ if(badge) badge.remove(); cell.classList.remove("has-load-badge"); return; }
     // One badge per row (red if anyone on it is over on made sections); the
     // message — one line per person when team-taught — is its hover text.
     const level = overs.some(x => x.level === "red") ? "red" : "yellow";
@@ -10655,12 +10694,12 @@ function refreshLoadWarnings(){
       (level === "red" ? "Over on sections that have already made (8+ students)."
                        : "Not over yet. Tutorials are sections with 1–7 students; sections with no students don't count.");
     if(!badge){
-      // A button, so the row's "click to edit the instructor" handler leaves it
-      // alone and it works from the keyboard. Its message opens in the small
-      // pop-up below (hover, click or focus), not the browser's own tooltip.
-      badge = document.createElement("button");
-      badge.type = "button";
-      badge.textContent = "!";
+      // Its message opens in the small pop-up below (hover, click or keyboard
+      // focus). The row's "click to edit the instructor" handler skips it.
+      badge = document.createElement("span");
+      badge.setAttribute("role", "button");
+      badge.tabIndex = 0;
+      badge.textContent = "⚠︎";
       badge.setAttribute("aria-haspopup", "true");
       badge.setAttribute("aria-expanded", "false");
       cell.appendChild(badge);
@@ -10669,9 +10708,63 @@ function refreshLoadWarnings(){
     badge.setAttribute("aria-label", tip);
     const note = tip.slice(tip.lastIndexOf("\n") + 1);
     badge._ldTip = { level, lines: tip.slice(0, tip.lastIndexOf("\n")).split("\n"), note };
+    cell.classList.add("has-load-badge");
+    _ldPlaceBadge(cell, badge);
   });
   _ldPopInit();
   if(_ldPopFor && !_ldPopFor.isConnected) _ldPopClose();   // its row was redrawn
+}
+// Has a section with this many students made? The contracting apps' rule: the
+// made threshold (8), or any enrollment for an always-made course (EQR).
+function _ldMadeByCount(code, enrolled){
+  const S = (state.contract && state.contract.settings) || _LD_DEFAULTS;
+  const subj = canonicalCourseCode(code || "").split(" ")[0];
+  if(_ldUp(S.always_made_prefixes).includes(subj) && enrolled > 0) return true;
+  return enrolled >= (Number(S.full_enrollment_threshold) || 8);
+}
+// Term Assignments' Faculty Hours cell: the section's faculty (load) hours —
+// green when it has made, yellow while a tutorial, gray otherwise.
+const _LD_FH_NOTE = {
+  made: "Made — counts toward load",
+  tutorial: "Tutorial (1–7 students) — counts only if it makes",
+  none: "No students yet — doesn't count until someone enrolls",
+  unknown: "No enrollment reported yet — doesn't count until someone enrolls",
+  internship: "Internship — doesn't count toward the load limit",
+  connections: "Connections course — doesn't count toward the load limit",
+  voucher: "Voucher course — doesn't count toward the load limit",
+  indstudy: "Independent study — doesn't count toward the load limit",
+  notcontracted: "Not contracted — doesn't count toward the load limit",
+  combined: "Combined with another section — doesn't count separately",
+};
+function _ldFillHoursCell(td, d, o){
+  if(!td) return;
+  let html = '<span class="fh-none">—</span>';
+  if(d && o && !o.canceled){
+    const n = Math.round(Number(d.hours) * 100) / 100;
+    const cls = d.status === "made" ? "fh-made" : d.status === "tutorial" ? "fh-tut" : "fh-none";
+    const enr = owlnetEnrollment(o);
+    const tip = `${n} faculty hour${n === 1 ? "" : "s"}${d.people > 1 ? `, split between ${d.people} instructors` : ""}` +
+                `${enr ? ` · ${enr.enrolled} enrolled` : ""}\n${_LD_FH_NOTE[d.status] || ""}`;
+    html = `<span class="${cls}" title="${escapeHtml(tip)}">${n}</span>`;
+  }
+  if(td.innerHTML !== html) td.innerHTML = html;
+}
+// Put the ⚠ just after the name's text (measured in the field's own font), but
+// never over the clear-× button on editable rows. A hidden table (another view)
+// has no layout yet; the next refresh places it.
+function _ldPlaceBadge(cell, badge){
+  const inp = cell.querySelector('input[data-field="instructor"]');
+  const el = inp || cell.querySelector(".instr-plain");
+  if(!el) return;
+  const cr = cell.getBoundingClientRect(), er = el.getBoundingClientRect();
+  if(!cr.width) return;
+  const cs = getComputedStyle(el);
+  const ctx = _ldPlaceBadge.ctx || (_ldPlaceBadge.ctx = document.createElement("canvas").getContext("2d"));
+  ctx.font = cs.font || `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const textW = ctx.measureText(inp ? inp.value : el.textContent).width;
+  const start = er.left - cr.left + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.borderLeftWidth) || 0);
+  const maxLeft = cr.width - ((inp && !inp.readOnly) ? 46 : 24);
+  badge.style.left = `${Math.max(0, Math.min(start + textW + 5, maxLeft))}px`;
 }
 /* The badge's pop-up: opens on hover (after a moment), click or keyboard focus;
    closes when the pointer leaves both the badge and the pop-up (with a short
@@ -12331,7 +12424,7 @@ function bindTermEvents() {
   // Assigned Instructor input — lets users tab through the table by clicking
   // and immediately start typing.
   document.getElementById("ttbody").addEventListener("click", (e) => {
-    if (e.target.closest("button, input, select, textarea, a")) return;
+    if (e.target.closest("button, input, select, textarea, a, .load-badge")) return;
     const row = e.target.closest("tr[data-oid]");
     if (!row) return;
     const instr = row.querySelector('input[data-field="instructor"]');
